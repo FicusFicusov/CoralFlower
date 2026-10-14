@@ -106,7 +106,7 @@ dialog#donate .x:hover { color: var(--ground); background: var(--rose); }
   <header>
     <div>
       <h1><span class="c">Coral</span><span class="f">Flower</span> emulator</h1>
-      <p>the FM-1 firmware, running in this page</p>
+      <p>the FM-1 firmware, running right in your browser</p>
     </div>
     <button id="supportBtn" class="btn support" aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13.35 20.13c-.76.69-1.93.69-2.69-.01l-.11-.1C5.3 15.27 1.87 12.16 2 8.28c.06-1.7.93-3.33 2.34-4.29 2.64-1.8 5.9-.96 7.66 1.1 1.76-2.06 5.02-2.91 7.66-1.1 1.41.96 2.28 2.59 2.34 4.29.14 3.88-3.3 6.99-8.55 11.76z"/></svg>Support</button>
   </header>
@@ -117,7 +117,7 @@ dialog#donate .x:hover { color: var(--ground); background: var(--rose); }
     </div>
     <div id="gate">
       <button id="start" class="btn">Start</button>
-      <p>The real firmware in your browser. Press Start for sound, then play with the mouse or the computer keyboard.</p>
+      <p>The real firmware, in your browser. Press Start for sound, then play with the mouse or your computer keyboard.</p>
     </div>
     <div class="panelbox">
       <svg id="panel" viewBox="14 14 876 538" role="application" aria-label="FM-1 panel: keys, buttons and knobs"></svg>
@@ -125,11 +125,11 @@ dialog#donate .x:hover { color: var(--ground); background: var(--rose); }
     </div>
     <div id="status">Loading&hellip;</div>
     <div class="bar">
-      <div class="meter" title="the share of real time the browser spends running the device">LOAD <b><i id="load"></i></b> <span id="loadv">&ndash;</span></div>
+      <div class="meter" title="how much of each second the browser spends running the synth">LOAD <b><i id="load"></i></b> <span id="loadv">&ndash;</span></div>
       <button id="midi" class="btn">Enable MIDI</button>
       <label hidden>Out <select id="mout"><option value="">none</option></select></label>
       <label hidden>In <select id="min"><option value="">none</option></select></label>
-      <button id="reset" class="btn" title="forget the saved settings and sounds (this browser only)">Reset flash</button>
+      <button id="reset" class="btn" title="forget the settings and sounds saved in this browser">Reset flash</button>
     </div>
     <section class="legend" aria-label="The computer keyboard and the mouse">
       <div style="--c: var(--rose)"><h3>Keys</h3><dl>
@@ -162,7 +162,7 @@ dialog#donate .x:hover { color: var(--ground); background: var(--rose); }
     <section class="supportcard" aria-label="Support CoralFlower">
       <div>
         <b>Support CoralFlower</b>
-        <span>Free, open source and without ads. A donation funds new features and more free tools for musicians.</span>
+        <span>Free, open source and ad-free. Donations fund new features and more free tools for musicians.</span>
         <span class="contacts">Contact: <a href="https://t.me/ficusficusov" target="_blank" rel="noopener">Telegram channel</a> &middot; <a href="mailto:iambemoli@gmail.com">iambemoli@gmail.com</a></span>
       </div>
       <button id="supportBtn2" class="btn support" aria-haspopup="dialog">Support</button>
@@ -173,9 +173,9 @@ dialog#donate .x:hover { color: var(--ground); background: var(--rose); }
 <dialog id="donate" aria-labelledby="donateTitle">
   <form method="dialog"><button class="x" aria-label="Close">&times;</button></form>
   <h2 id="donateTitle">Support CoralFlower</h2>
-  <p>CoralFlower is free, open source and has no ads. A donation is not a payment: it funds new features and more free tools for musicians. Thank you for helping it grow.</p>
+  <p>CoralFlower is free, open source and ad-free. A donation is not a payment: it funds new features and more free tools for musicians. Thank you for helping it grow.</p>
   <div id="wallets"></div>
-  <p class="note">Send only the coin named, on the network named: anything else is lost. A crypto transfer is a voluntary gift; nothing is sold for it.</p>
+  <p class="note">Send only the coin shown, on the network shown; anything else will be lost. A crypto transfer is a voluntary gift: nothing is sold in return.</p>
   <h3>Contact</h3>
   <a class="opt" href="https://t.me/ficusficusov" target="_blank" rel="noopener"><span class="glyph" aria-hidden="true">&#10148;</span><span class="tx"><span class="nm">Telegram channel</span><span class="ad">t.me/ficusficusov</span></span><span class="go">&#8599;</span></a>
   <a class="opt" href="mailto:iambemoli@gmail.com"><span class="glyph" aria-hidden="true">@</span><span class="tx"><span class="nm">Email</span><span class="ad">iambemoli@gmail.com</span></span><span class="go">&#8599;</span></a>

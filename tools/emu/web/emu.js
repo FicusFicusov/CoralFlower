@@ -338,7 +338,7 @@
       $("gate").hidden = true;
       sentK = sentB = -1;
       publish();
-      status(m.version + " is running. Play the lower keys; hold an upper key for another chord.");
+      status(m.version + " is running. The lower keys play roots; hold an upper key to change the chord type.");
     } else if (m.type === "midi") midiOut(m.pkts);
     else if (m.type === "flash") flashSave(m.data);
     else if (m.type === "error") status("The emulator failed: " + m.message);
@@ -373,7 +373,7 @@
   };
   const refresh = () => { fill($("mout"), access.outputs); fill($("min"), access.inputs); };
   $("midi").onclick = async () => {
-    if (!navigator.requestMIDIAccess) return status("This browser has no Web MIDI (Chrome, Edge, Firefox and Opera have it).");
+    if (!navigator.requestMIDIAccess) return status("This browser does not support Web MIDI. Try Chrome, Edge, Firefox or Opera.");
     try {
       access = await navigator.requestMIDIAccess();
       access.onstatechange = refresh;
