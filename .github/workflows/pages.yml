@@ -91,7 +91,8 @@ jobs:
         run: |
           set -euo pipefail
           cp build/emu-web/index.html build/emu-web/emu.js build/emu-web/keymap.js build/emu-web/worklet.js \
-             build/emu-web/coralflower.wasm build/emu-web/DepartureMono-Regular.otf build/site/
+             build/emu-web/coralflower.wasm build/emu-web/DepartureMono-Regular.otf \
+             build/emu-web/favicon.svg build/emu-web/favicon-32.png build/emu-web/apple-touch-icon.png build/site/
           if [ -f web/install/index.html ]; then
             mkdir -p build/site/install
             cp web/install/index.html web/fm1pkg.js web/fm1ota.js web/fm1backup.js build/site/install/

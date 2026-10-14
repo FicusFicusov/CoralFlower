@@ -89,8 +89,10 @@ const GUARD_CASES = [                            // ChoralRoot's tests/install_t
 /* ------------------------------------------------------------- (b) the shape --- */
 const MOD_OPEN = '<script type="module">';
 const modSrc = html.slice(html.indexOf(MOD_OPEN) + MOD_OPEN.length, html.indexOf("</script>", html.indexOf(MOD_OPEN)));
-ok(count(html, MOD_OPEN) === 1 && count(html, "<script") === 2 && !/<script[^>]*\ssrc=/.test(html) && !/<link\s/i.test(html),
-  "page: one module script and the Support script, no script or stylesheet from elsewhere");
+const links = html.match(/<link\s[^>]*>/gi) || [];   // only the site's own icons (no stylesheet, nothing from elsewhere)
+ok(count(html, MOD_OPEN) === 1 && count(html, "<script") === 2 && !/<script[^>]*\ssrc=/.test(html) &&
+   links.every((l) => /rel="(icon|apple-touch-icon)"/.test(l) && /href="\.\.\/[a-z0-9.-]+"/.test(l)),
+  "page: one module script and the Support script, no script or stylesheet from elsewhere (links: the icons, ../)");
 const imports = [...modSrc.matchAll(/^import \{([^}]*)\} from "([^"]+)";$/gm)].map((m) => ({ names: m[1].split(",").map((s) => s.trim()).filter(Boolean), from: m[2] }));
 ok(imports.map((i) => i.from).join() === "./fm1pkg.js,./fm1ota.js,./fm1backup.js" && count(modSrc, "import ") === 3,
   "page: imports ./fm1pkg.js, ./fm1ota.js, ./fm1backup.js (the same folder, relative)");
