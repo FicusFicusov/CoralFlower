@@ -137,6 +137,26 @@ static uint32_t cfa_next_place(uint32_t g)           /* the first step place aft
 }
 
 /* one step of the clocked modes; len: its length (samples x BPM x 2400), for its gate */
+/* n / d with a 32-bit divisor, without a 64-bit division: the device's toolchain (pi32v2) has no __udivdi3 (nor
+ * __divdi3), so no code here may divide a 64-bit value at run time. Long division bit by bit; a quotient that does not
+ * fit 32 bits saturates */
+static uint32_t cfa_div64(uint64_t n, uint32_t d)
+{
+    uint32_t hi = (uint32_t)(n >> 32), lo = (uint32_t)n, q = 0, r = hi;
+    int i;
+    if (!d || hi >= d)
+        return 0xFFFFFFFFu;
+    for (i = 31; i >= 0; i--) {
+        uint32_t top = r >> 31;                  /* (the remainder's 33rd bit: then it is past d for sure) */
+        r = r << 1 | (lo >> i & 1u);
+        if (top || r >= d) {
+            r -= d;
+            q |= 1u << i;
+        }
+    }
+    return q;
+}
+
 static void cfa_step_n(uint64_t len)
 {
     int nt = cfa_pick(cfa.idx);
@@ -148,7 +168,10 @@ static void cfa_step_n(uint64_t len)
     cfa.cur = (uint8_t)nt;
     cfa_play((uint32_t)nt);
     /* the gate in samples: the step's (len / (BPM x 2400)) x GATE % (a full gate lets go just as the next comes) */
-    cfa.gate_left = (uint32_t)(len / ((uint64_t)cfa_bpm() * 2400u) * g / 100u);
+    {
+        uint32_t st = cfa_div64(len, cfa_bpm() * 2400u);   /* (the step in samples; x GATE % without overflow) */
+        cfa.gate_left = st / 100u * g + st % 100u * g / 100u;
+    }
     if (g >= 100u)
         cfa.gate_left += CTL;
 }

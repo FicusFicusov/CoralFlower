@@ -112,10 +112,18 @@ static int32_t cv_wave(int shape, uint32_t ph)
     default: return osc_sine(ph);
     }
 }
+/* (cyc << 24) / w, the phase step of a picture's wave, in 32 bits: the device has no 64-bit division (__divdi3); the
+ * low 8 bits of the step go (a 1/16M of a cycle: nothing a 240-pixel picture shows) */
+static uint32_t cv_step(int32_t cyc, int w)
+{
+    uint32_t c = (uint32_t)(cyc < 0 ? 0 : cyc > 32767 ? 32767 : cyc);
+    return (c << 16) / (uint32_t)(w > 0 ? w : 1) << 8;
+}
+
 static void draw_wave(int x0, int ym, int w, int amp, int32_t cyc256, uint32_t ph, int shape, uint8_t c, int dots)
 {
     int x, py = 0;
-    uint32_t step = (uint32_t)(((int64_t)cyc256 << 24) / (w > 0 ? w : 1));
+    uint32_t step = cv_step(cyc256, w);
     for (x = 0; x < w; x++) {
         int y = ym - (int)(cv_wave(shape, ph + step * (uint32_t)x) * amp / 32768);
         if (dots && (x & 1))
@@ -432,7 +440,7 @@ static void view_va_osc(int x0, uint32_t k, uint32_t pg)
     int32_t wave = cv_va(2u * k, 0), lvl = cv_va(2u * k, 1), coarse = cv_va(2u * k, 2), fine = cv_va(2u * k, 3);
     int32_t mode = cv_va(2u * k + 1u, 0), shape = cv_va(2u * k + 1u, 1), ktrk = cv_va(2u * k + 1u, 2);
     int32_t cyc = cv_cycles(coarse), amp = 4 + 22 * lvl / 127, x, py = 0, ym = VIEW_Y + 30, w = 150, i;
-    uint32_t step = (uint32_t)(((int64_t)cyc << 24) / w), ph = (uint32_t)fine * 600000u * (cu.now / 40u);
+    uint32_t step = cv_step(cyc, w), ph = (uint32_t)fine * 600000u * (cu.now / 40u);
     uint8_t c = lvl ? C_ACC(0) : FL_INK3;
     fb_hline(x0 + 4, ym, w, FL_BG3);
     for (x = 0; x < w; x++) {
@@ -572,7 +580,7 @@ static void view_va_lfo(int x0, uint32_t pg)
         int32_t rate = cv_va(18u + pg, 0), wv = cv_va(18u + pg, 1), dep = cv_va(18u + pg, 2), fade = cv_va(18u + pg, 3);
         int ym = VIEW_Y + 28, amp = 3 + 22 * (int)dep / 127, fpx = (int)fade * w / 160;
         int32_t cyc = 128 + rate * 6 * 256 / 127;
-        uint32_t step = (uint32_t)(((int64_t)cyc << 24) / w);
+        uint32_t step = cv_step(cyc, w);
         int dot = (int)((cu.now * (uint32_t)(2 + rate)) / 64u % (uint32_t)w);
         char b[40];
         static const uint8_t SH[5] = {0, 1, 2, 3, 3};
@@ -933,7 +941,7 @@ static void view_fm_lfo(int x0, int pg)
     int dly = cv_fg(FP_LFD), pms = cv_fg(FP_LPMS) & 7, sync = cv_fg(FP_LKS), xa = x0 + 60, w = 140, x, i;
     static const uint8_t SH[6] = {1, 2, 2, 3, 0, 3};
     int32_t cyc = 256 + sp * 7 * 256 / 99;
-    uint32_t step = (uint32_t)(((int64_t)cyc << 24) / w);
+    uint32_t step = cv_step(cyc, w);
     static const char *const LN[3] = {"LFO", "pitch", "loud"};
     for (i = 0; i < 3; i++) {                     /* the LFO, then the pitch and the loudness it moves */
         int ym = VIEW_Y + 8 + i * 22, amp = i == 0 ? 8 : i == 1 ? pmd * (pg ? pms : 7) * 8 / (99 * 7) : amd * 8 / 99, py = 0;
@@ -1286,7 +1294,7 @@ static void draw_loop_timeline(int x, int y, int w, int rows_h, int small)
     if (rh > 10u)
         rh = 10u;
     for (t = 0; t <= len; t += CFL_PPQN) {       /* the beats, the bars taller */
-        int bx = x + (int)((uint64_t)t * (uint32_t)w / len);
+        int bx = x + (int)(t * (uint32_t)w / len);   /* (32 bits: a loop's ticks x 220 px stay far below 2^32) */
         if (t % bar == 0u)
             fb_vline(bx, y - 3, (int)(rh * (nl > 6u ? 6u : nl)) + 5, FL_BG3);
         else if (!small)
@@ -1309,7 +1317,7 @@ static void draw_loop_timeline(int x, int y, int w, int rows_h, int small)
             t1 = e->t + CFL_PPQN / 4u;
         row = layer < 6u ? layer : 5u;
         {                                        /* (one chord after another a shade apart; its root named in it) */
-            int x0 = x + (int)((uint64_t)e->t * (uint32_t)w / len), x1 = x + (int)((uint64_t)t1 * (uint32_t)w / len);
+            int x0 = x + (int)(e->t * (uint32_t)w / len), x1 = x + (int)(t1 * (uint32_t)w / len);
             uint8_t c = lit ? C_ACC(0) : (nth++ & 1u) ? C_ACC(2) : C_ACC(1);
             fb_rect(x0, y + (int)(row * rh), x1 - x0 > 1 ? x1 - x0 - 1 : 1, (int)rh - 2, c);
             if (!small && rh >= 9u && x1 - x0 >= 12) {
@@ -1328,7 +1336,7 @@ static void draw_loop_timeline(int x, int y, int w, int rows_h, int small)
     {                                            /* the playhead (a take: its front) */
         uint32_t p = rec ? cf_sn.loop_rec : cf_sn.loop_pos;
         if (rec || cf_sn.loop_state == CFL_PLAYING) {
-            int px = x + (int)((uint64_t)(p > len ? len : p) * (uint32_t)w / len);
+            int px = x + (int)((p > len ? len : p) * (uint32_t)w / len);
             fb_vline(px, y - 4, (int)(rh * (nl > 6u ? 6u : nl)) + 7, rec ? FL_C(FL_R_FIRE, 1) : FL_INK);
         }
     }

@@ -305,7 +305,9 @@ static void cfm_tick(uint32_t n, uint32_t pulses)
 #endif
     }
     cf_grid.on = 1;                              /* (the arpeggiator's lock: where the beat is, in 1/24 beats) */
-    cf_grid.g24 = cfm.beats_done * 24u + (uint32_t)((uint64_t)cfm.acc * 24u / (FS * 60u));
+    cf_grid.g24 = cfm.beats_done * 24u + cfm.acc / (FS * 60u / 24u);   /* (FS x 60 / 24 is whole: acc x 24 / (FS x 60)
+                                                                          * without a 64-bit division, which the
+                                                                          * device has none of) */
 }
 static void cfm_restart(void)
 {

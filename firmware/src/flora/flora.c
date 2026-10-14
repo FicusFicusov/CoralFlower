@@ -61,7 +61,7 @@ static int32_t fl_approach(int32_t v, int32_t t, uint32_t dt, int32_t tau)
     int32_t d = t - v, s;
     if (d == 0)
         return v;
-    s = (int32_t)((int64_t)d * (int32_t)(dt < 200 ? dt : 200) / tau);
+    s = d * (int32_t)(dt < 200 ? dt : 200) / tau;   /* (32 bits: |d| <= 65535 x 200; the device has no __divdi3) */
     if (s == 0)
         s = d > 0 ? 1 : -1;
     if ((d > 0 && s > d) || (d < 0 && s < d))
