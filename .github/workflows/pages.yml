@@ -1,0 +1,120 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Publish the GitHub Pages site: https://ficusficusov.github.io/CoralFlower/
+#   /           the browser emulator (tools/emu/web, built with Emscripten)
+#   /install/   the web installer (web/install/index.html and web/fm1*.js)
+#   /firmware/  the packages web/releases.json lists, each downloaded from its release and checked against its
+#               sha256 (a browser cannot fetch a release asset: no CORS), with releases.json, SHA256SUMS and the
+#               licences
+# Runs on a push to main that touches the site's sources, by hand (workflow_dispatch), and from release.yml after a
+# release. Settings -> Pages -> Source: "GitHub Actions".
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tools/emu/**"
+      - "web/**"
+      - "firmware/**"
+      - "assets/**"
+      - "tools/*.py"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  PYTHON_VERSION: "3.11"
+  PILLOW_VERSION: "11.1.0"
+  FONTTOOLS_VERSION: "4.66.1"
+  EMSDK_VERSION: "6.0.12"           # the Emscripten the emulator is made with on the Mac
+
+jobs:
+  site:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Python packages (Pillow with Raqm, fontTools)
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends libfribidi0 libraqm0
+          python3 -m pip install --disable-pip-version-check "Pillow==$PILLOW_VERSION" "fonttools==$FONTTOOLS_VERSION"
+
+      - uses: mymindstorm/setup-emsdk@4528d102f7230f0e7b276855c01ea1159be0e984 # v16
+        with:
+          version: ${{ env.EMSDK_VERSION }}
+          actions-cache-folder: emsdk-cache
+
+      - name: Build the browser emulator (tools/emu/web)
+        run: |
+          set -euo pipefail
+          emcc --version | head -1
+          # the generated headers only (the whole tools/build.py needs the JieLi toolchain; the emulator does not)
+          python3 -c 'import sys; sys.path.insert(0, "tools"); import build; build.generate()'
+          sh tools/emu/web/build_web.sh
+
+      - name: The packages of web/releases.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/site/firmware
+          if [ -f web/releases.json ]; then cp web/releases.json build/site/firmware/; else echo '{"releases": []}' > build/site/firmware/releases.json; fi
+          python3 -c 'import json; [print(r["version"], r["tag"], r["sha256"]) for r in json.load(open("build/site/firmware/releases.json"))["releases"]]' > build/list.txt
+          : > build/site/firmware/SHA256SUMS
+          while read -r v tag sha; do
+            pkg="coralflower-$v.fwsc"
+            gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern "$pkg" --dir build/site/firmware --clobber
+            echo "$sha  build/site/firmware/$pkg" | sha256sum -c -
+            echo "$sha  $pkg" >> build/site/firmware/SHA256SUMS
+          done < build/list.txt
+          cp LICENSE LICENSING.md build/site/firmware/
+
+      - name: Make the site
+        run: |
+          set -euo pipefail
+          cp build/emu-web/index.html build/emu-web/emu.js build/emu-web/keymap.js build/emu-web/worklet.js \
+             build/emu-web/coralflower.wasm build/emu-web/DepartureMono-Regular.otf build/site/
+          if [ -f web/install/index.html ]; then
+            mkdir -p build/site/install
+            cp web/install/index.html web/fm1pkg.js web/fm1ota.js web/fm1backup.js build/site/install/
+          fi
+          touch build/site/.nojekyll
+          find build/site -type f | sort
+
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: build/site
+
+  deploy:
+    needs: site
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

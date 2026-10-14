@@ -1,0 +1,189 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Build the CoralFlower package (after ChoralRoot FM-1's release.yml).
+#   workflow_dispatch (version)  -> build only; the package is a workflow artifact (coralflower-X.Y): a candidate to
+#                                   test on a unit (the web installer's "Choose a .fwsc file")
+#   push of a tag vX.Y           -> build, create the GitHub release vX.Y with the assets, then run pages.yml
+# On ubuntu (x86-64) tools/build.py runs the JieLi toolchain natively, no Docker.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build, e.g. 0.1-rc1 (X.Y, X.Y.Z or X.Y-suffix). Builds an artifact; no release."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}-${{ inputs.version }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  # the three SDK files the package uses (tools/fm1pkg_make.py); their SHA-256 are tools/build.py SDK_SHA256
+  AC79_SDK_TAG: AC79NN_SDK_V1.2.1_2023-12-13
+  # as ChoralRoot's reference builds: the generated headers (fonts with Raqm) depend on these versions
+  PYTHON_VERSION: "3.11"
+  PILLOW_VERSION: "11.1.0"
+  FONTTOOLS_VERSION: "4.66.1"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = push ]; then v="${GITHUB_REF_NAME#v}"; else v="$INPUT_VERSION"; fi
+          if [[ ! "$v" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?(-[A-Za-z0-9.]+)?$ ]]; then
+            echo "::error::version '$v' is not X.Y, X.Y.Z or X.Y-suffix; tags are vX.Y"
+            exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          {
+            echo "VERSION=$v"
+            echo "JIELI_TOOLCHAIN=$HOME/.jieli/toolchain"
+            echo "AC79_SDK=$GITHUB_WORKSPACE/tools/sdk"
+          } >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Python packages (Pillow with Raqm, fontTools)
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends libfribidi0 libraqm0 zip
+          python3 -m pip install --disable-pip-version-check "Pillow==$PILLOW_VERSION" "fonttools==$FONTTOOLS_VERSION"
+          python3 -c 'from PIL import features; import sys; ok = features.check("raqm"); print("raqm", features.version("raqm")); sys.exit(0 if ok else "Pillow has no Raqm layout")'
+
+      - name: Cache the JieLi toolchain
+        id: toolchain-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.jieli
+          key: jieli-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/get_toolchain.sh') }}
+
+      - name: Fetch the JieLi toolchain (pkgman.jieliapp.com)
+        if: steps.toolchain-cache.outputs.cache-hit != 'true'
+        run: sh tools/get_toolchain.sh "$HOME/.jieli"
+
+      - name: Check the toolchain and the SDK files
+        run: |
+          set -euo pipefail
+          "$JIELI_TOOLCHAIN/pi32v2/bin/clang" --version | head -1
+          python3 - <<'PY'
+          import ast, hashlib, os, sys
+          from pathlib import Path
+          tree = ast.parse(Path("tools/build.py").read_text(encoding="utf-8"))
+          want = next(ast.literal_eval(n.value) for n in tree.body if isinstance(n, ast.Assign)
+                      and any(getattr(t, "id", "") == "SDK_SHA256" for t in n.targets))
+          root = Path(os.environ["AC79_SDK"]) / "cpu" / "wl82" / "tools"
+          bad = [rel for rel, sha in want.items()
+                 if not (root / rel).is_file() or hashlib.sha256((root / rel).read_bytes()).hexdigest() != sha]
+          for rel in want:
+              print("sdk", rel, "BAD" if rel in bad else "ok")
+          sys.exit(f"AC79 SDK files missing or different from {os.environ['AC79_SDK_TAG']}: {bad}" if bad else 0)
+          PY
+
+      - name: Build (./build.sh --release)
+        run: |
+          set -euo pipefail
+          ulimit -n 8192 || true          # the JieLi linker opens many files (the toolchain's README)
+          ./build.sh --release "$VERSION"
+          rel="build/release-$VERSION"
+          for f in "coralflower-$VERSION.fwsc" "coralflower-$VERSION-app.bin" SHA256SUMS LICENSE LICENSING.md; do
+            if [ ! -s "$rel/$f" ]; then
+              echo "::error::$rel/$f is missing"
+              exit 1
+            fi
+          done
+          (cd "$rel" && sha256sum -c SHA256SUMS && zip -q -r LICENSES.zip LICENSES)
+          ls -l "$rel"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coralflower-${{ env.VERSION }}
+          path: build/release-${{ env.VERSION }}/
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write                 # create the release and upload its assets
+      actions: write                  # start pages.yml (a release made with GITHUB_TOKEN starts no workflow itself)
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: docs/releases
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: coralflower-${{ needs.build.outputs.version }}
+          path: release
+
+      - name: Collect the release assets
+        run: |
+          set -euo pipefail
+          mkdir assets
+          for f in "coralflower-$VERSION.fwsc" "coralflower-$VERSION-app.bin" SHA256SUMS LICENSE LICENSING.md LICENSES.zip; do
+            cp "release/$f" assets/
+          done
+          ls -l assets
+
+      - name: Release notes (docs/releases/<version>.md, then the install text)
+        run: |
+          set -euo pipefail
+          {
+            if [ -f "docs/releases/$VERSION.md" ]; then cat "docs/releases/$VERSION.md"; echo; echo "---"; echo; fi
+            sed "s/@VERSION@/$VERSION/g" <<'EOT'
+          CoralFlower @VERSION@ for the M-VAVE FM-1 (package identity FM-1_930).
+
+          Install it from your browser at https://ficusficusov.github.io/CoralFlower/install/ (Chrome or Edge, with the FM-1 connected by USB). You can also try CoralFlower in the browser first, with no install: https://ficusficusov.github.io/CoralFlower/
+
+          `SHA256SUMS` lists the package and the app. The package holds three JieLi AC79 SDK files (Apache-2.0); `LICENSE`, `LICENSING.md` and `LICENSES.zip` carry every licence. Installing firmware is at your own risk; the official M-VAVE firmware can always be reinstalled.
+          EOT
+          } > release-body.md
+
+      - name: Create the release
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: CoralFlower ${{ needs.build.outputs.version }}
+          prerelease: ${{ contains(needs.build.outputs.version, '-') }}
+          fail_on_unmatched_files: true
+          files: assets/*
+          body_path: release-body.md
+
+      - name: Publish the site (pages.yml)
+        if: ${{ !contains(env.VERSION, '-') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref "$DEFAULT_BRANCH"
+          echo "::notice::pages.yml started (Actions tab); the site follows in a minute or two"

@@ -5,13 +5,12 @@
 
   tools/build.py [--release X.Y[-suffix]]
 
-The unit is firmware/src/choralroot.c (ChoralRoot's single compilation unit, a fork of Felucca's felucca.c).
-Outputs in build/: choralroot.bin (app.bin: the boot stub's 0xEE0 bytes, then the app), choralroot.elf,
-choralroot.dis (the app), stub/stub.{bin,elf,dis} (the boot stub, firmware/stub; docs/BOOT-SAFETY.md),
-loader/ota.bin (update loader), choralroot.fwsc (package, identity FM-1_920). A release build (--release X.Y) keeps the identity, sets the
-version string to "ChoralRoot X.Y" and writes choralroot-X.Y.fwsc and a folder release-X.Y/ with the package,
-the app (choralroot-X.Y-app.bin), SHA256SUMS and the licence files (the CC0 sample attribution only for a build with
-FELUCCA_SAMPLE=1: ChoralRoot is all-synth, its image holds no samples).
+The unit is firmware/src/coralflower.c (CoralFlower's single compilation unit, after ChoralRoot's choralroot.c, a
+fork of Felucca's felucca.c). Outputs in build/: coralflower.bin (app.bin: the boot stub's 0xEE0 bytes, then the app),
+coralflower.elf, coralflower.dis (the app), stub/stub.{bin,elf,dis} (the boot stub, firmware/stub), loader/ota.bin
+(update loader), coralflower.fwsc (package, identity FM-1_930). A release build (--release X.Y) keeps the identity,
+sets the version string to "CoralFlower X.Y" and writes coralflower-X.Y.fwsc and a folder release-X.Y/ with the
+package, the app (coralflower-X.Y-app.bin), SHA256SUMS and the licence files (LICENSE, LICENSING.md, LICENSES/).
 After the checks it prints the section sizes against the XIP slot and the RAM / POOL / NOINIT regions.
 See BUILDING.md for the toolchain and the SDK.
 
@@ -59,7 +58,7 @@ SDK_SHA256 = {
 
 UNIT = "coralflower"                # firmware/src/UNIT.c; outputs build/UNIT.{bin,elf,dis,fwsc}
 PRODUCT = "FM-1_930"                # package identity (CoralFlower: constant, releases too)
-VERSION = None                      # FELUCCA_VERSION for release builds (default: firmware/src/choralroot.c)
+VERSION = None                      # FELUCCA_VERSION for release builds (default: firmware/src/coralflower.c)
 XIP_LEN, RAM_LEN, POOL_LEN, NOINIT_LEN = fm1pkg_make.BODY_MAX, 96 * 1024, 0x54000, 0x3D30   # firmware/app.ld
 
 
@@ -257,7 +256,7 @@ def build_app(stub):
                  "FELUCCA_SLICER", "FELUCCA_FM4", "FELUCCA_SAMPLE", "FELUCCA_GRAIN", "FELUCCA_DRUM", "FELUCCA_SEQ",
                  "FELUCCA_CZ", "FELUCCA_QUAD", "FELUCCA_ANALOG", "FELUCCA_PHASE", "FELUCCA_LOFI", "FELUCCA_VOICE",
                  "FELUCCA_TRIO", "FELUCCA_NOISE", "FELUCCA_PHYS"):
-        v = os.environ.get(flag)    # unset: the default in firmware/src/choralroot.c
+        v = os.environ.get(flag)    # unset: the default in firmware/src/coralflower.c
         if v in ("0", "1"):
             flags.append(f"-D{flag}={v}")
     # the delay's and the reverb's rate (1 full, 2 half) and their loops in RAM (docs/FX.md "Half rate or full"): for
@@ -436,15 +435,15 @@ def mmio_check():
 def main():
     global VERSION
     ap = argparse.ArgumentParser()
-    ap.add_argument("--release", metavar="X.Y", help=f"release build: identity {PRODUCT}, version string ChoralRoot X.Y")
+    ap.add_argument("--release", metavar="X.Y", help=f"release build: identity {PRODUCT}, version string CoralFlower X.Y")
     ap.add_argument("--sdk", type=Path, help="JieLi AC79 SDK checkout (default: $AC79_SDK)")
     a = ap.parse_args()
     name = f"{UNIT}.fwsc"
-    if a.release:                   # the identity stays FM-1_920: only the version string and the names change
+    if a.release:                   # the identity stays FM-1_930: only the version string and the names change
         m = re.fullmatch(r"\d+\.\d+(?:\.\d+)?(?:-[A-Za-z0-9.]+)?", a.release)   # the identity never encodes it
         if not m:
             raise SystemExit(f"--release {a.release}: use X.Y, X.Y.Z or X.Y-suffix")
-        VERSION = "ChoralRoot " + a.release.lower()      # e.g. ChoralRoot 1.0, ChoralRoot 1.1-rc1
+        VERSION = "CoralFlower " + a.release.lower()     # e.g. CoralFlower 0.1, CoralFlower 0.1-rc1 (the INFO text)
         name = f"{UNIT}-{a.release}.fwsc"
     fm1pkg_make.SDK = a.sdk
     for rel, sha in SDK_SHA256.items():          # fail early without the SDK
