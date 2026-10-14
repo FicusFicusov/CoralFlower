@@ -162,6 +162,7 @@ static void cf_ui_pump(void);
 #include "cf_screens.c"
 #include "cf_splash.c"
 #include "fm6_store.c"
+#include "cf_backup.c"                     /* backup / restore over SysEx (after usb.c, the stores, cf_ui.c, cf_settings.c) */
 #include "cf_shim.c"
 
 /* ----------------------------------------------------------- update --- */

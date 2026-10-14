@@ -135,6 +135,7 @@ static void cf_ui_pump(void);
 #include "../../firmware/src/cf_screens.c"
 #include "../../firmware/src/cf_splash.c"
 #include "../../firmware/src/fm6_store.c"
+#include "../../firmware/src/cf_backup.c"             /* (the backup protocol, its handler; no SysEx transport here) */
 /* the update gesture (cf_shim.c's cr_update_poll on the unit): the emulator says what the unit would do and ends */
 #define CRB_STUB_VER() ((unsigned)(getenv("EMU_STUB") ? atoi(getenv("EMU_STUB")) : 0))
 #define CRB_STUB_GO(w) do { printf("restart: stub request %08X\n", (unsigned)(w)); fflush(stdout); exit(0); } while (0)

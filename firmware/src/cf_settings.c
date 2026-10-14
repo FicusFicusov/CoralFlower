@@ -27,6 +27,7 @@ static cf_rec_t cf_rec;
 static uint32_t cfs_saved, cfs_seen;      /* the check of what flash holds, of cs at the last poll */
 static uint32_t cfs_changed_ms, cfs_sound_ms, cfs_retry_ms;
 static uint8_t cfs_loaded;                /* cs came from flash at power-on */
+static uint8_t cfs_restore_lock;          /* a backup restored the record (cf_backup.c): no save until the restart */
 
 static uint32_t cfs_fnv(const void *p, uint32_t n)
 {
@@ -148,7 +149,7 @@ static int cfs_sounding(void)
 static void settings_poll(void)
 {
     uint32_t now = cu.now, h;
-    if (cr_safe || !cu.booted)
+    if (cr_safe || !cu.booted || cfs_restore_lock)
         return;
     if (cfs_sounding())
         cfs_sound_ms = now;
@@ -166,6 +167,6 @@ static void settings_poll(void)
 /* main.c, after the power-on calibration: at once */
 static void settings_save(void)
 {
-    if (!cr_safe)
+    if (!cr_safe && !cfs_restore_lock)
         cf_settings_write();
 }
