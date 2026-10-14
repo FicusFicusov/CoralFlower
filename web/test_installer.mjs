@@ -414,7 +414,7 @@ async function readyPage(dev, opts = {}) {
   ok(p.$.pkg.className === "pkg ok" && p.$.pkg.textContent === en.pkgOk.replace("{name}", "coralflower-0.2-test.fwsc") &&
      p.$["pkg-sum"].textContent === "SHA-256 " + await sha256(good) && p.$["pkg-name"].textContent === "coralflower-0.2-test.fwsc",
      "file: a well-formed FM-1_930 package -> ready, checked, its SHA-256 shown");
-  ok(!p.$.go.disabled && p.$.go.textContent === "Install coralflower-0.2-test.fwsc", "file: Install enabled, named after the file");
+  ok(!p.$.go.disabled && p.$.go.textContent === "Install on your FM-1" && p.$.ver.textContent === "coralflower-0.2-test.fwsc", "file: Install enabled, named after the file");
   // refusals: each leaves Install off, and says why
   const refusals = [
     ["another identity (ChoralRoot's FM-1_920)", makePkg({ product: "FM-1_920" }), "pkgIdentity", "FM-1_920"],
@@ -635,15 +635,15 @@ async function readyPage(dev, opts = {}) {
   ok(!p.$.versions.hidden && p.$["rel-none"].hidden && !p.$["rel-some"].hidden && count(chips, 'class="chip"') === 2 && chips.includes('data-ver="0.2" aria-pressed="true"') &&
      chips.includes("Newest") && chips.includes('data-ver="0.1" aria-pressed="false"') && !chips.includes('data-ver="0.0"'),
      "releases: two chips (the entry without a SHA-256 left out), the newest chosen");
-  ok(p.$.pkg.textContent === en.pkgRelOk.replace("{version}", "0.2") && p.$.pkg.className === "pkg ok" && !p.$.go.disabled && p.$.go.textContent === "Install CoralFlower 0.2" &&
+  ok(p.$.pkg.textContent === en.pkgRelOk.replace("{version}", "0.2") && p.$.pkg.className === "pkg ok" && !p.$.go.disabled && p.$.go.textContent === "Install on your FM-1" && p.$.ver.textContent.startsWith("CoralFlower 0.2") &&
      p.fetched.includes("../firmware/coralflower-0.2.fwsc"), "releases: the newest fetched from ../firmware/, sha256 and package checked, Install CoralFlower 0.2");
   ok(p.$.notes.innerHTML.includes("Coral growth follows the chord.") && p.$.notes.innerHTML.includes('href="../firmware/coralflower-0.2.fwsc" download') &&
      p.$.notes.innerHTML.includes("2 November 2026"), "releases: the chosen version's notes, date and download link");
   await p.$.versions.fire("click", { target: { closest: () => ({ dataset: { ver: "0.1" }, disabled: false }) } });
-  ok(p.$.go.textContent === "Install CoralFlower 0.1" && p.$.versions.innerHTML.includes('data-ver="0.1" aria-pressed="true"') && p.$.pkg.className === "pkg ok",
+  ok(p.$.ver.textContent.startsWith("CoralFlower 0.1") && p.$.versions.innerHTML.includes('data-ver="0.1" aria-pressed="true"') && p.$.pkg.className === "pkg ok",
     "releases: an older chip chosen -> its own package, checked");
   await choose(p, "candidate.fwsc", good);
-  ok(p.$.go.textContent === "Install candidate.fwsc" && !p.$.versions.innerHTML.includes('aria-pressed="true"'), "releases: a file chosen instead -> no chip pressed, Install names the file");
+  ok(p.$.ver.textContent === "candidate.fwsc" && !p.$.versions.innerHTML.includes('aria-pressed="true"'), "releases: a file chosen instead -> no chip pressed, Install names the file");
   await p.$.versions.fire("click", { target: { closest: () => ({ dataset: { ver: "0.2" }, disabled: false }) } });
   await p.$.go.fire("click");
   ok(dev.identity === "FM-1_930" && dev.bad === 0 && p.$.status.textContent === en.done && /install: CoralFlower 0\.2 \(coralflower-0\.2\.fwsc\)/.test(p.$.log.textContent),

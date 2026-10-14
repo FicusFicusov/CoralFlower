@@ -236,6 +236,12 @@ main > .supportcard { max-width: none; margin-top: 16px; }   /* (the emulator's 
 .pitch .pkg.bad { box-shadow: none; color: var(--rose); }
 .versions:has(> .chip:only-child) { display: none; }          /* (one version: the button names it) */
 .pitch .alt { margin-top: 14px; padding-top: 0; border-top: 0; }
+.pitch .pkg.ok { display: none; }                            /* (ready: the button lit says it; only a problem shows) */
+.pitch .ver { margin: 10px 0 0; text-align: center; font-size: 13px; color: var(--ink3); }
+.pitch .ver:empty { display: none; }
+.pitch .tag { font-size: 19px; margin-bottom: 26px; }
+.pitch h1 { margin-bottom: 12px; }
+.own { margin: 0; padding: 0; border: 0; }
 </style>
 </head>
 <body>
@@ -258,20 +264,16 @@ main > .supportcard { max-width: none; margin-top: 16px; }   /* (the emulator's 
     <section class="hero" aria-labelledby="inst-h">
       <div class="stage">
         <div class="bezel"><img src="../images/grow.gif" width="480" height="280" alt="A pink pixel flower growing as chords are played"></div>
-        <p class="cap">a flower grows from every chord you play</p>
       </div>
       <div class="pitch">
-        <p class="eyebrow">Firmware for the M-VAVE FM-1</p>
         <h1 id="inst-h"><span class="c">Coral</span><span class="f">Flower</span></h1>
-        <p class="tag">Hold a root, add a colour, and the FM-1 plays the whole chord, in key, with a bass underneath.</p>
-        <ul class="tags"><li>Chords</li><li>Arpeggiator</li><li>Looper</li><li>GPL-3.0</li></ul>
+        <p class="tag">A chord instrument for the M-VAVE FM-1.</p>
         <div class="versions" id="versions" role="group" aria-label="Released versions" hidden></div>
-        <button id="go" type="button" disabled>Install CoralFlower</button>
+        <button id="go" type="button" disabled>Install on your FM-1</button>
         <progress id="bar" max="100" value="0" aria-label="Install progress"></progress>
+        <p class="ver" id="ver"></p>
         <p class="status" id="status" role="status"></p>
         <p class="pkg" id="pkg" role="status"></p>
-        <label class="check"><input id="backup-first" type="checkbox" checked><span>Back up my sounds first</span></label>
-        <p class="note" id="backup-note" role="status" hidden></p>
         <label class="check" id="force-box" hidden><input id="force-risk" type="checkbox"><span><b>I understand the risk.</b> Install over this firmware anyway.</span></label>
         <div class="panel fin" id="done" role="status" hidden>
           <p id="done-line"></p>
@@ -285,15 +287,6 @@ main > .supportcard { max-width: none; margin-top: 16px; }   /* (the emulator's 
           <p><b>One long flash, no flash, or a USB disk named WL82 UBOOT1.00?</b> See <a href="#dark">Device not found</a> below.</p>
         </div>
         <a class="play" href="../">&#9654; Play it in your browser first</a>
-        <div class="alt">
-          <p id="rel-none">Testing a build?</p>
-          <p id="rel-some" hidden>Or a build of your own:</p>
-          <div class="filepick">
-            <button class="btn quiet" id="pkg-pick" type="button">Choose a .fwsc file</button>
-            <span class="fname" id="pkg-name">No file chosen</span>
-            <input id="pkg-file" type="file" accept=".fwsc" hidden>
-          </div>
-        </div>
         <p class="sum" id="pkg-sum"></p>
         <div class="notes" id="notes"></div>
       </div>
@@ -332,6 +325,8 @@ main > .supportcard { max-width: none; margin-top: 16px; }   /* (the emulator's 
       </details>
       <details class="card" style="--c: var(--sea)">
         <summary>Back up and restore</summary>
+        <label class="check"><input id="backup-first" type="checkbox" checked><span><b>Back up my sounds before installing.</b> On by default.</span></label>
+        <p class="note" id="backup-note" role="status" hidden></p>
         <div class="cols2">
         <div>
           <p>A backup is one .json file. It holds everything saved on the FM-1: the settings, the 32 user sounds with their patches, the loops and the sound banks.</p>
@@ -397,6 +392,18 @@ main > .supportcard { max-width: none; margin-top: 16px; }   /* (the emulator's 
       </div>
       <details class="log"><summary>Show the log</summary><pre id="stock-log"></pre></details>
     </details>
+      <details class="card" style="--c: var(--lime)">
+        <summary>Install a build of your own</summary>
+        <div class="alt own">
+          <p id="rel-none">Testing a build?</p>
+          <p id="rel-some" hidden>Or a build of your own:</p>
+          <div class="filepick">
+            <button class="btn quiet" id="pkg-pick" type="button">Choose a .fwsc file</button>
+            <span class="fname" id="pkg-name">No file chosen</span>
+            <input id="pkg-file" type="file" accept=".fwsc" hidden>
+          </div>
+        </div>
+      </details>
       <details class="card" style="--c: var(--ink3)">
         <summary>What is on my FM-1?</summary>
         <div class="ask">
@@ -470,8 +477,8 @@ const TEXT = {
     reboot: "Restarting",
     done: "Done",
     // the firmware to install
-    installV: "Install {name}",
-    installNone: "Install CoralFlower",
+    installV: "Install on your FM-1",
+    installNone: "Install on your FM-1",
     noFile: "No file chosen",
     newest: "Newest",
     pkgChecking: "Checking {name} …",
@@ -692,7 +699,8 @@ function renderPick() {
   $("versions").innerHTML = releases.map((r, i) =>
     `<button type="button" class="chip" data-ver="${esc(r.version)}" aria-pressed="${!!(pick && pick.rel === r)}"${writing ? " disabled" : ""}>` +
     `<b>CoralFlower ${esc(r.version)}</b><span>${[i === 0 ? t("newest") : "", dateText(r.date)].filter(Boolean).map(esc).join(" · ")}</span></button>`).join("");
-  $("go").textContent = pick && image ? tv("installV", { name: pick.label }) : t("installNone");   // (named once it is checked)
+  $("go").textContent = pick && image ? tv("installV", { name: pick.label }) : t("installNone");
+  $("ver").textContent = pick ? [pick.label, pick.rel ? dateText(pick.rel.date) : ""].filter(Boolean).join(" \u00b7 ") : "";
   $("notes").innerHTML = pick && pick.rel ? notesOf(pick.rel) : "";
 }
 function newChoice(p) {                          // a new choice: nothing checked yet, the last run's panels go
