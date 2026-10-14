@@ -9,6 +9,10 @@
 //               1-16, 17-32: voice + function settings), 12 13 the CZ-1 tones (user sounds 1-16, 17-32), 14..21 the
 //               CZ-1 banks A..H, 22 the FM TONE patches (0.14), 40..49 loop slots (no samples: the
 //               all-synth firmware has no SAMPLE engine; ChoralRoot 0.1 archives with 32 33 restore without them)
+//   CoralFlower 6 7 user sound banks, 8 the FM6 bank, 9 the VA patches, 10 11 the FM6 patches (ChoralRoot's ids and
+//               formats: the sounds go both ways), 30 its settings, 31 its loop (ids of its own: a ChoralRoot record
+//               never lands in them; ChoralRoot's 1 and 40..49 are reported skipped there, and CoralFlower's 30 31 on
+//               ChoralRoot)
 // so a Felucca archive restores its settings, banks and FM6 bank on ChoralRoot (its samples are reported skipped), and
 // a ChoralRoot archive those (its settings record cut back to Felucca's) on Felucca; the rest stays in the file.
 export const BACKUP_IDS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 32, 33, 34];   // Felucca's archive (8: the FM6 patch bank)
@@ -19,7 +23,8 @@ export const CR_CZ_BANK_IDS = Array.from({ length: 8 }, (_, k) => 14 + k);
 export const CR_BACKUP_IDS = [1, 6, 7, 8, 9, 10, 11, 12, 13, ...CR_CZ_BANK_IDS, 22, ...CR_LOOP_IDS];  // ChoralRoot's (9:
                                          // the VA patches, 10 11: the FM6 patches, 12 13: the CZ-1 tones, 14..21: the
                                          // CZ-1 banks, 22: the FM TONE patches, 40..49: loops)
-const KNOWN = new Set([...BACKUP_IDS, ...CR_BACKUP_IDS]);
+export const CF_BACKUP_IDS = [6, 7, 8, 9, 10, 11, 30, 31];   // CoralFlower's (firmware/src/cf_backup.c)
+const KNOWN = new Set([...BACKUP_IDS, ...CR_BACKUP_IDS, ...CF_BACKUP_IDS]);
 export const BACKUP_CMD = { INFO: 1, LIST: 65, GET: 66, PUT: 67, RESTART: 72 };
 const BACKUP_CHUNK = 256;
 const isSample = (id) => id >= 32 && id <= 34;
@@ -37,6 +42,8 @@ export function objectName(id) {
   if (id === 22) return "FM TONE patches";
   if (isSample(id)) return `sample slot ${id - 31}`;
   if (id >= 40 && id <= 49) return `loop slot ${id - 39}`;
+  if (id === 30) return "CoralFlower settings";
+  if (id === 31) return "CoralFlower loop";
   return `object ${id}`;
 }
 export const bkU32 = (n) => Array.from({ length: 5 }, (_, i) => (n >>> (i * 7)) & (i === 4 ? 15 : 127));
@@ -95,7 +102,10 @@ export function bkManifest(a) {
   });
 }
 const bkBase64 = (bytes) => { let s = ""; for (const b of bytes) s += String.fromCharCode(b); return btoa(s); };
-export const backupFamily = (firmware) => (/^choralroot/i.test(firmware || "") ? "choralroot" : /^felucca/i.test(firmware || "") ? "felucca" : "other");
+// CoralFlower answers ChoralRoot's protocol on ChoralRoot's objects (its cr_backup.c), RESTART included: its own family
+// for the file name (coralflower-backup-YYYYMMDD.json), the same handling as ChoralRoot everywhere else
+export const backupFamily = (firmware) => (/^coralflower/i.test(firmware || "") ? "coralflower" : /^choralroot/i.test(firmware || "") ? "choralroot" :
+  /^felucca/i.test(firmware || "") ? "felucca" : "other");
 export function readBackup(file) {
   if (typeof file === "string") file = JSON.parse(file);
   if (!file || file.format !== "felucca-backup" || file.version !== 1 || !Array.isArray(file.objects) || !file.objects.length)
@@ -221,7 +231,7 @@ export async function deviceInfo(request) {
   const end = a.indexOf(0), version = String.fromCharCode(...a.slice(0, end < 0 ? a.length : end));
   return { version, family: backupFamily(version) };
 }
-// ChoralRoot: restart after a restore, so everything restored loads from flash (its settings wait for it)
+// ChoralRoot and CoralFlower: restart after a restore, so everything restored loads from flash (its settings wait for it)
 export async function restartDevice(request) {
   const a = await request([BACKUP_CMD.RESTART, []], { timeout: 2000, retries: 0 });
   bkCheck(a[0]);

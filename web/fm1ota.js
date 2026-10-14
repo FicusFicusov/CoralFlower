@@ -65,13 +65,15 @@ function parseIdentity(pkt) {
   return m ? { text: txt, model: m[1], version: parseInt(m[2], 10) } : null;
 }
 
-// ---- which firmware runs: may ChoralRoot be installed over it? (docs/INSTALL-COMPAT.md; tools/fm1_install.py
-// classify_firmware is the same table). identity: the handshake text ("FM-1_015", "FM-1_910"); info: the version the
-// backup protocol's INFO answers ("FELUCCA v1.0", "MELODEE v0.11.1", "ChoralRoot 0.12"), null when it does not answer.
+// ---- which firmware runs: may CoralFlower be installed over it? (ChoralRoot's docs/INSTALL-COMPAT.md, plus CoralFlower
+// itself; tools/fm1_install.py classify_firmware is the same table). identity: the handshake text ("FM-1_015",
+// "FM-1_910", CoralFlower's "FM-1_930"); info: the version the backup protocol's INFO answers ("FELUCCA v1.0",
+// "MELODEE v0.11.1", "ChoralRoot 0.12", "CoralFlower 0.1"), null when it does not answer.
 // -> { verdict: "allow" | "refuse" | "loader", kind, name }. The 9xx identities are shared by every Felucca-based
 // firmware (FM-1_9XY from the release number: Felucca 0.9-beta FM-1_909, Felucca 1.0 FM-1_910, Sloop 2.0 FM-1_920 =
 // ChoralRoot's), so they are told apart by the INFO text only.
 export const RECOVERY_URL = "https://github.com/Quixotic7/MvaveFM1Unbricker";
+export const CF_EARLY = "CoralFlower (an early build without backup support)";
 export function classifyFirmware(identity, info) {
   const m = /^(ota-)?([^_]+)_(\d+)$/i.exec(identity || "");
   const v = (info || "").trim();
@@ -82,6 +84,10 @@ export function classifyFirmware(identity, info) {
   if (num >= 1 && num < 100) return { verdict: "allow", kind: "stock", name: `the official M-VAVE firmware (${identity})` };
   if (num === 0) return { verdict: "refuse", kind: "sloop", name: "Sloop's rescue mode (FM-1_000)" };
   if (num < 900) return { verdict: "refuse", kind: "unknown", name: `an unknown firmware (${identity})` };
+  // CoralFlower's own identity without an INFO answer: an early CoralFlower build, before its backup protocol (any
+  // other 9xx without INFO stays refused below)
+  if (m[3] === "930" && !v) return { verdict: "allow", kind: "coralflower", name: CF_EARLY };
+  if (/^coralflower\b/i.test(v)) return { verdict: "allow", kind: "coralflower", name: v };   // an update of CoralFlower
   if (/^choralroot\b/i.test(v)) return { verdict: "allow", kind: "choralroot", name: v };
   if (/^melodee\b/i.test(v)) return { verdict: "allow", kind: "melodee", name: `Melodee (${v.slice(8)})` };
   if (/sloop/i.test(v)) return { verdict: "refuse", kind: "sloop", name: "Sloop" };
@@ -94,10 +100,10 @@ export function classifyFirmware(identity, info) {
 }
 export function refusalText(name) {
   return `Installing over ${name} is not supported: ${REFUSE_REASON} ` +
-    `Return to the official V15 firmware with the installer you used for ${name} first, then install ChoralRoot. ` +
+    `Return to the official V15 firmware with the installer you used for ${name} first, then install CoralFlower. ` +
     `If an FM-1 is already dark (black screen, a "WL82 UBOOT1.00" USB disk): ${RECOVERY_URL}`;
 }
-export const REFUSE_REASON = "An install over it has left an FM-1 that no longer starts, and the data it leaves in the flash is not known to be safe for ChoralRoot.";
+export const REFUSE_REASON = "An install over it has left an FM-1 that no longer starts, and the data it leaves in the flash is not known to be safe for CoralFlower.";
 
 // one MIDI in/out pair with a SysEx queue
 class Link {
