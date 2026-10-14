@@ -176,15 +176,72 @@ dialog#donate .x:hover { color: var(--ground); background: var(--rose); }
 .opt.copied .go { color: var(--lime); }
 main > .supportcard { max-width: none; margin-top: 16px; }   /* (the emulator's card, as wide as the cards above it) */
 @media (max-width: 560px) { header { padding-top: 16px; } .card { padding: 16px 14px 16px 14px; } }
+
+/* the page as a release card: the flower on its screen, the name, one button; the steps as pictures; the screens */
+.brand { display: inline-flex; align-items: center; gap: 10px; font-size: 22px; color: var(--ink); text-decoration: none; }
+.brand img { image-rendering: pixelated; }
+.brand .c { color: var(--rose); } .brand .f { color: var(--lime); }
+.hero { display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px; align-items: center; margin: 18px 0 28px; }
+@media (min-width: 900px) { .hero { grid-template-columns: minmax(0, 11fr) minmax(0, 9fr); gap: 44px; } }
+.stage { position: relative; }
+.stage::before { content: ""; position: absolute; inset: -12% -8%; z-index: 0; pointer-events: none;
+                 background: radial-gradient(closest-side, rgba(232,104,121,0.35), rgba(150,33,121,0.18) 55%, transparent 80%); filter: blur(10px); }
+.bezel { position: relative; z-index: 1; padding: 14px; border-radius: 18px; background: linear-gradient(180deg, #1F1610, #0B0703);
+         box-shadow: 0 0 0 2px #2E2219, 0 30px 60px -20px rgba(0,0,0,0.8), inset 0 1px 0 rgba(255,255,255,0.05); }
+.bezel img { display: block; width: 100%; height: auto; border-radius: 6px; image-rendering: pixelated; background: #000; }
+.cap { position: relative; z-index: 1; margin: 12px 0 0; text-align: center; font-size: 13px; color: var(--ink3); }
+.eyebrow { margin: 0 0 8px; font-size: 13px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink3); }
+.pitch h1 { margin: 0 0 14px; font-size: clamp(40px, 7vw, 64px); line-height: 0.95; }
+.tag { margin: 0 0 16px; max-width: 34ch; font-size: 18px; line-height: 1.45; color: var(--ink2); }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 20px; padding: 0; list-style: none; }
+.tags li { padding: 4px 10px; border-radius: 6px; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink2); background: var(--raise); }
+.pitch #go { text-align: center; padding: 18px 20px; border-radius: 12px; font-size: clamp(19px, 4.6vw, 24px);
+             background: linear-gradient(135deg, var(--rose), #C9507A); box-shadow: 0 14px 34px -12px rgba(232,104,121,0.85);
+             white-space: nowrap; overflow-wrap: normal; font-size: clamp(16px, 4.4vw, 24px); }
+.pitch #go:not(:disabled):hover { background: var(--fire); box-shadow: 0 14px 34px -12px rgba(249,198,42,0.8); }
+.pitch #go:disabled { background: var(--raise); box-shadow: none; }
+.pitch progress { margin-top: 14px; }
+.pitch progress[value="0"] { display: none; }
+.pitch .status:empty { display: none; }
+.pitch .check { margin: 14px 0 0; font-size: 14px; }
+.pitch .note { margin: 8px 0 0; padding-left: 10px; font-size: 13px; color: var(--ink2); box-shadow: inset 3px 0 0 var(--sea); }
+.alt { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 18px 0 0; padding-top: 14px; border-top: 1px solid var(--line); }
+.alt p { margin: 0; font-size: 14px; color: var(--ink3); }
+.alt .btn { padding: 6px 12px; font-size: 14px; }
+.alt .fname { font-size: 13px; }
+.play { display: inline-block; margin-top: 16px; color: var(--sea); text-decoration: none; }
+.play:hover { text-decoration: underline; }
+.steps { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; margin: 0 0 30px; padding: 0; list-style: none; counter-reset: st; }
+@media (min-width: 700px) { .steps { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.steps li { display: grid; grid-template-columns: 44px minmax(0, 1fr); grid-template-rows: auto auto; column-gap: 14px; align-items: center;
+            padding: 16px; border-radius: 12px; background: var(--panel); counter-increment: st; }
+.steps li > svg, .steps li > img { grid-row: 1 / span 2; width: 44px; height: 44px; image-rendering: pixelated; }
+.steps b { font-weight: 400; color: var(--ink); }
+.steps b::before { content: counter(st) "  "; color: var(--rose); }
+.steps span { font-size: 13px; color: var(--ink3); }
+.gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 0 0 30px; }
+@media (min-width: 700px) { .gallery { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (min-width: 1000px) { .gallery { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+.gallery figure { margin: 0; }
+.gallery img { display: block; width: 100%; height: auto; border-radius: 8px; image-rendering: pixelated; box-shadow: 0 0 0 1px var(--line); transition: transform .15s; }
+.gallery img:hover { transform: translateY(-3px); }
+.gallery figcaption { margin-top: 8px; font-size: 13px; text-align: center; color: var(--ink3); }
+.more { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.more .card + .card { margin-top: 0; }
+.more .card { padding: 14px 18px; }
+.pitch .sum, .pitch .notes { display: none; }                 /* (the hash and the notes: in the log and the release) */
+.pitch .pkg { margin: 12px 0 0; padding: 0; background: none; font-size: 13px; color: var(--ink3); }
+.pitch .pkg.ok { box-shadow: none; color: var(--lime); }
+.pitch .pkg.ok::before { content: "\25CF  "; }
+.pitch .pkg.bad { box-shadow: none; color: var(--rose); }
+.versions:has(> .chip:only-child) { display: none; }          /* (one version: the button names it) */
+.pitch .alt { margin-top: 14px; padding-top: 0; border-top: 0; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
-    <div>
-      <h1><span class="c">Coral</span><span class="f">Flower</span> installer</h1>
-      <p>put the firmware on your FM-1 from this page</p>
-    </div>
+    <a class="brand" href="../" aria-label="CoralFlower: the emulator"><img src="../favicon.svg" width="30" height="30" alt=""><span><span class="c">Coral</span><span class="f">Flower</span></span></a>
     <div class="top">
       <nav class="site" aria-label="CoralFlower pages">
         <a href="../">Emulator</a>
@@ -197,47 +254,25 @@ main > .supportcard { max-width: none; margin-top: 16px; }   /* (the emulator's 
   <main>
     <p class="banner" id="nomidi" hidden>This browser cannot talk to the FM-1. Open this page in <b>Chrome</b> or <b>Edge</b> on a computer.</p>
     <noscript><p class="banner">The installer needs JavaScript: it talks to the FM-1 over Web MIDI.</p></noscript>
-    <p class="lead">Install CoralFlower on your M-VAVE FM-1 from this page. Nothing is installed on your computer: the browser talks to the FM-1 over the USB cable.</p>
 
-    <div class="grid">
-      <section class="card" style="--c: var(--fire)" aria-labelledby="prep-h">
-        <h2 id="prep-h">Before you start</h2>
-        <ol class="prep">
-          <li>Use <b>Chrome or Edge</b> on a computer. Other browsers cannot talk to the FM-1.</li>
-          <li><b>Charge the FM-1 fully.</b> It runs on its own battery while it writes.</li>
-          <li>Connect it with a <b>USB data cable, straight to the computer</b>. No hub.</li>
-          <li>Close other apps that use MIDI, such as a DAW or a synth editor.</li>
-          <li>When the browser asks to use MIDI devices, <b>allow it</b>.</li>
-          <li><b>Keep this page open</b> and the computer awake. <b>Do not unplug</b> the cable until you see Done. It takes about a minute.</li>
-        </ol>
-        <div class="risk">
-          <p><b>Installing firmware is at your own risk.</b> CoralFlower is free software and comes with no warranty.</p>
-          <p>You can always go back. The official M-VAVE firmware can be reinstalled from <a href="https://www.m-vave.com/download" target="_blank" rel="noopener">m-vave.com</a>.</p>
-        </div>
-      </section>
-
-      <section class="card" style="--c: var(--rose)" aria-labelledby="inst-h">
-        <h2 id="inst-h">Install</h2>
-        <h3><span class="n">1</span>Choose the firmware</h3>
-        <p id="rel-none">No public release yet. To test a build, choose its .fwsc file.</p>
-        <p id="rel-some" hidden>Pick a version, or choose a .fwsc file from this computer.</p>
+    <section class="hero" aria-labelledby="inst-h">
+      <div class="stage">
+        <div class="bezel"><img src="../images/grow.gif" width="480" height="280" alt="A pink pixel flower growing as chords are played"></div>
+        <p class="cap">a flower grows from every chord you play</p>
+      </div>
+      <div class="pitch">
+        <p class="eyebrow">Firmware for the M-VAVE FM-1</p>
+        <h1 id="inst-h"><span class="c">Coral</span><span class="f">Flower</span></h1>
+        <p class="tag">Hold a root, add a colour, and the FM-1 plays the whole chord, in key, with a bass underneath.</p>
+        <ul class="tags"><li>Chords</li><li>Arpeggiator</li><li>Looper</li><li>GPL-3.0</li></ul>
         <div class="versions" id="versions" role="group" aria-label="Released versions" hidden></div>
-        <div class="filepick">
-          <button class="btn quiet" id="pkg-pick" type="button">Choose a .fwsc file</button>
-          <span class="fname" id="pkg-name">No file chosen</span>
-          <input id="pkg-file" type="file" accept=".fwsc" hidden>
-        </div>
-        <p class="pkg" id="pkg" role="status"></p>
-        <p class="sum" id="pkg-sum"></p>
-        <div class="notes" id="notes"></div>
-
-        <h3><span class="n">2</span>Install</h3>
-        <label class="check"><input id="backup-first" type="checkbox" checked><span><b>Save a backup first.</b> Your sounds, loops and settings go to a file on this computer. The official firmware cannot be backed up.</span></label>
-        <p class="note" id="backup-note" role="status" hidden></p>
-        <label class="check" id="force-box" hidden><input id="force-risk" type="checkbox"><span><b>I understand the risk.</b> Install over this firmware anyway.</span></label>
         <button id="go" type="button" disabled>Install CoralFlower</button>
         <progress id="bar" max="100" value="0" aria-label="Install progress"></progress>
         <p class="status" id="status" role="status"></p>
+        <p class="pkg" id="pkg" role="status"></p>
+        <label class="check"><input id="backup-first" type="checkbox" checked><span>Back up my sounds first</span></label>
+        <p class="note" id="backup-note" role="status" hidden></p>
+        <label class="check" id="force-box" hidden><input id="force-risk" type="checkbox"><span><b>I understand the risk.</b> Install over this firmware anyway.</span></label>
         <div class="panel fin" id="done" role="status" hidden>
           <p id="done-line"></p>
           <p>The FM-1 restarted and answered as FM-1_930, CoralFlower's identity. You can unplug it now.</p>
@@ -249,17 +284,55 @@ main > .supportcard { max-width: none; margin-top: 16px; }   /* (the emulator's 
           <p><b>Switched off, or the battery ran out?</b> Switch it on. Three short flashes of the key lights and a black screen mean update mode: press Install again. This works if the FM-1 ran CoralFlower, or ChoralRoot 0.16 or later, before this install.</p>
           <p><b>One long flash, no flash, or a USB disk named WL82 UBOOT1.00?</b> See <a href="#dark">Device not found</a> below.</p>
         </div>
-        <div class="ask">
-          <button class="btn quiet" id="check-go" type="button" disabled>What is on my FM-1?</button>
-          <p class="unit" id="unit" role="status" hidden></p>
+        <a class="play" href="../">&#9654; Play it in your browser first</a>
+        <div class="alt">
+          <p id="rel-none">Testing a build?</p>
+          <p id="rel-some" hidden>Or a build of your own:</p>
+          <div class="filepick">
+            <button class="btn quiet" id="pkg-pick" type="button">Choose a .fwsc file</button>
+            <span class="fname" id="pkg-name">No file chosen</span>
+            <input id="pkg-file" type="file" accept=".fwsc" hidden>
+          </div>
         </div>
-        <details class="log"><summary>Show the log</summary><pre id="log"></pre></details>
-      </section>
-    </div>
+        <p class="sum" id="pkg-sum"></p>
+        <div class="notes" id="notes"></div>
+      </div>
+    </section>
 
-    <section class="card" style="--c: var(--sea)" aria-labelledby="bk-h">
-      <h2 id="bk-h">Back up and restore</h2>
-      <div class="cols2">
+    <ol class="steps" aria-label="How it goes">
+      <li><svg viewBox="0 0 12 12" aria-hidden="true" shape-rendering="crispEdges"><rect x="4" y="0" width="1" height="1" fill="#A89A88"/><rect x="5" y="0" width="1" height="1" fill="#A89A88"/><rect x="6" y="0" width="1" height="1" fill="#A89A88"/><rect x="7" y="0" width="1" height="1" fill="#A89A88"/><rect x="3" y="1" width="1" height="1" fill="#A89A88"/><rect x="4" y="1" width="1" height="1" fill="#110A02"/><rect x="5" y="1" width="1" height="1" fill="#110A02"/><rect x="6" y="1" width="1" height="1" fill="#110A02"/><rect x="7" y="1" width="1" height="1" fill="#110A02"/><rect x="8" y="1" width="1" height="1" fill="#A89A88"/><rect x="3" y="2" width="1" height="1" fill="#A89A88"/><rect x="4" y="2" width="1" height="1" fill="#110A02"/><rect x="5" y="2" width="1" height="1" fill="#110A02"/><rect x="6" y="2" width="1" height="1" fill="#110A02"/><rect x="7" y="2" width="1" height="1" fill="#110A02"/><rect x="8" y="2" width="1" height="1" fill="#A89A88"/><rect x="3" y="3" width="1" height="1" fill="#A89A88"/><rect x="4" y="3" width="1" height="1" fill="#A89A88"/><rect x="5" y="3" width="1" height="1" fill="#A89A88"/><rect x="6" y="3" width="1" height="1" fill="#A89A88"/><rect x="7" y="3" width="1" height="1" fill="#A89A88"/><rect x="8" y="3" width="1" height="1" fill="#A89A88"/><rect x="4" y="4" width="1" height="1" fill="#E86879"/><rect x="5" y="4" width="1" height="1" fill="#E86879"/><rect x="6" y="4" width="1" height="1" fill="#E86879"/><rect x="7" y="4" width="1" height="1" fill="#E86879"/><rect x="4" y="5" width="1" height="1" fill="#E86879"/><rect x="5" y="5" width="1" height="1" fill="#E86879"/><rect x="6" y="5" width="1" height="1" fill="#E86879"/><rect x="7" y="5" width="1" height="1" fill="#E86879"/><rect x="4" y="6" width="1" height="1" fill="#E86879"/><rect x="5" y="6" width="1" height="1" fill="#E86879"/><rect x="6" y="6" width="1" height="1" fill="#E86879"/><rect x="7" y="6" width="1" height="1" fill="#E86879"/><rect x="5" y="7" width="1" height="1" fill="#E86879"/><rect x="6" y="7" width="1" height="1" fill="#E86879"/><rect x="5" y="8" width="1" height="1" fill="#48E6D9"/><rect x="6" y="8" width="1" height="1" fill="#48E6D9"/><rect x="5" y="9" width="1" height="1" fill="#48E6D9"/><rect x="6" y="9" width="1" height="1" fill="#48E6D9"/><rect x="4" y="10" width="1" height="1" fill="#48E6D9"/><rect x="5" y="10" width="1" height="1" fill="#48E6D9"/><rect x="3" y="11" width="1" height="1" fill="#48E6D9"/><rect x="4" y="11" width="1" height="1" fill="#48E6D9"/></svg><b>Plug in by USB</b><span>Straight to the computer, no hub</span></li>
+      <li><svg viewBox="0 0 12 12" aria-hidden="true" shape-rendering="crispEdges"><rect x="0" y="1" width="12" height="10" fill="#A89A88"/><rect x="1" y="3" width="10" height="7" fill="#110A02"/><rect x="1" y="2" width="1" height="1" fill="#E86879"/><rect x="3" y="2" width="1" height="1" fill="#F9C62A"/><rect x="5" y="2" width="1" height="1" fill="#D6E34C"/><rect x="3" y="5" width="6" height="1" fill="#48E6D9"/><rect x="3" y="7" width="4" height="1" fill="#5E5048"/></svg><b>Chrome or Edge</b><span>Allow MIDI when it asks</span></li>
+      <li><img src="../favicon.svg" width="44" height="44" alt=""><b>Press Install</b><span>About a minute. Keep the cable in</span></li>
+    </ol>
+
+    <section class="gallery" aria-label="Inside CoralFlower">
+      <figure><img src="../images/home.png" width="480" height="480" alt="HOME: a chord name above a pink flower" loading="lazy"><figcaption>Chords</figcaption></figure>
+      <figure><img src="../images/coral.png" width="480" height="480" alt="The Side layout: a pink coral" loading="lazy"><figcaption>Coral</figcaption></figure>
+      <figure><img src="../images/chord.png" width="480" height="480" alt="A chord button's notes on a piano" loading="lazy"><figcaption>Chord editor</figcaption></figure>
+      <figure><img src="../images/fm-voice.png" width="480" height="480" alt="The FM editor's operators" loading="lazy"><figcaption>FM voices</figcaption></figure>
+      <figure><img src="../images/arp.png" width="480" height="480" alt="The arpeggiator's pattern" loading="lazy"><figcaption>Arpeggiator</figcaption></figure>
+      <figure><img src="../images/looper.png" width="480" height="480" alt="The looper recording a take" loading="lazy"><figcaption>Looper</figcaption></figure>
+    </section>
+
+    <div class="more">
+      <details class="card" style="--c: var(--fire)">
+        <summary>Before you start</summary>
+        <ol class="prep">
+          <li>Use <b>Chrome or Edge</b> on a computer. Other browsers cannot talk to the FM-1.</li>
+          <li><b>Charge the FM-1 fully.</b> It runs on its own battery while it writes.</li>
+          <li>Connect it with a <b>USB data cable, straight to the computer</b>. No hub.</li>
+          <li>Close other apps that use MIDI, such as a DAW or a synth editor.</li>
+          <li>When the browser asks to use MIDI devices, <b>allow it</b>.</li>
+          <li><b>Keep this page open</b> and the computer awake. <b>Do not unplug</b> the cable until you see Done. It takes about a minute.</li>
+        </ol>
+        <div class="risk">
+          <p><b>Installing firmware is at your own risk.</b> CoralFlower is free software and comes with no warranty.</p>
+          <p>You can always go back: the official M-VAVE firmware can be reinstalled from <a href="https://www.m-vave.com/download" target="_blank" rel="noopener">m-vave.com</a>.</p>
+        </div>
+      </details>
+      <details class="card" style="--c: var(--sea)">
+        <summary>Back up and restore</summary>
+        <div class="cols2">
         <div>
           <p>A backup is one .json file. It holds everything saved on the FM-1: the settings, the 32 user sounds with their patches, the loops and the sound banks.</p>
           <p>Restore writes a backup back. It checks every part before it writes anything, then restarts the FM-1. Stop any loop first.</p>
@@ -275,9 +348,8 @@ main > .supportcard { max-width: none; margin-top: 16px; }   /* (the emulator's 
           <div class="row"><button class="btn quiet" id="restore-go" type="button" disabled>Restore</button></div>
         </div>
       </div>
-    </section>
-
-    <details class="card help" id="dark" style="--c: var(--sky)">
+      </details>
+      <details class="card help" id="dark" style="--c: var(--sky)">
       <summary>Device not found, or the install stopped?</summary>
       <div class="cols2">
         <div>
@@ -293,8 +365,7 @@ main > .supportcard { max-width: none; margin-top: 16px; }   /* (the emulator's 
         </div>
       </div>
     </details>
-
-    <details class="card" id="stock" style="--c: var(--orange)">
+      <details class="card" id="stock" style="--c: var(--orange)">
       <summary>Return to the official firmware</summary>
       <div class="cols2">
         <div>
@@ -326,6 +397,15 @@ main > .supportcard { max-width: none; margin-top: 16px; }   /* (the emulator's 
       </div>
       <details class="log"><summary>Show the log</summary><pre id="stock-log"></pre></details>
     </details>
+      <details class="card" style="--c: var(--ink3)">
+        <summary>What is on my FM-1?</summary>
+        <div class="ask">
+          <button class="btn quiet" id="check-go" type="button" disabled>Ask the FM-1</button>
+          <p class="unit" id="unit" role="status" hidden></p>
+        </div>
+        <details class="log"><summary>Show the log</summary><pre id="log"></pre></details>
+      </details>
+    </div>
 
     <section class="supportcard" aria-label="Support CoralFlower">
       <div>

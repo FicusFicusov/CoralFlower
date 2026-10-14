@@ -104,7 +104,7 @@ ok(!missingExports.length, `page: every imported name is exported by its module$
 ok(html.includes('src: url("../DepartureMono-Regular.otf")') && html.includes("<title>CoralFlower Installer</title>") && /<html lang="en">/.test(html),
   "page: the font from one level up, title, lang");
 ok(html.includes('<a href="../">Emulator</a>') && html.includes('<a href="./" aria-current="page">Install</a>') &&
-   html.includes('<h1><span class="c">Coral</span><span class="f">Flower</span> installer</h1>'), "page: the emulator page's header (rose + lime) with the nav Emulator / Install");
+   html.includes('<span class="c">Coral</span><span class="f">Flower</span>') && html.includes('class="brand"'), "page: the CoralFlower name (rose + lime) with the nav Emulator / Install");
 const tokens = (h) => Object.fromEntries([...h.slice(h.indexOf(":root {"), h.indexOf("}", h.indexOf(":root {"))).matchAll(/(--[a-z0-9]+):\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()]));
 const emuTok = tokens(emu), pageTok = tokens(html);
 const tokDiff = Object.keys(emuTok).filter((k) => k !== "--lcd" && emuTok[k] !== pageTok[k]);

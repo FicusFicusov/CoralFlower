@@ -102,16 +102,30 @@ dialog#donate .x:hover { color: var(--ground); background: var(--rose); }
 .opt.copied .go { color: var(--lime); }
 @media (min-width: 1500px) and (min-height: 1250px) { :root { --lcd: 720px; } }
 @media (max-width: 560px) { header { padding-top: 16px; } }
+
+h1 .mark { width: 0.8em; height: 0.8em; margin-right: 0.3em; vertical-align: -0.06em; image-rendering: pixelated; }
+.top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+nav.site { display: flex; gap: 4px; padding: 3px; background: var(--panel); border-radius: 8px; }
+nav.site a { padding: 6px 12px; border-radius: 6px; color: var(--ink2); text-decoration: none; }
+nav.site a:hover { color: var(--ink); background: var(--raise); }
+nav.site a[aria-current="page"] { color: var(--ground); background: var(--ink); }
+nav.site a:focus-visible { outline: 3px solid var(--fire); outline-offset: 2px; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
     <div>
-      <h1><span class="c">Coral</span><span class="f">Flower</span> emulator</h1>
+      <h1><img class="mark" src="favicon.svg" width="34" height="34" alt=""><span class="c">Coral</span><span class="f">Flower</span> emulator</h1>
       <p>the FM-1 firmware, running right in your browser</p>
     </div>
+    <div class="top">
+      <nav class="site" aria-label="CoralFlower pages">
+        <a href="./" aria-current="page">Emulator</a>
+        <a href="install/">Install</a>
+      </nav>
     <button id="supportBtn" class="btn support" aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13.35 20.13c-.76.69-1.93.69-2.69-.01l-.11-.1C5.3 15.27 1.87 12.16 2 8.28c.06-1.7.93-3.33 2.34-4.29 2.64-1.8 5.9-.96 7.66 1.1 1.76-2.06 5.02-2.91 7.66-1.1 1.41.96 2.28 2.59 2.34 4.29.14 3.88-3.3 6.99-8.55 11.76z"/></svg>Support</button>
+    </div>
   </header>
   <div class="ramp"><i style="background:#F9C62A"></i><i style="background:#F6BA7A"></i><i style="background:#F1750D"></i><i style="background:#E86879"></i><i style="background:#962179"></i><i style="background:#0D97D5"></i><i style="background:#48E6D9"></i><i style="background:#22B572"></i><i style="background:#D6E34C"></i></div>
   <main class="stage">
