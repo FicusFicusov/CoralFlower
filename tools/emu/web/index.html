@@ -20,7 +20,8 @@ html, body { margin: 0; background: var(--ground); color: var(--ink); }
 body { font: 15px/1.5 "Departure Mono", ui-monospace, SFMono-Regular, Menlo, monospace; }
 a { color: var(--sea); }
 .wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px 48px; }
-header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 22px 0 10px; flex-wrap: wrap; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 22px 0 10px; flex-wrap: wrap; }
+header p { margin-top: 6px; }
 h1 { margin: 0; font-size: clamp(26px, 4.6vw, 42px); line-height: 1; font-weight: 400; letter-spacing: 0.01em; }
 h1 .c { color: var(--rose); } h1 .f { color: var(--lime); }
 header p { margin: 0; color: var(--ink2); }
@@ -65,6 +66,37 @@ select { background: var(--raise); color: var(--ink); border: 0; padding: 8px 10
 kbd { font: 13px/1 "Departure Mono", ui-monospace, monospace; background: var(--raise); color: var(--ink); padding: 3px 6px; border-radius: 3px; min-width: 1.6em; text-align: center; }
 kbd.m { background: none; color: var(--ink2); box-shadow: inset 0 0 0 1px var(--line); }
 footer { margin-top: 24px; font-size: 13px; color: var(--ink3); text-align: center; }
+footer a { color: var(--ink2); }
+/* support: a button in the header, a card above the footer, a dialog with the wallets and the contacts */
+.support { display: inline-flex; align-items: center; gap: 8px; background: transparent; color: var(--rose); box-shadow: inset 0 0 0 1px var(--rose); }
+.support:hover { background: var(--rose); color: var(--ground); }
+.support svg { width: 14px; height: 14px; fill: currentColor; }
+.supportcard { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; width: 100%; max-width: 1080px; margin-top: 12px; padding: 14px 16px; background: var(--panel); border-radius: 8px; border-left: 4px solid var(--rose); }
+.supportcard > div { flex: 1 1 280px; }
+.supportcard b { display: block; font-weight: 400; color: var(--ink); }
+.supportcard span { display: block; margin-top: 2px; font-size: 14px; color: var(--ink2); }
+.supportcard .contacts { margin-top: 6px; }
+.supportcard .contacts a { color: var(--sea); }
+dialog#donate { width: min(440px, calc(100vw - 32px)); max-height: 88vh; overflow: auto; padding: 20px; color: var(--ink); background: var(--panel); border: 0; border-radius: 10px; box-shadow: 0 0 0 2px var(--rose), 0 24px 60px rgba(0,0,0,0.6); }
+dialog#donate::backdrop { background: rgba(10, 6, 2, 0.7); }
+dialog#donate h2 { margin: 0 0 6px; font-size: 20px; font-weight: 400; color: var(--rose); }
+dialog#donate h3 { margin: 18px 0 8px; font-size: 13px; font-weight: 400; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink3); }
+dialog#donate p { margin: 0 0 14px; font-size: 14px; line-height: 1.5; color: var(--ink2); }
+dialog#donate .note { margin: 10px 0 0; font-size: 12px; color: var(--ink3); }
+dialog#donate .x { position: absolute; top: 12px; right: 12px; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 6px; cursor: pointer; background: var(--raise); color: var(--ink2); font-size: 18px; }
+dialog#donate .x:hover { color: var(--ground); background: var(--rose); }
+.opt { display: flex; align-items: center; gap: 12px; width: 100%; margin-bottom: 8px; padding: 10px 12px; border: 0; border-radius: 8px; cursor: pointer; text-align: left; text-decoration: none; font: inherit; color: var(--ink); background: var(--raise); box-shadow: inset 0 0 0 1px var(--line); }
+.opt:hover { box-shadow: inset 0 0 0 1px var(--rose); }
+.opt:focus-visible { outline: 3px solid var(--fire); outline-offset: 2px; }
+.opt .coin svg, .opt .coin { display: block; width: 30px; height: 30px; flex: none; }
+.opt .glyph { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; flex: none; border-radius: 50%; background: var(--line); color: var(--ink); font-size: 15px; }
+.opt .tx { flex: 1; min-width: 0; }
+.opt .nm { display: block; font-size: 14px; }
+.opt .nm i { font-style: normal; color: var(--ink3); }
+.opt .ad { display: block; overflow: hidden; font-size: 12px; color: var(--ink3); white-space: nowrap; text-overflow: ellipsis; }
+.opt .go { flex: none; font-size: 12px; color: var(--ink3); }
+.opt.copied { box-shadow: inset 0 0 0 1px var(--lime); }
+.opt.copied .go { color: var(--lime); }
 @media (min-width: 1500px) and (min-height: 1250px) { :root { --lcd: 720px; } }
 @media (max-width: 560px) { header { padding-top: 16px; } }
 </style>
@@ -72,8 +104,11 @@ footer { margin-top: 24px; font-size: 13px; color: var(--ink3); text-align: cent
 <body>
 <div class="wrap">
   <header>
-    <h1><span class="c">Coral</span><span class="f">Flower</span> emulator</h1>
-    <p>the FM-1 firmware, running in this page</p>
+    <div>
+      <h1><span class="c">Coral</span><span class="f">Flower</span> emulator</h1>
+      <p>the FM-1 firmware, running in this page</p>
+    </div>
+    <button id="supportBtn" class="btn support" aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13.35 20.13c-.76.69-1.93.69-2.69-.01l-.11-.1C5.3 15.27 1.87 12.16 2 8.28c.06-1.7.93-3.33 2.34-4.29 2.64-1.8 5.9-.96 7.66 1.1 1.76-2.06 5.02-2.91 7.66-1.1 1.41.96 2.28 2.59 2.34 4.29.14 3.88-3.3 6.99-8.55 11.76z"/></svg>Support</button>
   </header>
   <div class="ramp"><i style="background:#F9C62A"></i><i style="background:#F6BA7A"></i><i style="background:#F1750D"></i><i style="background:#E86879"></i><i style="background:#962179"></i><i style="background:#0D97D5"></i><i style="background:#48E6D9"></i><i style="background:#22B572"></i><i style="background:#D6E34C"></i></div>
   <main class="stage">
@@ -124,10 +159,82 @@ footer { margin-top: 24px; font-size: 13px; color: var(--ink3); text-align: cent
         <hr><dt><kbd class="m">drag</kbd><kbd class="m">wheel</kbd></dt><dd>turn</dd>
       </dl></div>
     </section>
+    <section class="supportcard" aria-label="Support CoralFlower">
+      <div>
+        <b>Support CoralFlower</b>
+        <span>Free, open source and without ads. A donation funds new features and more free tools for musicians.</span>
+        <span class="contacts">Contact: <a href="https://t.me/ficusficusov" target="_blank" rel="noopener">Telegram channel</a> &middot; <a href="mailto:iambemoli@gmail.com">iambemoli@gmail.com</a></span>
+      </div>
+      <button id="supportBtn2" class="btn support" aria-haspopup="dialog">Support</button>
+    </section>
     <footer>GPL-3.0 &middot; CoralFlower, after ChoralRoot FM-1 and Felucca &middot; settings and sounds you save stay in this browser</footer>
   </main>
 </div>
+<dialog id="donate" aria-labelledby="donateTitle">
+  <form method="dialog"><button class="x" aria-label="Close">&times;</button></form>
+  <h2 id="donateTitle">Support CoralFlower</h2>
+  <p>CoralFlower is free, open source and has no ads. A donation is not a payment: it funds new features and more free tools for musicians. Thank you for helping it grow.</p>
+  <div id="wallets"></div>
+  <p class="note">Send only the coin named, on the network named: anything else is lost. A crypto transfer is a voluntary gift; nothing is sold for it.</p>
+  <h3>Contact</h3>
+  <a class="opt" href="https://t.me/ficusficusov" target="_blank" rel="noopener"><span class="glyph" aria-hidden="true">&#10148;</span><span class="tx"><span class="nm">Telegram channel</span><span class="ad">t.me/ficusficusov</span></span><span class="go">&#8599;</span></a>
+  <a class="opt" href="mailto:iambemoli@gmail.com"><span class="glyph" aria-hidden="true">@</span><span class="tx"><span class="nm">Email</span><span class="ad">iambemoli@gmail.com</span></span><span class="go">&#8599;</span></a>
+</dialog>
 <script src="keymap.js"></script>
 <script src="emu.js"></script>
+<script>
+/* Support: the owner's wallets and contacts in a dialog (the "Support" buttons). The coin badges and the addresses
+ * are the owner's (their ear-training page's donation dialog). A row copies its address. */
+(() => {
+const _coin=(bg,g)=>`<svg viewBox="0 0 24 24" width="34" height="34"><circle cx="12" cy="12" r="12" fill="${bg}"/>${g}</svg>`;
+const ICO={
+  btc:_coin('#F7931A','<path fill="#fff" d="M15.5 10.4c.2-1.36-.84-2.1-2.26-2.58l.46-1.85-1.13-.28-.45 1.8c-.3-.07-.6-.14-.9-.2l.45-1.82-1.12-.28-.46 1.85c-.24-.05-.48-.11-.71-.17l-1.56-.39-.3 1.2s.84.2.82.2c.46.12.54.42.53.66l-.53 2.12c.03.01.07.02.12.04l-.12-.03-.74 2.96c-.06.14-.2.35-.52.27.01.02-.82-.2-.82-.2l-.56 1.29 1.47.36c.27.07.54.14.8.21l-.46 1.87 1.12.28.46-1.85c.31.08.6.16.9.23l-.46 1.84 1.13.28.46-1.86c1.92.36 3.37.22 3.98-1.52.49-1.4-.02-2.2-1.03-2.73.73-.17 1.29-.65 1.44-1.65zm-2.57 3.6c-.35 1.4-2.7.64-3.46.45l.62-2.48c.76.19 3.2.56 2.84 2.03zm.35-3.62c-.32 1.27-2.27.63-2.9.47l.56-2.25c.63.16 2.67.45 2.34 1.78z"/>'),
+  eth:_coin('#627EEA','<path fill="#fff" fill-opacity=".9" d="M12 4 7.5 12l4.5-2.15z"/><path fill="#fff" d="M12 4v5.85L16.5 12z"/><path fill="#fff" fill-opacity=".9" d="M12 15.4 7.5 12.9 12 20z"/><path fill="#fff" d="M12 20v-4.6L16.5 12.9z"/><path fill="#fff" fill-opacity=".55" d="M12 14.5 16.5 12 12 9.85z"/><path fill="#fff" fill-opacity=".8" d="M7.5 12 12 14.5V9.85z"/>'),
+  ltc:_coin('#345D9D','<g fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M13.6 6.8 11 16.8h5"/><path d="M8.8 12.6 15 10.7"/></g>'),
+  doge:_coin('#C2A633','<g fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9.2 6.8h3c2.7 0 4.5 2 4.5 5.2s-1.8 5.2-4.5 5.2h-3z"/><path d="M7.4 12h4.2"/></g>'),
+  pol:_coin('#8247E5','<path fill="#fff" d="M15.4 9.9a1.1 1.1 0 0 0-1.1 0l-2.5 1.46-1.7.96-2.5 1.46a1.1 1.1 0 0 1-1.1 0l-1.98-1.15a1.1 1.1 0 0 1-.55-.95V9.36c0-.4.2-.77.55-.96l1.95-1.13a1.1 1.1 0 0 1 1.1 0l1.95 1.13c.34.19.55.56.55.96v1.46l1.7-.99V8.37c0-.39-.2-.76-.55-.95l-3.6-2.1a1.1 1.1 0 0 0-1.1 0L2.8 7.42a1.1 1.1 0 0 0-.55.95v4.22c0 .39.2.76.55.95l3.66 2.12a1.1 1.1 0 0 0 1.1 0l2.5-1.44 1.7-.99 2.5-1.44a1.1 1.1 0 0 1 1.1 0l1.96 1.13c.34.2.55.56.55.96v2.26c0 .39-.2.76-.55.95l-1.95 1.14a1.1 1.1 0 0 1-1.1 0l-1.95-1.13a1.1 1.1 0 0 1-.55-.96v-1.44l-1.7.99v1.46c0 .39.2.76.55.95l3.66 2.12a1.1 1.1 0 0 0 1.1 0l3.66-2.12c.34-.19.55-.56.55-.95v-4.23c0-.39-.2-.76-.55-.95L15.4 9.9z"/>'),
+  ada:_coin('#0033AD','<g fill="#fff"><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="6.6" r=".95"/><circle cx="12" cy="17.4" r=".95"/><circle cx="7.3" cy="9.3" r=".95"/><circle cx="16.7" cy="9.3" r=".95"/><circle cx="7.3" cy="14.7" r=".95"/><circle cx="16.7" cy="14.7" r=".95"/><circle cx="6" cy="12" r=".65"/><circle cx="18" cy="12" r=".65"/><circle cx="9.7" cy="7.9" r=".55"/><circle cx="14.3" cy="7.9" r=".55"/><circle cx="9.7" cy="16.1" r=".55"/><circle cx="14.3" cy="16.1" r=".55"/></g>'),
+  xlm:_coin('#000000','<circle cx="12" cy="12" r="11.2" fill="none" stroke="rgba(255,255,255,.28)"/><g fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round"><path d="M5.7 9.4a7.4 7.4 0 0 1 12.6 3.3"/><path d="M18.3 14.6A7.4 7.4 0 0 1 5.7 11.3"/></g><circle cx="12" cy="12" r="1.7" fill="#fff"/>'),
+  avax:_coin('#E84142','<path fill="#fff" d="M12.75 7.3c.5-.87 1.45-.87 1.95 0l3.8 6.6c.5.87.05 1.6-1 1.6h-1.75c-.55 0-.98-.27-1.2-.68l-2.6-4.55c-.3-.53-.3-1.15 0-1.7l.8-1.27z"/><path fill="#fff" d="M9 12.85c.5-.87 1.45-.87 1.9 0l1.65 2.85c.48.87.03 1.6-1 1.6H8.05c-1.02 0-1.47-.73-.98-1.6L9 12.85z"/>'),
+};
+const WALLETS = [
+  { name:'Bitcoin',   net:'BTC',     icon:ICO.btc,  addr:'bc1qvzuw988uzyh8k3pzy8gzduhc3cn4g6lvusj9w0' },
+  { name:'Ethereum',  net:'ERC-20',  icon:ICO.eth,  addr:'0x1727c960db92Dc4711ff1a7e8f082D89A3e2D4dA' },
+  { name:'Litecoin',  net:'LTC',     icon:ICO.ltc,  addr:'ltc1qpjymg8hzftjrv6z3ymy5puv9e2t5ljwnqlv72l' },
+  { name:'Dogecoin',  net:'DOGE',    icon:ICO.doge, addr:'D8TyowZszSJiYEKKGuiFLCW3UtcYKvCZuZ' },
+  { name:'Polygon',   net:'PoS',     icon:ICO.pol,  addr:'0x1727c960db92Dc4711ff1a7e8f082D89A3e2D4dA' },
+  { name:'Cardano',   net:'ADA',     icon:ICO.ada,  addr:'addr1qxp55k3knqydjkqpt888j8hq4j5mypfsxj68h4qh57fhqcttfhmc443yydmfmze045tqn9zel5psad4rk669rjy3syxsya00ml' },
+  { name:'Stellar',   net:'XLM',     icon:ICO.xlm,  addr:'GDFPGXJIN3RU2CKZGHMVM23L4NKSFY5BEIO23SOJVTIOTNYBIZDUDJ4L' },
+  { name:'Avalanche', net:'C-Chain', icon:ICO.avax, addr:'0x1727c960db92Dc4711ff1a7e8f082D89A3e2D4dA' },
+];
+const $ = (id) => document.getElementById(id), dlg = $("donate"), box = $("wallets");
+/* the clipboard API where it is allowed; else (refused: an embedded browser, a page not over https) a selected
+ * textarea inside the dialog (outside it, the open modal makes the page inert: nothing there can be selected) */
+const copyOld = (t) => {
+  const a = document.createElement("textarea"); a.value = t; a.setAttribute("readonly", ""); a.style.cssText = "position:fixed;opacity:0";
+  dlg.appendChild(a); a.select();
+  try { document.execCommand("copy"); } catch (_) {}
+  a.remove();
+};
+const copy = (t) => {
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).catch(() => copyOld(t));
+  else copyOld(t);
+};
+for (const w of WALLETS) {
+  const b = document.createElement("button"), short = w.addr.length > 20 ? w.addr.slice(0, 10) + "\u2026" + w.addr.slice(-6) : w.addr;
+  b.type = "button"; b.className = "opt"; b.title = w.addr;
+  b.innerHTML = `<span class="coin">${w.icon}</span><span class="tx"><span class="nm">${w.name} <i>${w.net}</i></span>` +
+                `<span class="ad">${short}</span></span><span class="go">copy</span>`;
+  b.onclick = () => {
+    copy(w.addr); b.classList.add("copied"); b.querySelector(".go").textContent = "copied \u2713";
+    setTimeout(() => { b.classList.remove("copied"); b.querySelector(".go").textContent = "copy"; }, 1600);
+  };
+  box.appendChild(b);
+}
+const open = () => dlg.showModal ? dlg.showModal() : dlg.setAttribute("open", "");
+for (const id of ["supportBtn", "supportBtn2"]) $(id).addEventListener("click", open);
+dlg.addEventListener("click", (e) => { if (e.target === dlg) dlg.close(); });   /* a click on the backdrop */
+})();
+</script>
 </body>
 </html>

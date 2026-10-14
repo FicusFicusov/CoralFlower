@@ -215,7 +215,8 @@
 
   // the computer keyboard (tools/emu/keymap.c)
   const byCode = Object.fromEntries(KEYMAP.map((m) => [m.code, m]));
-  const typing = (e) => /^(SELECT|INPUT|TEXTAREA)$/.test(e.target.tagName) || e.metaKey || e.altKey;
+  const typing = (e) => /^(SELECT|INPUT|TEXTAREA)$/.test(e.target.tagName) || e.metaKey || e.altKey ||
+                         !!(e.target.closest && e.target.closest("dialog"));   // (the Support dialog keeps its keys)
   addEventListener("keydown", (e) => {
     const m = byCode[e.code];
     if (!m || typing(e) || (e.ctrlKey && m.kind !== "key")) return;
