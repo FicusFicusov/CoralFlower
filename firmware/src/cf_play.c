@@ -1,0 +1,379 @@
+/* SPDX-License-Identifier: GPL-3.0-only
+ * CoralFlower: the chord player, in the audio ISR.
+ *
+ * The keys reach cf_chord (the chord model) here; what it asks for becomes notes on two parts:
+ *   part 0 CHORD: the chord's notes (or the single notes of Off)
+ *   part 1 BASS:  the chord's bass degree in the bass register, with the octaver an octave over it; monophonic (a
+ *                 new bass note cuts what still rings of the last one)
+ * A new root key restarts the chord; a chord button changed under a held root keeps the tones the two chords share.
+ * With Glide on (or RETRIG Off), a change while the previous chord still sounds moves its voices to the new chord: the
+ * voices are paired by pitch (cf_match: lowest with lowest, common tones stay), a chord that grows starts its extra
+ * voices out of the nearest old note, one that shrinks lets the extra voices go. With RETRIG Wait a chord button under
+ * held keys changes nothing that sounds (cf_chord_t.keep): the next root key takes it; Move: it moves the voices too
+ * (the tones it adds start); Strike: the new notes strike.
+ * Included after voice.c, fx.c, usb.c, cf_theory.c, cf_chord.c (coralflower.c, the emulator's unit). */
+
+enum { CF_RT_WAIT = 0, CF_RT_STRIKE = 1, CF_RT_MOVE = 2, CF_NRT };   /* RETRIG (stored: 0 and 1 were Off and On) */
+
+typedef struct {                /* the arpeggiator's settings (ARP; cf_arp.c) */
+    uint8_t mode;               /* CF_ARP_* */
+    uint8_t oct;                /* 1..4 octaves */
+    uint8_t rate;               /* a CF_ARP_UNITS index (1/1 .. 1/32) */
+    uint8_t gate;               /* 20..100 % */
+    uint8_t swing;              /* 50..75 % */
+    uint8_t latch;
+    uint8_t strum_ms;           /* Strum: 5..250 ms between the notes */
+} cf_arp_t;
+#define CF_ARP_DEFAULT {0, 1, 4, 70, 50, 0, 40}
+
+typedef struct {                /* the looper's settings (the LOOPER screen; cf_loop.c) */
+    uint8_t bars;               /* the take's length: 0 Free, else CF_LOOP_BARS[bars] bars after a count-in */
+    uint8_t mode;               /* REC over a loop: 0 Overwrite (a new take), 1 Overdub (a layer on top) */
+    uint8_t quant;              /* 0 off, 1 a 1/8, 2 a 1/16: the chords' starts as they are recorded */
+    uint8_t count_in;           /* a bar counted in before a take of bars */
+} cf_loop_t;
+#define CF_LOOP_DEFAULT {0, 0, 0, 1}
+
+/* the looper (cf_loop.c, in cf_out.c): a note it sounds (the keys' player leaves such a note sounding when it lets
+ * it go: the last of the two lets it go); its chord now (n: its notes, 0 none) */
+static int cfl_holds(uint32_t part, uint32_t note);
+static const cf_chord_out_t *cfl_chord(int *n);
+static int cfp_holds(uint32_t part, uint32_t note);   /* (below: a note the keys' player sounds) */
+
+typedef struct {
+    uint16_t glide_ms;          /* 0 = Off */
+    uint8_t glide_always;       /* 1 Always: a chord after a release glides from the last one; 0 Legato: only held */
+    uint8_t vel;                /* the keys have no velocity: this one */
+    uint8_t bass_on;
+    int8_t bass_oct;            /* -2 .. +2 octaves; 0: an octave under the root as played */
+    uint8_t octaver;            /* a second bass note an octave higher */
+    uint8_t midi_out;           /* notes out on USB MIDI */
+    uint8_t ch_chord, ch_bass;  /* 0..15 */
+    uint8_t retrig;             /* CF_RT_*: WAIT and MOVE move the sounding voices under held keys, no new attack */
+    uint8_t arp_on;             /* the arpeggiator plays part 0 (the ARP button) */
+    cf_arp_t arp;
+    uint16_t bpm;               /* the tempo (the metronome's): the arpeggiator's steps */
+    cf_loop_t loop;
+    uint8_t clock_in;           /* follow MIDI clock in (GLO > MIDI > CLOCK IN): its pulses run the beat */
+} cf_play_cfg_t;
+
+/* the beat grid the arpeggiator locks to while the metronome's clock runs (cf_out.c cfm_tick writes it): on, where it
+ * is in 1/24 beats (a MIDI clock's pulses), gen: + 1 when it starts again from beat 1 */
+static struct { uint8_t on; uint32_t g24, gen; } cf_grid;
+
+static uint32_t cf_now_ms, cf_ms_rem;                /* the engine clock: audio samples -> ms (cf_out.c) */
+static cf_chord_t cfc;                               /* the chord model: the ISR's */
+static cf_chord_cfg_t cfc_shadow;                    /* the UI's copy; CFE_CONFIG takes it (IRQ off while written) */
+static cf_play_cfg_t cfp_cfg = {0, 0, 100, 1, 0, 0, 1, 0, 1, 0, 0, CF_ARP_DEFAULT, 120, CF_LOOP_DEFAULT, 0};
+
+static struct {
+    uint8_t n, note[CF_MAX_NOTES];                   /* what part 0 plays now, low to high */
+    uint8_t nb, bass[2];                             /* what part 1 plays now */
+    uint8_t nl, last[CF_MAX_NOTES], nlb, lastb[2]; /* the chord and bass that sounded last (Always glides from them) */
+    uint32_t last_ms;                                /* when they were let go (cf_now_ms) */
+    uint32_t serial;                                 /* the chord model's serial they follow */
+    uint8_t onset;                                   /* bumped at every chord onset (the screen's plant) */
+    uint32_t root_ms;                                /* when a root key last went down (cf_now_ms) */
+} cfp;
+
+static uint32_t cfp_ticks(void)                      /* Glide in control blocks (CTL samples) */
+{
+    return (uint32_t)cfp_cfg.glide_ms * FS / (1000u * CTL);
+}
+
+static void cfp_midi(uint32_t st, uint32_t ch, uint32_t d1, uint32_t d2)
+{
+    if (cfp_cfg.midi_out)
+        midi_out_event((st >> 4) | (st | (ch & 15u)) << 8 | (d1 & 0x7Fu) << 16 | (d2 & 0x7Fu) << 24);
+}
+static void cfp_on(uint32_t part, uint32_t note, uint32_t vel)
+{
+    trk_note_on(&trk[part], note, vel);
+    cfp_midi(0x90u, part ? cfp_cfg.ch_bass : cfp_cfg.ch_chord, note, vel);
+}
+static void cfp_off(uint32_t part, uint32_t note)
+{
+    if (cfl_holds(part, note))                       /* (the loop sounds it too: it goes when the loop lets go) */
+        return;
+    trk_note_off(&trk[part], note);
+    cfp_midi(0x80u, part ? cfp_cfg.ch_bass : cfp_cfg.ch_chord, note, 0);
+}
+static void cfp_on_from(uint32_t part, uint32_t note, uint32_t vel, uint32_t from, uint32_t ticks)
+{
+    trk_note_on_from(&trk[part], note, vel, from, ticks);
+    cfp_midi(0x90u, part ? cfp_cfg.ch_bass : cfp_cfg.ch_chord, note, vel);
+}
+/* a held voice moved to another note: MIDI says it as an off and an on */
+static void cfp_move(uint32_t part, uint32_t from, uint32_t to, uint32_t ticks)
+{
+    voice_t *v = trk_voice_of(&trk[part], from);
+    uint32_t ch = part ? cfp_cfg.ch_bass : cfp_cfg.ch_chord;
+    if (from == to)
+        return;
+    if (v)
+        trk_retune(&trk[part], v, to, ticks);
+    else
+        trk_note_on(&trk[part], to, cfp_cfg.vel);    /* (the voice was stolen meanwhile) */
+    cfp_midi(0x80u, ch, from, 0);
+    cfp_midi(0x90u, ch, to, cfp_cfg.vel);
+}
+
+static int has(const uint8_t *a, int n, uint8_t v)
+{
+    int i;
+    for (i = 0; i < n; i++)
+        if (a[i] == v)
+            return 1;
+    return 0;
+}
+
+/* the bass is monophonic: when its new notes come, what still rings of the old ones (their release tails) fades out
+ * over the next block, as a stolen voice does (voice.c stage 4), so a long release never stacks two bass notes */
+static void cfp_bass_mono(void)
+{
+    uint32_t i;
+    for (i = 0; i < NVOICE; i++) {
+        voice_t *v = &trk[1].v[i];                 /* (part 1: the bass) */
+        if (v->active && !v->gate && v->stage != 4u)
+            v->stage = 4;
+    }
+}
+
+/* part's notes old[n] -> new[m]: restart, keep the shared ones, or glide */
+static void cfp_change(uint32_t part, uint8_t *old, uint8_t *pn, const uint8_t *nw, int m, int mode)
+{
+    int n = *pn, i;
+    uint32_t vel = cfp_cfg.vel, ticks = cfp_ticks();
+    if (part && m)                                   /* the tails of bass notes let go before */
+        cfp_bass_mono();
+    if (!m || mode == 0 || mode == 3) {             /* silence, or a fresh strike: everything restarts */
+        uint8_t *prev = part ? cfp.lastb : cfp.last;
+        int np = part ? cfp.nlb : cfp.nl;
+        for (i = 0; i < n; i++)
+            cfp_off(part, old[i]);
+        if (part && m)                               /* the old bass notes just let go: they too */
+            cfp_bass_mono();
+        if (m && mode == 3 && np && ticks) {        /* Always: the new notes come out of the last chord's */
+            uint8_t pi[24], qj[24], done[CF_MAX_NOTES] = {0};
+            int k = cf_match(prev, np, nw, m, pi, qj), x;
+            for (x = 0; x < k; x++)
+                if (!done[qj[x]]) {
+                    done[qj[x]] = 1;
+                    if (prev[pi[x]] == nw[qj[x]])
+                        cfp_on(part, nw[qj[x]], vel);
+                    else
+                        cfp_on_from(part, nw[qj[x]], vel, prev[pi[x]], ticks);
+                }
+            for (i = 0; i < m; i++)
+                if (!done[i])
+                    cfp_on(part, nw[i], vel);
+        } else {
+            for (i = 0; i < m; i++)
+                cfp_on(part, nw[i], vel);
+        }
+    } else if (mode == 2 && n) {                    /* glide: the voices move (no Glide time: at once, RETRIG Off) */
+        uint8_t pi[24], qj[24], used_p[CF_MAX_NOTES] = {0}, used_q[CF_MAX_NOTES] = {0};
+        uint8_t from[CF_MAX_NOTES];
+        int k = cf_match(old, n, nw, m, pi, qj), x;
+        /* every voice that moves is found before any moves (two voices may pass through the same note) */
+        voice_t *vv[CF_MAX_NOTES];
+        for (i = 0; i < n; i++) {
+            vv[i] = trk_voice_of(&trk[part], old[i]);
+            from[i] = old[i];
+        }
+        for (x = 0; x < k; x++) {
+            int a = pi[x], b = qj[x];
+            if (!used_p[a] && !used_q[b]) {          /* the first pairing of this old voice: it moves */
+                used_p[a] = used_q[b] = 1;
+                if (from[a] != nw[b]) {
+                    if (vv[a])
+                        trk_retune(&trk[part], vv[a], nw[b], ticks);
+                    else
+                        trk_note_on(&trk[part], nw[b], vel);
+                    cfp_midi(0x80u, part ? cfp_cfg.ch_bass : cfp_cfg.ch_chord, from[a], 0);
+                    cfp_midi(0x90u, part ? cfp_cfg.ch_bass : cfp_cfg.ch_chord, nw[b], vel);
+                }
+            } else if (used_p[a] && !used_q[b]) {    /* a split: a new voice out of this old note */
+                used_q[b] = 1;
+                cfp_on_from(part, nw[b], vel, from[a], ticks);
+            }
+        }
+        for (i = 0; i < n; i++)                      /* merged away: the extra old voices let go */
+            if (!used_p[i]) {
+                if (vv[i])
+                    vv[i]->gate = 0, vv[i]->stage = part ? 4 : 3;   /* (the bass: at once, it is monophonic) */
+                cfp_midi(0x80u, part ? cfp_cfg.ch_bass : cfp_cfg.ch_chord, from[i], 0);
+            }
+        for (i = 0; i < m; i++)                      /* (a target nobody reached: plainly) */
+            if (!used_q[i])
+                cfp_on(part, nw[i], vel);
+    } else {                                         /* re-voiced under a held root: the shared tones hold */
+        for (i = 0; i < n; i++)
+            if (!has(nw, m, old[i]))
+                cfp_off(part, old[i]);
+        if (part && m)
+            cfp_bass_mono();
+        for (i = 0; i < m; i++)
+            if (!has(old, n, nw[i]))
+                cfp_on(part, nw[i], vel);
+    }
+    if (n && !m) {                                   /* let go: remember what sounded, for Always */
+        uint8_t *prev = part ? cfp.lastb : cfp.last;
+        int lim = part ? 2 : CF_MAX_NOTES;
+        for (i = 0; i < n && i < lim; i++)
+            prev[i] = old[i];
+        if (part)
+            cfp.nlb = (uint8_t)(n < 2 ? n : 2);
+        else
+            cfp.nl = (uint8_t)n;
+        cfp.last_ms = cf_now_ms;
+    }
+    for (i = 0; i < m; i++)
+        old[i] = nw[i];
+    *pn = (uint8_t)m;
+}
+
+#include "cf_arp.c"                                  /* (the arpeggiator: cfa_chord, cfa_tick, cfa_config) */
+
+/* the bass notes of a chord (the keys' model's, or the loop's) */
+static int cfp_bass_notes_of(const cf_chord_out_t *o, uint8_t out[2])
+{
+    int n = 0, b;
+    if (!cfp_cfg.bass_on || !o->sounding || o->single || o->bass_pc < 0)
+        return 0;
+    /* an octave under the root as played (the owner's 0), so the bass goes the way the keys go (it used to sit in
+     * C2 .. B2 by pitch class: B up to C fell eleven semitones); a bass degree other than the root: its nearest note */
+    b = (int)o->root_note - 12 + 12 * cfp_cfg.bass_oct;
+    b += ((o->bass_pc - (b % 12 + 12) % 12 + 18) % 12) - 6;
+    while (b < 12)                                   /* (only the MIDI range folds it: a fold is a jump) */
+        b += 12;
+    while (b > 96)
+        b -= 12;
+    out[n++] = (uint8_t)b;
+    if (cfp_cfg.octaver && b + 12 <= 120)       /* the octaver: the same note an octave up */
+        out[n++] = (uint8_t)(b + 12);
+    return n;
+}
+static int cfp_bass_notes(uint8_t out[2]) { return cfp_bass_notes_of(&cfc.out, out); }
+
+/* a note the keys' player sounds (the looper lets such a note go only when the keys let it go) */
+static int cfp_holds(uint32_t part, uint32_t note)
+{
+    uint32_t i;
+    if (part) {
+        for (i = 0; i < cfp.nb; i++)
+            if (cfp.bass[i] == note)
+                return 1;
+        return 0;
+    }
+    if (cfa.on) {                                    /* (the arpeggiator's notes: the ones that sound) */
+        if (cfa.cur == note)
+            return 1;
+        for (i = 0; i < cfa.sn; i++)
+            if (cfa.son[i] && cfa.snote[i] == note)
+                return 1;
+        return 0;
+    }
+    for (i = 0; i < cfp.n; i++)
+        if (cfp.note[i] == note)
+            return 1;
+    return 0;
+}
+
+/* the parts follow the chord model. how: 0 a fresh strike (a root key went down), 1 a change under held keys */
+static void cfp_sync(int how)
+{
+    const cf_chord_out_t *o = &cfc.out;
+    uint8_t nb[2];
+    int m = o->sounding ? o->n : 0, mb = cfp_bass_notes(nb), lm = 0;
+    const cf_chord_out_t *lo = 0;
+    /* RETRIG Off: a chord changed while the last one still sounds under held keys (another chord button, another
+     * root) moves its voices there with no new attack, at the Glide time (0: at once) */
+    int glide = (cfp_cfg.glide_ms || cfp_cfg.retrig != CF_RT_STRIKE) && cfp.n && m;
+    /* Always: a chord struck after a release glides from the last one, if that was within a few seconds */
+    int always = cfp_cfg.glide_ms && cfp_cfg.glide_always && !cfp.n && m && cfp.nl &&
+                 (uint32_t)(cf_now_ms - cfp.last_ms) < 4000u;
+    int mode = glide && !o->single ? 2 : always && !o->single ? 3 : how == 0 ? 0 : 1;
+    int bmode = glide && cfp.nb && mb ? 2 : always && !cfp.nb && mb && cfp.nlb ? 3 : how == 0 ? 0 : 1;
+    if (m && (!cfp.n || how == 0))
+        cfp.onset++;
+#ifdef CF_TRACE                                      /* (the headless runner, -DCF_TRACE: every change) */
+    {
+        int q;
+        fprintf(stderr, "%6u sync how %d mode %d:", (unsigned)cf_now_ms, how, mode);
+        for (q = 0; q < m; q++)
+            fprintf(stderr, " %u", o->note[q]);
+        fprintf(stderr, "\n");
+    }
+#endif
+    if (cfa.on && !m && !(cfp_cfg.arp.latch && cfa.n))
+        lo = cfl_chord(&lm);                         /* ARP, the keys let go (no LATCH): the loop's chord, if one plays */
+    if (lm) {
+        cfa_chord(lo, lm);
+        cfp.n = 0;
+    } else if (cfa_chord(o, m)) {                    /* ARP: the arpeggiator plays part 0; its notes are the chord */
+        int i;
+        for (i = 0; i < m; i++)
+            cfp.note[i] = o->note[i];
+        cfp.n = (uint8_t)m;
+    } else {
+        cfp_change(0, cfp.note, &cfp.n, o->note, m, mode);
+    }
+    if (!(cfa.latched && !mb))                       /* (LATCH: the bass held under the arpeggio too) */
+        cfp_change(1, cfp.bass, &cfp.nb, nb, mb, bmode);
+    cfp.serial = o->serial;
+}
+
+#define CFP_GATHER_MS 50u                            /* a button this soon after a root is still that chord's */
+static void cfp_key(int key, int down)
+{
+    int idx, role = cf_key_role(cfc.cfg.algo, key, &idx);
+    /* RETRIG Wait: a button under held keys waits for the next root; but one pressed or let go just after a root went
+     * down (fingers are never quite together) still makes that root's chord */
+    cfc.keep = cfp_cfg.retrig == CF_RT_WAIT &&
+               (role != CF_ROLE_BUTTON || (uint32_t)(cf_now_ms - cfp.root_ms) >= CFP_GATHER_MS);
+    if (role == CF_ROLE_ROOT && down)
+        cfp.root_ms = cf_now_ms;
+    if (!cf_chord_key(&cfc, key, down))
+        return;
+    cfp_sync(role == CF_ROLE_ROOT && down ? 0 : 1);
+}
+
+static void cfp_config(void)                         /* CFE_CONFIG: the UI's settings */
+{
+    uint8_t was = cfa.on, latched = cfa.latched, i;
+    cfc.keep = cfp_cfg.retrig == CF_RT_WAIT;
+    cf_chord_config(&cfc, &cfc_shadow);
+    cfa_config(cfc.out.sounding);
+    if (cfa.on != was) {                             /* ARP switched: part 0's notes go to the arpeggiator, or back */
+        if (cfa.on)
+            for (i = 0; i < cfp.n; i++)
+                cfp_off(0, cfp.note[i]);
+        cfp.n = 0;                                   /* (switched off: cfa_config let its notes go) */
+        cfp_sync(1);
+    } else if (cfc.out.serial != cfp.serial || latched != cfa.latched) {
+        cfp_sync(1);
+    }
+}
+
+static void cfp_panic(void)
+{
+    uint32_t i;
+    cfa_stop();
+    cf_chord_reset(&cfc);
+    cf_chord_config(&cfc, &cfc.cfg);
+    for (i = 0; i < cfp.n; i++)
+        cfp_off(0, cfp.note[i]);
+    for (i = 0; i < cfp.nb; i++)
+        cfp_off(1, cfp.bass[i]);
+    cfp.n = cfp.nb = 0;
+    trk_all_off(&trk[0]);
+    trk_all_off(&trk[1]);
+}
+
+static void cfp_init(void)
+{
+    cf_chord_defaults(&cfc_shadow);
+    cf_chord_init(&cfc, &cfc_shadow);
+    cfp.n = cfp.nb = 0;
+}

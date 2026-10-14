@@ -1,0 +1,7 @@
+# built and generated: tools/build.py (build/gen), the emulators (build/emu-web, build/host), measurements
+/build/
+# this machine's preview config (its paths)
+/.claude/
+.DS_Store
+__pycache__/
+*.pyc

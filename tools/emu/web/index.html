@@ -1,0 +1,133 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CoralFlower Emulator</title>
+<meta name="description" content="CoralFlower, a chord-instrument firmware for the M-VAVE FM-1, running in your browser: the real firmware compiled to WebAssembly, with sound.">
+<style>
+@font-face { font-family: "Departure Mono"; src: url("DepartureMono-Regular.otf") format("opentype"); font-display: swap; }
+:root {
+  --ground: #110A02; --panel: #1A120B; --raise: #271B12; --line: #3A2B22;
+  --ink: #F1ECE0; --ink2: #A89A88; --ink3: #5E5048;
+  --rose: #E86879; --fire: #F9C62A; --orange: #F1750D; --lime: #D6E34C; --sea: #48E6D9; --orchid: #E6658B; --sky: #0D97D5;
+  --lcd: 480px;
+}
+:root[data-theme="light"] { --ground: #F1ECE0; --panel: #E6DED0; --raise: #D8CEBD; --line: #C9BCA8; --ink: #1A120B; --ink2: #5E5048; --ink3: #A89A88; }
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--ground); color: var(--ink); }
+body { font: 15px/1.5 "Departure Mono", ui-monospace, SFMono-Regular, Menlo, monospace; }
+a { color: var(--sea); }
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px 48px; }
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 22px 0 10px; flex-wrap: wrap; }
+h1 { margin: 0; font-size: clamp(26px, 4.6vw, 42px); line-height: 1; font-weight: 400; letter-spacing: 0.01em; }
+h1 .c { color: var(--rose); } h1 .f { color: var(--lime); }
+header p { margin: 0; color: var(--ink2); }
+.ramp { display: flex; height: 6px; margin: 4px 0 22px; }
+.ramp i { flex: 1; }
+.stage { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+.lcdbox { background: #000; padding: 12px; border-radius: 10px; box-shadow: 0 0 0 2px var(--line), 0 12px 40px rgba(0,0,0,0.45); }
+#lcd { display: block; width: var(--lcd); height: var(--lcd); max-width: calc(100vw - 64px); max-height: calc(100vw - 64px);
+       image-rendering: pixelated; image-rendering: crisp-edges; background: #000; border-radius: 2px; }
+#gate { display: flex; align-items: stretch; width: calc(var(--lcd) + 24px); max-width: calc(100vw - 32px); background: var(--panel); border-radius: 8px; overflow: hidden; box-shadow: 0 0 0 2px var(--rose); }
+#gate[hidden] { display: none; }
+#gate p { margin: 0; padding: 12px 16px; color: var(--ink2); line-height: 1.35; }
+button, select { font: inherit; }
+.btn { border: 0; cursor: pointer; color: var(--ground); background: var(--ink); padding: 9px 14px; border-radius: 6px; }
+.btn:hover { background: var(--fire); }
+.btn:focus-visible, select:focus-visible { outline: 3px solid var(--fire); outline-offset: 2px; }
+#start { flex: none; background: var(--rose); color: var(--ground); font-size: 24px; padding: 12px 30px; border-radius: 0; }
+#start:hover { background: var(--fire); }
+.panelbox { position: relative; width: 100%; max-width: 1080px; }
+#panel { display: block; width: 100%; height: auto; touch-action: none; user-select: none; -webkit-user-select: none; }
+#mini { position: absolute; image-rendering: pixelated; pointer-events: none; }
+#panel text { font-family: "Departure Mono", ui-monospace, monospace; pointer-events: none; }
+#panel [data-c] { cursor: pointer; }
+.bar { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; justify-content: center; width: 100%; max-width: 1080px; }
+.bar [hidden] { display: none; }
+.bar label { color: var(--ink2); display: flex; gap: 6px; align-items: center; }
+select { background: var(--raise); color: var(--ink); border: 0; padding: 8px 10px; max-width: 220px; border-radius: 6px; }
+.meter { display: flex; align-items: center; gap: 8px; color: var(--ink2); }
+.meter b { display: block; width: 90px; height: 10px; background: var(--raise); position: relative; border-radius: 2px; overflow: hidden; }
+.meter b i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--lime); }
+#status { min-height: 1.5em; color: var(--ink2); text-align: center; }
+/* the legend: one card per kind of control, each a list of rows "what you press -> what it does on the FM-1";
+ * keyboard keys are filled caps, mouse gestures outlined ones; the FM-1's own printed names bright, the rest dim */
+.legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; width: 100%; max-width: 1080px; margin-top: 8px; }
+.legend > div { padding: 12px 14px 14px; background: var(--panel); border-radius: 8px; border-left: 4px solid var(--c); }
+.legend h3 { margin: 0 0 10px; font-size: 13px; font-weight: 400; letter-spacing: 0.08em; text-transform: uppercase; color: var(--c); }
+.legend dl { display: grid; grid-template-columns: 150px 1fr; gap: 7px 14px; align-items: center; margin: 0; font-size: 14px; line-height: 1.3; }
+.legend dt { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; color: var(--ink3); }
+.legend dd { margin: 0; color: var(--ink2); }
+.legend dd b { font-weight: 400; color: var(--ink); }
+.legend hr { grid-column: 1 / -1; width: 100%; margin: 2px 0; border: 0; border-top: 1px solid var(--line); }
+kbd { font: 13px/1 "Departure Mono", ui-monospace, monospace; background: var(--raise); color: var(--ink); padding: 3px 6px; border-radius: 3px; min-width: 1.6em; text-align: center; }
+kbd.m { background: none; color: var(--ink2); box-shadow: inset 0 0 0 1px var(--line); }
+footer { margin-top: 24px; font-size: 13px; color: var(--ink3); text-align: center; }
+@media (min-width: 1500px) and (min-height: 1250px) { :root { --lcd: 720px; } }
+@media (max-width: 560px) { header { padding-top: 16px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1><span class="c">Coral</span><span class="f">Flower</span> emulator</h1>
+    <p>the FM-1 firmware, running in this page</p>
+  </header>
+  <div class="ramp"><i style="background:#F9C62A"></i><i style="background:#F6BA7A"></i><i style="background:#F1750D"></i><i style="background:#E86879"></i><i style="background:#962179"></i><i style="background:#0D97D5"></i><i style="background:#48E6D9"></i><i style="background:#22B572"></i><i style="background:#D6E34C"></i></div>
+  <main class="stage">
+    <div class="lcdbox">
+      <canvas id="lcd" width="240" height="240" aria-label="The FM-1 screen"></canvas>
+    </div>
+    <div id="gate">
+      <button id="start" class="btn">Start</button>
+      <p>The real firmware in your browser. Press Start for sound, then play with the mouse or the computer keyboard.</p>
+    </div>
+    <div class="panelbox">
+      <svg id="panel" viewBox="14 14 876 538" role="application" aria-label="FM-1 panel: keys, buttons and knobs"></svg>
+      <canvas id="mini" width="240" height="240"></canvas>
+    </div>
+    <div id="status">Loading&hellip;</div>
+    <div class="bar">
+      <div class="meter" title="the share of real time the browser spends running the device">LOAD <b><i id="load"></i></b> <span id="loadv">&ndash;</span></div>
+      <button id="midi" class="btn">Enable MIDI</button>
+      <label hidden>Out <select id="mout"><option value="">none</option></select></label>
+      <label hidden>In <select id="min"><option value="">none</option></select></label>
+      <button id="reset" class="btn" title="forget the saved settings and sounds (this browser only)">Reset flash</button>
+    </div>
+    <section class="legend" aria-label="The computer keyboard and the mouse">
+      <div style="--c: var(--rose)"><h3>Keys</h3><dl>
+        <dt><kbd>Z</kbd>&ndash;<kbd>M</kbd></dt><dd>lower <b>F3&ndash;E4</b></dd>
+        <dt><kbd>Q</kbd>&ndash;<kbd>O</kbd></dt><dd>lower <b>F4&ndash;G5</b></dd>
+        <dt><kbd>S</kbd><kbd>D</kbd><kbd>F</kbd><kbd>H</kbd><kbd>J</kbd></dt><dd>upper <b>F#3&ndash;D#4</b></dd>
+        <dt><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd><kbd>6</kbd><kbd>7</kbd><kbd>9</kbd></dt><dd>upper <b>F#4&ndash;F#5</b></dd>
+        <hr><dt><kbd class="m">click</kbd></dt><dd>play</dd>
+        <dt><kbd class="m" title="or Ctrl-click; again to let go">right-click</kbd></dt><dd>hold</dd>
+      </dl></div>
+      <div style="--c: var(--fire)"><h3>Buttons</h3><dl>
+        <dt><kbd>F1</kbd><kbd>F2</kbd><kbd>F3</kbd></dt><dd><b>FX SEL ENV</b></dd>
+        <dt><kbd>F4</kbd><kbd>F5</kbd><kbd>F6</kbd></dt><dd><b>LFO EDIT GLO</b></dd>
+        <dt><kbd>Home</kbd></dt><dd><b>HOME</b></dd>
+        <dt><kbd>F8</kbd><kbd>F9</kbd><kbd>F10</kbd></dt><dd><b>SAVE ARP SEQ</b></dd>
+        <dt><kbd>Space</kbd><kbd>Enter</kbd></dt><dd><b>PLAY REC</b></dd>
+        <dt><kbd>-</kbd><kbd>=</kbd></dt><dd><b>OCT&minus; OCT+</b></dd>
+        <hr><dt><kbd class="m">click</kbd></dt><dd>press</dd>
+        <dt><kbd class="m" title="or Ctrl-click; again to let go">right-click</kbd></dt><dd>hold</dd>
+      </dl></div>
+      <div style="--c: var(--sea)"><h3>Knobs</h3><dl>
+        <dt><kbd>[</kbd><kbd>]</kbd></dt><dd><b>PRESETS</b></dd>
+        <dt><kbd>;</kbd><kbd>'</kbd></dt><dd><b>SELECT</b></dd>
+        <dt><kbd>,</kbd><kbd>.</kbd></dt><dd><b>ALGORITHM</b></dd>
+        <dt><kbd>Tab</kbd></dt><dd>pick a knob</dd>
+        <dt><kbd>&larr;</kbd><kbd>&rarr;</kbd><kbd>&darr;</kbd><kbd>&uarr;</kbd></dt><dd>turn it</dd>
+        <hr><dt><kbd class="m">drag</kbd><kbd class="m">wheel</kbd></dt><dd>turn</dd>
+      </dl></div>
+    </section>
+    <footer>GPL-3.0 &middot; CoralFlower, after ChoralRoot FM-1 and Felucca &middot; settings and sounds you save stay in this browser</footer>
+  </main>
+</div>
+<script src="keymap.js"></script>
+<script src="emu.js"></script>
+</body>
+</html>

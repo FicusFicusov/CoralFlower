@@ -1,0 +1,32 @@
+# Headless check of the harness on Felucca's UI:  build/host/emu --headless --script tools/emu/acceptance.txt
+# (sequential commands; the computer keys of tools/emu/keymap.c; shots in build/emu/)
+wait 500ms
+shot acc_home                # HOME
+btn D4 300ms                # D4 sounds, its LED lit
+btn ENV                      # ENV page
+wait 300ms
+shot acc_env
+btn HOME                      # HOME
+btn PRESETS down             # select PRESETS
+press UP                     # next preset
+wait 400ms
+shot acc_preset
+dump
+btn SEQ                 # SEQ page
+wait 300ms
+shot acc_seq
+btn HOME
+wait 300ms
+btn REC                   # REC: arms track 1, starts PLAY
+wait 200ms
+btn D4 200ms
+wait 100ms
+btn F4 200ms
+wait 100ms
+btn A4 200ms
+wait 600ms
+btn REC                   # disarm, keeps playing
+wait 800ms
+shot acc_playback
+dump                         # T1: 3 steps with notes, playing 1
+quit

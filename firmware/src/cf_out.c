@@ -1,0 +1,572 @@
+/* SPDX-License-Identifier: GPL-3.0-only
+ * Copyright (C) 2026 ChoralRoot FM-1 contributors (a fork of Felucca); CoralFlower contributors */
+/* CoralFlower: the audio side's glue (after ChoralRoot's cr_out.c).
+ *
+ *   part 0 CHORD  <- the chord player (cf_play.c): the chord sound (PRESETS)
+ *   part 1 BASS   <- the bass of the chord: the bass sound (SELECT)
+ *
+ * Everything here runs in the audio ISR: cf_audio_block() is called at the top of every CTL-sample block, before
+ * fx.c renders it (the mix_block shim in coralflower.c / emu_firmware.h). It drains the events the UI posted
+ * (cf_post: a lock-free single-producer ring), runs the chord player and the metronome, and reads MIDI in.
+ * Felucca's sequencer (seq.c and its satellites) is not in the unit: what the kept files call of it is below, as
+ * ChoralRoot's cr_out.c provided it (events_block, midi_event, panic_req, motion_guard ...). */
+
+#if !FELUCCA_SEQ
+/* ---------------------------------------------- what seq.c provided --- */
+static volatile uint8_t panic_req;               /* bit per part: its notes released (a sound load, M-UPGRADE) */
+static const uint8_t transport_req = 0;          /* (upreset.c, cr_bank.c: Felucca's transport never runs) */
+#define chain_defaults(c) ((void)0)              /* (main.c felucca_init: no song chain) */
+#ifdef FM1_INPUT_LAT
+static uint32_t kb_out_tick;                     /* (audio.c: seq.c's key latency stamp; nothing reads it here) */
+#endif
+static uint32_t trk_index(const track_t *t) { return (uint32_t)(t - trk); }
+static int drum_track(const track_t *t) { return ENGINES[eng_idx(t->eng_req)] == &ENG_DRUM; }
+/* motion.c's: no motion lanes, so a part's sounding value is its saved one; the guard keeps the audio IRQ out while
+ * a part's parameters are copied (cr_bank.c fm4_apply), as motion.c's did */
+static int16_t motion_base_value(const track_t *t, uint32_t id) { return t->p[id]; }
+static uint32_t motion_guard(void)
+{
+#if defined(FM1_IRQ_TARGET)
+    uint32_t f = fm1_icfg();
+    fm1_irq_off();
+    return f;
+#else
+    return 0;
+#endif
+}
+static void motion_unguard(uint32_t f)
+{
+#if defined(FM1_IRQ_TARGET)
+    fm1_icfg_set(f);
+#else
+    (void)f;
+#endif
+}
+
+/* ------------------------------------------------- the parts' MIDI in --- */
+/* cr_midi_in (below) forwards a CHORD / BASS channel's notes, pedal, bend, pressure and the other CCs here as
+ * midi_event(status, part, d1, d2), as it handed them to midi_control.c before; what of that ChoralRoot uses:
+ *   note on / off       trk_note_on / trk_note_off on the part (a repeated note-on restarts it; velocity 0: off)
+ *   CC 64 sustain       a released note is held while the pedal is down, released with it
+ *   pitch bend          voice.c's midi_bend_target, +-2 semitones (RPN 0 sets 0..24 semitones, 0..99 cents); FM6 bends by its
+ *                       own BEND range (track_t.bend_raw, docs/FM6.md)
+ *   CC 1 / 11, pressure mod.c's MODW / EXPR / AT sources (mod_midi)
+ *   CC 120              all sound off: the part's voices cut (a short fade), the pedal ignored
+ *   CC 121              reset controllers: bend, wheel, pressure, expression, the pedal up (the bend range kept)
+ *   CC 123              all notes off: the part's MIDI notes released (the pedal honoured), the part's voices too
+ *                       when no MIDI note is held then
+ * Felucca's chords (CHRD), its arpeggiator and live recording were the sequencer's: gone. A part's MIDI notes and the
+ * engine's stream share its voices exactly as before (a MIDI note-off ends that note, whoever started it). */
+#define CR_MPED 0x80u                            /* cr_mnote: the key is up, the pedal holds the note */
+typedef struct {
+    int16_t bend;                                /* signed 14-bit, 0 = centre */
+    uint8_t pedal, semis, cents, rpn_msb, rpn_lsb, ready;
+} cr_mch_t;
+static cr_mch_t cr_mch[2];                       /* parts 0 / 1 (CHORD / BASS) */
+static uint8_t cr_mnote[2][128];                 /* 1: a MIDI note-on holds it; | CR_MPED: the pedal does */
+static uint8_t cr_mheld[2];                      /* notes cr_mnote holds per part (CC 123's check), at most 128 */
+
+static cr_mch_t *cr_mchan(uint32_t p)
+{
+    cr_mch_t *c = &cr_mch[p];
+    if (!c->ready) {
+        c->semis = 2;
+        c->rpn_msb = c->rpn_lsb = 127;
+        c->ready = 1;
+    }
+    return c;
+}
+static void cr_mbend(uint32_t p)                 /* the channel's bend -> the part's (voice.c glides to it) */
+{
+    const cr_mch_t *c = cr_mchan(p);
+    int32_t range = ((int32_t)c->semis * 100 + c->cents) * 256 / 100;
+    midi_bend_target[p] = (int32_t)c->bend * range / (c->bend < 0 ? 8192 : 8191);
+    trk[p].bend_raw = c->bend;                   /* (FM6 bends by its own BEND range: its patch's, docs/FM6.md) */
+}
+static void cr_mrelease(uint32_t p, uint32_t note)
+{
+    if (cr_mnote[p][note]) {
+        cr_mnote[p][note] = 0;
+        if (cr_mheld[p])
+            cr_mheld[p]--;
+        trk_note_off(&trk[p], note);
+    }
+}
+static void cr_mpedal_up(uint32_t p)
+{
+    uint32_t n;
+    cr_mchan(p)->pedal = 0;
+    for (n = 0; n < 128u; n++)
+        if (cr_mnote[p][n] & CR_MPED)
+            cr_mrelease(p, n);
+}
+static void cr_mforget(uint32_t p)               /* a panic: the part's MIDI notes forgotten (their offs end nothing) */
+{
+    if (p < 2u) {
+        memset(cr_mnote[p], 0, sizeof cr_mnote[p]);
+        cr_mheld[p] = 0;
+    }
+    midi_bend_q8[p] = midi_bend_target[p] = 0;
+    trk[p].bend_raw = 0;
+}
+static void cr_mcontrol(uint32_t p, uint32_t cc, uint32_t v)
+{
+    cr_mch_t *c = cr_mchan(p);
+    track_t *t = &trk[p];
+    uint32_t n;
+    switch (cc) {
+    case 64:
+        if (v >= 64u)
+            c->pedal = 1;
+        else
+            cr_mpedal_up(p);
+        break;
+    case 120:                                    /* all sound off: ignores the pedal */
+        trk_all_off(t);
+        for (n = 0; n < NVOICE; n++)
+            if (t->v[n].active)
+                voice_kill(&t->v[n]);
+        cr_mforget(p);
+        break;
+    case 121:                                    /* reset all controllers (mod_midi: wheel, pressure, expression) */
+        c->bend = 0;
+        c->rpn_msb = c->rpn_lsb = 127;
+        cr_mbend(p);
+        cr_mpedal_up(p);
+        break;
+    case 123:                                    /* all notes off: normal releases, the pedal honoured */
+        for (n = 0; n < 128u; n++)
+            if (cr_mnote[p][n] && !(cr_mnote[p][n] & CR_MPED)) {
+                if (c->pedal)
+                    cr_mnote[p][n] |= CR_MPED;
+                else
+                    cr_mrelease(p, n);
+            }
+        if (!cr_mheld[p])
+            trk_all_off(t);
+        break;
+    case 101: c->rpn_msb = (uint8_t)v; break;
+    case 100: c->rpn_lsb = (uint8_t)v; break;
+    case 99: case 98: c->rpn_msb = c->rpn_lsb = 127; break;   /* NRPN selected: no RPN data entry */
+    case 6: case 38:
+        if (!c->rpn_msb && !c->rpn_lsb) {        /* RPN 0, pitch bend sensitivity */
+            if (cc == 6u)
+                c->semis = (uint8_t)(v > 24u ? 24u : v);
+            else
+                c->cents = (uint8_t)(v > 99u ? 99u : v);
+            cr_mbend(p);
+        }
+        break;
+    default: break;
+    }
+}
+/* st: the status' high nibble (0x80..0xE0); p: the part 0 / 1 (cr_midi.c crm_map) */
+static void __attribute__((noinline)) midi_event(uint32_t st, uint32_t p, uint32_t d1, uint32_t d2)
+{
+    if (p >= 2u)
+        return;
+    if (st == 0x90u && d2) {
+        if (cr_mnote[p][d1])                     /* a repeated note replaces the previous press (a pedal-held one too) */
+            cr_mrelease(p, d1);
+        cr_mbend(p);
+        trk_note_on(&trk[p], d1, d2);
+        cr_mnote[p][d1] = 1;
+        if (cr_mheld[p] < 128u)
+            cr_mheld[p]++;
+    } else if (st == 0x80u || st == 0x90u) {
+        if (cr_mnote[p][d1] && cr_mchan(p)->pedal)
+            cr_mnote[p][d1] |= CR_MPED;
+        else
+            cr_mrelease(p, d1);
+    } else if (st == 0xE0u) {
+        cr_mchan(p)->bend = (int16_t)((int32_t)(d1 | d2 << 7) - 8192);
+        cr_mbend(p);
+    } else if (st == 0xB0u) {
+        mod_midi(&trk[p], st, d1, d2);
+        cr_mcontrol(p, d1, d2);
+    } else if (st == 0xD0u) {
+        mod_midi(&trk[p], st, d1, d2);
+    }
+}
+
+/* fx.c's, between two rendered blocks (after cr_audio_block): the releases asked for, the engine switches. A MIDI in
+ * queue that overflowed (a lost note-off) is dropped and every part released: no stuck note */
+static void events_block(uint32_t n)
+{
+    uint32_t i, pr = panic_req;
+    (void)n;
+    panic_req = 0;
+    if (midi_in_overflow) {
+        mi_r = mi_w;
+        pr |= (1u << NTRK) - 1u;
+        RING_PUBLISH();
+        midi_in_overflow = 0;
+    }
+    for (i = 0; i < NTRK; i++) {
+        if ((pr >> i) & 1u) {
+            if (i < 2u)
+                cr_mchan(i)->pedal = 0;
+            cr_mforget(i);
+            trk_all_off(&trk[i]);
+        }
+        engine_block(&trk[i]);                   /* engine switch: fade, then switch (voice.c) */
+    }
+}
+#endif /* !FELUCCA_SEQ */
+
+/* ------------------------------------------------------------ the queue --- */
+/* UI -> ISR. One producer (the main loop), one consumer (the audio ISR): the index stores are the publication */
+enum {
+    CFE_KEY,          /* a: key 0..26, v: down */
+    CFE_CONFIG,       /* the chord settings: cfc_shadow (cf_play.c) */
+    CFE_PANIC,
+    CFE_METRO,        /* a: on, b: level 0..100 */
+    CFE_TEMPO,        /* v: BPM 30..300 */
+    CFE_SIG,          /* v: beats a bar 1..12 */
+    CFE_TRANSPORT,    /* v: 1 start (from beat 1), 0 stop */
+    CFE_LOOP,         /* a: 0 REC tapped, 1 PLAY tapped, 2 REC held (undo), 3 cleared (SAVE > Loop > Delete) */
+};
+typedef struct { uint8_t op, a, b, rsv; int16_t v; } cf_ev_in_t;
+#define CF_EVQ 128u                              /* a power of two */
+static cf_ev_in_t cf_evq[CF_EVQ];
+static volatile uint32_t cf_evq_w, cf_evq_r;
+static volatile uint32_t cf_evq_lost;
+
+static int cf_post(uint32_t op, uint32_t a, uint32_t b, int32_t v)
+{
+    cf_ev_in_t *e;
+    if (cf_evq_w - cf_evq_r >= CF_EVQ) {
+        cf_evq_lost++;
+        return 0;
+    }
+    e = &cf_evq[cf_evq_w % CF_EVQ];
+    e->op = (uint8_t)op;
+    e->a = (uint8_t)a;
+    e->b = (uint8_t)b;
+    e->v = (int16_t)v;
+    RING_PUBLISH();
+    cf_evq_w++;
+    return 1;
+}
+
+/* -------------------------------------------------------- the metronome --- */
+/* the beat clock runs while the transport plays (PLAY: from beat 1) or the metronome screen is open; the click is
+ * a decaying sine (ChoralRoot's cr_click_mix): 1.5 kHz on beat 1, 1 kHz on the others */
+static struct {
+    uint8_t on;                  /* the click sounds (SEQ open, recording, or the transport running) */
+    uint8_t running;             /* the transport */
+    uint8_t level;               /* 0..100 */
+    uint8_t beats;               /* a bar */
+    uint16_t bpm;
+    uint32_t acc;                /* samples x bpm since the last beat, against FS x 60 */
+    uint8_t beat;                /* the beat about to come (0 = the downbeat) */
+    uint8_t click;               /* 1 a beat, 2 the downbeat: set for the mix */
+    volatile uint32_t beats_done;
+    uint32_t beat_ms;            /* the engine clock at the last beat */
+} cfm = {0, 0, 0, 4, 120, 0, 0, 0, 0, 0};
+
+#include "cr_midi.c"                             /* (MIDI in's pure part: the clock's follower, the channels' map) */
+/* MIDI clock in (GLO > MIDI > CLOCK IN, cf_midi_in): while its pulses come, they run the beat (a pulse is 1/24 of
+ * one) instead of the tempo, so the metronome, the arpeggiator and the loop follow the other instrument */
+static struct {
+    crm_clock_t f;               /* (cr_midi.c's tempo follower) */
+    uint32_t pulses;             /* come since the last block */
+    uint32_t last_ms;            /* the last one (cf_now_ms) */
+    uint8_t active;              /* pulses within the last 300 ms */
+    uint16_t bpm;                /* the tempo they make (0: none yet) */
+} cfx_in;
+
+static void cfm_tick(uint32_t n, uint32_t pulses)
+{
+    uint32_t k;
+    if (!cfm.on && !cfm.running) {
+        cf_grid.on = 0;
+        return;
+    }
+    if (!cfm.acc && !cfm.beat && !cfm.beats_done) {
+        cfm.click = 2;                           /* the first beat right away */
+        cfm.beat = 1 % cfm.beats;
+        cfm.beats_done++;
+        cfm.beat_ms = cf_now_ms;
+    }
+    if (cfx_in.active) {                         /* the clock's pulses: FS x 60 / 24 each */
+        cfm.acc += pulses * (FS * 60u / 24u);
+    } else {
+        cfm.acc += n * cfm.bpm;
+    }
+    for (k = 0; k < 4u && cfm.acc >= FS * 60u; k++) {
+        cfm.acc -= FS * 60u;
+        cfm.click = cfm.beat == 0 ? 2u : 1u;
+        cfm.beat = (uint8_t)((cfm.beat + 1u) % cfm.beats);
+        cfm.beats_done++;
+        cfm.beat_ms = cf_now_ms;
+#ifdef CF_TRACE
+        fprintf(stderr, "%6u beat %u\n", (unsigned)cf_now_ms, (unsigned)cfm.beats_done);
+#endif
+    }
+    cf_grid.on = 1;                              /* (the arpeggiator's lock: where the beat is, in 1/24 beats) */
+    cf_grid.g24 = cfm.beats_done * 24u + (uint32_t)((uint64_t)cfm.acc * 24u / (FS * 60u));
+}
+static void cfm_restart(void)
+{
+    cfm.acc = 0;
+    cfm.beat = 0;
+    cfm.beats_done = 0;
+    cf_grid.gen++;
+}
+
+#include "cf_loop.c"                             /* (the looper: on the metronome's clock) */
+
+/* the metronome's sounds: a decaying resonator (the accent on the downbeat a different pitch), some with noise.
+ * a1 = 2 r cos w and a2 = r^2 (Q14), s = sin w (x 10000) sets the start; len: samples to -60 dB; noise: % */
+typedef struct { const char *name; int16_t a1_acc, s_acc, a1, s, a2; uint16_t len; uint8_t noise; } cf_click_t;
+static const cf_click_t CF_CLICKS[] = {
+    {"Beep", 30673, 3480, 32008, 2074, 16335, 4601, 0},   /* (ChoralRoot's) */
+    {"Wood", 32105, 1772, 32364, 1251, 16237, 1531, 0},
+    {"Click", 28266, 4907, 29710, 4015, 16058, 687, 35},
+    {"Hat", 17511, 8400, 20482, 7729, 15896, 457, 100},
+    {"Rim", 31369, 2674, 31605, 2398, 16172, 1059, 30},
+};
+#define CF_NCLICKS ((uint32_t)NELEM(CF_CLICKS))
+static volatile uint8_t cf_click_sound;          /* CF_CLICKS index (the UI's) */
+static int32_t cf_ck_y1, cf_ck_y2, cf_ck_a1, cf_ck_a2, cf_ck_amp, cf_ck_ne, cf_ck_nd;
+static uint32_t cf_ck_n, cf_ck_rng = 0x1234567u;
+static uint8_t cf_ck_noise;
+static void cf_click_mix(int32_t *out, uint32_t n)
+{
+    uint32_t i;
+    if (cfm.click) {
+        const cf_click_t *k = &CF_CLICKS[cf_click_sound < CF_NCLICKS ? cf_click_sound : 0];
+        int32_t lv = cfl.click && cfm.level < 60u ? 60 : (int32_t)cfm.level;   /* (a count-in is always heard) */
+        int32_t amp = (cfm.on || cfm.running) ? 10000 * lv / 100 : 0;
+        int acc = cfm.click == 2u;
+        cf_ck_a1 = acc ? k->a1_acc : k->a1;
+        cf_ck_a2 = k->a2;
+        cf_ck_y1 = amp * (acc ? k->s_acc : k->s) / 10000;
+        cf_ck_y2 = 0;
+        cf_ck_n = amp ? k->len : 0u;
+        cf_ck_amp = acc ? amp : amp * 3 / 4;
+        cf_ck_noise = k->noise;
+        cf_ck_ne = cf_ck_amp * 2;                /* the noise's envelope, Q12 steps down over len */
+        cf_ck_nd = k->len ? cf_ck_ne / (int32_t)k->len + 1 : cf_ck_ne;
+        cfm.click = 0;
+    }
+    for (i = 0; i < n && cf_ck_n; i++, cf_ck_n--) {
+        int32_t y = ((cf_ck_a1 * cf_ck_y1) >> 14) - ((cf_ck_a2 * cf_ck_y2) >> 14), o;
+        cf_ck_y2 = cf_ck_y1;
+        cf_ck_y1 = y;
+        o = y * (100 - cf_ck_noise) / 100;
+        if (cf_ck_noise) {
+            int32_t w;
+            cf_ck_rng ^= cf_ck_rng << 13;
+            cf_ck_rng ^= cf_ck_rng >> 17;
+            cf_ck_rng ^= cf_ck_rng << 5;
+            w = (int32_t)(cf_ck_rng & 0xFFFFu) - 32768;
+            o += (int32_t)(((int64_t)w * cf_ck_ne) >> 15) * cf_ck_noise / 100;
+            cf_ck_ne = cf_ck_ne > cf_ck_nd ? cf_ck_ne - cf_ck_nd : 0;
+        }
+        out[2u * i] += o;
+        out[2u * i + 1u] += o;
+    }
+}
+
+/* ------------------------------------------------------------- MIDI in --- */
+/* usb.c's midi_in_q (USB and TRS) is drained here: notes on the chord / bass channels play the parts directly
+ * (cr_midi.c crm_map, ChoralRoot's), with the pedal, bend and controllers (midi_event above) */
+static void cf_midi_in(void)
+{
+    uint32_t w = mi_w;
+    uint8_t en[2] = {1, 1}, ch[2];
+    ch[0] = cfp_cfg.ch_chord;
+    ch[1] = cfp_cfg.ch_bass;
+    if (midi_in_overflow)
+        return;
+    while (mi_r != w) {
+        uint32_t at = mi_r % MQ, pkt = midi_in_q[at], status = (pkt >> 8) & 0xFFu;
+        uint32_t d1 = (pkt >> 16) & 0x7Fu, d2 = (pkt >> 24) & 0x7Fu;
+        mi_r++;
+        if (status >= 0xF8u) {                   /* MIDI clock in (CLOCK IN On): the pulses, start, continue, stop */
+            if (!cfp_cfg.clock_in)
+                continue;
+            if (status == 0xF8u) {
+                int b = crm_clock_pulse(&cfx_in.f, midi_in_ms[at]);
+                if (b) {
+                    cfx_in.bpm = (uint16_t)b;
+                    cfm.bpm = (uint16_t)b;
+                }
+                cfx_in.pulses++;
+                cfx_in.last_ms = cf_now_ms;
+            } else if (status == 0xFAu || status == 0xFBu) {   /* start / continue: from beat 1, the loop too */
+                cfm_restart();
+                cfm.running = 1;
+                if (cfl.d.len && cfl.cap == CFL_CAP_NONE)
+                    cfl_start();
+            } else if (status == 0xFCu) {        /* stop */
+                if (cfl.state == CFL_PLAYING && cfl.cap == CFL_CAP_NONE)
+                    cfl_stop();
+                cfm.running = 0;
+            }
+            continue;
+        }
+        if (status >= 0x80u && status < 0xF0u) {
+            crm_act_t a[2];
+            int i, n = crm_map(status, d1, d2, en, ch, a);
+            for (i = 0; i < n; i++)
+                if (a[i].kind == CRM_FORWARD)
+                    midi_event(status & 0xF0u, a[i].part, d1, d2);
+        }
+    }
+}
+
+/* ------------------------------------------------------- the audio side --- */
+static volatile uint8_t cf_ready;
+
+static void cf_apply(const cf_ev_in_t *e)
+{
+    switch (e->op) {
+    case CFE_KEY:
+        cfl_key(e->a, e->v);                     /* (the looper takes it first: a chord starting a take) */
+        cfp_key(e->a, e->v);
+        break;
+    case CFE_CONFIG: cfp_config(); break;
+    case CFE_PANIC:
+        cfl_panic();
+        cfp_panic();
+        break;
+    case CFE_LOOP:
+        if (e->a == 0)
+            cfl_rec();
+        else if (e->a == 1)
+            cfl_play();
+        else if (e->a == 2)
+            cfl_undo();
+        else {
+            cfl.cap = CFL_CAP_NONE;
+            cfl.click = 0;
+            cfl_clear();
+        }
+        break;
+    case CFE_METRO:
+        if (e->a && !cfm.on && !cfm.running)
+            cfm_restart();
+        cfm.on = e->a;
+        cfm.level = e->b;
+        break;
+    case CFE_TEMPO: cfm.bpm = (uint16_t)(e->v < 30 ? 30 : e->v > 300 ? 300 : e->v); break;
+    case CFE_SIG: cfm.beats = (uint8_t)(e->v < 1 ? 1 : e->v > 12 ? 12 : e->v); break;
+    case CFE_TRANSPORT:
+        if (e->v)
+            cfm_restart();
+        cfm.running = (uint8_t)(e->v != 0);
+        break;
+    default: break;
+    }
+}
+
+static void cf_out_init(void)                    /* power-on (the audio ISR may already run: IRQ off) */
+{
+    fm1_irq_off();
+    cf_ready = 0;
+    if (master_pot_q12)                          /* MASTER: the pot's level, before the first block */
+        fx_master_now(master_pot_q12 - 1u);
+    voice_fade_steal = 1;                        /* voice.c: a stolen voice fades out, its new note waits a block */
+    fx_smooth = 1;                               /* fx.c: the limiter's gain eased, no audio-rate crackle */
+    fx_output_set(1u, 1);                        /* fx.c's Clean output (ChoralRoot 0.19): the limiter a safety at
+                                                  * -2 dBFS that holds its gain, a knee above, MASTER last; the
+                                                  * Classic one (-5 dB, 0.15 s release) pumped under a big reverb */
+#if CR_FX
+    xf_defaults();                               /* cr_fx.c: the delay's and the reverb's parameters */
+#endif
+    cfp_init();
+    cf_chord_init(&cfl.c, &cfc_shadow);
+    cf_now_ms = cf_ms_rem = 0;
+    cf_evq_r = cf_evq_w = 0;
+    cf_ready = 1;
+    fm1_irq_on();
+}
+
+/* the audio ISR, once per CTL-sample block, before the block renders: input, the player, the metronome */
+static void cf_audio_block(uint32_t n)
+{
+    uint32_t w = cf_evq_w;
+    if (!cf_ready)
+        return;
+    while (cf_evq_r != w) {
+        cf_apply(&cf_evq[cf_evq_r % CF_EVQ]);
+        cf_evq_r++;
+    }
+    cf_midi_in();
+    cf_ms_rem += n * 1000u;
+    while (cf_ms_rem >= FS) {
+        cf_ms_rem -= FS;
+        cf_now_ms++;
+    }
+    {
+        uint32_t pulses = cfx_in.pulses;         /* (MIDI clock in: the pulses come since the last block) */
+        cfx_in.pulses = 0;
+        cfx_in.active = cfp_cfg.clock_in && cfx_in.bpm && (uint32_t)(cf_now_ms - cfx_in.last_ms) < 300u;
+        cfa_tick(n);                             /* (the arpeggiator: its steps, its strum) */
+        cfl_tick(n, pulses);                     /* (the looper: its takes, its playing) */
+        cfm_tick(n, pulses);
+    }
+}
+
+/* ---------------------------------------------------- what the UI reads --- */
+typedef struct {
+    cf_chord_out_t out;          /* the chord model's answer */
+    uint8_t n, note[CF_MAX_NOTES], nb, bass[2];
+    uint8_t onset;
+    uint8_t beat, metro_on, running;
+    uint32_t beats_done, beat_ms, now_ms;
+    uint32_t keys_held;          /* bit k: key k is down in the chord model's view */
+    uint8_t arp_on, arp_latched, arp_steps, arp_note, arp_n, arp_note_list[CF_MAX_NOTES];
+    uint32_t arp_idx;            /* the arpeggiator: steps played, the last note, the chord it plays */
+    uint8_t loop_state, loop_cap, loop_gen, loop_layers;
+    uint32_t loop_pos, loop_len, loop_rec, loop_rec_len, loop_cin, loop_cin_len;   /* the looper (ticks) */
+    uint16_t loop_nev;
+    uint8_t ext_clock;           /* MIDI clock in runs the beat */
+    uint16_t ext_bpm;            /* .. at this tempo */
+} cf_sn_t;
+static cf_sn_t cf_sn;
+
+static void cf_snapshot(void)
+{
+    uint32_t i;
+    fm1_irq_off();
+    cf_sn.out = cfc.out;
+    cf_sn.n = cfp.n;
+    for (i = 0; i < cfp.n; i++)
+        cf_sn.note[i] = cfp.note[i];
+    cf_sn.nb = cfp.nb;
+    cf_sn.bass[0] = cfp.bass[0];
+    cf_sn.bass[1] = cfp.bass[1];
+    cf_sn.onset = cfp.onset;
+    cf_sn.arp_on = cfa.on;
+    cf_sn.arp_latched = cfa.latched;
+    cf_sn.arp_steps = cfa.steps;
+    cf_sn.arp_note = cfa.last_note;
+    cf_sn.arp_idx = cfa.idx;
+    cf_sn.arp_n = cfa.n;
+    cf_sn.loop_state = cfl.state;
+    cf_sn.loop_cap = cfl.cap;
+    cf_sn.loop_gen = cfl.gen;
+    cf_sn.loop_layers = (uint8_t)cfl.d.nlayers;
+    cf_sn.loop_pos = cfl.pos;
+    cf_sn.loop_len = cfl.d.len;
+    cf_sn.loop_rec = cfl.rec_t;
+    cf_sn.loop_rec_len = cfl.rec_len;
+    cf_sn.loop_cin = cfl.cin_t;
+    cf_sn.loop_cin_len = cfl.cin_len;
+    cf_sn.loop_nev = cfl.d.nev;
+    cf_sn.ext_clock = cfx_in.active;
+    cf_sn.ext_bpm = cfx_in.bpm;
+    for (i = 0; i < cfa.n; i++)
+        cf_sn.arp_note_list[i] = cfa.note[i];
+    cf_sn.beat = cfm.beat;
+    cf_sn.metro_on = cfm.on;
+    cf_sn.running = cfm.running;
+    cf_sn.beats_done = cfm.beats_done;
+    cf_sn.beat_ms = cfm.beat_ms;
+    cf_sn.now_ms = cf_now_ms;
+    fm1_irq_on();
+}

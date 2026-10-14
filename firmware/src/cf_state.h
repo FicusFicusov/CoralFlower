@@ -1,0 +1,163 @@
+/* SPDX-License-Identifier: GPL-3.0-only
+ * CoralFlower: the UI's state and settings (the main loop's; the audio side is told through cf_out.c's queue).
+ * Included after cf_out.c, cf_sound.c and flora; before cf_draw.c and cf_ui.c. */
+
+/* ------------------------------------------------------------- screens --- */
+enum {
+    SCR_HOME = 0,  /* HOME: play mode */
+    SCR_SEL,       /* SEL: the chord editor */
+    SCR_ENV,       /* ENV: the envelope */
+    SCR_BASS,      /* LFO: the bass editor */
+    SCR_EDIT,      /* EDIT: the sound editor */
+    SCR_GLO,       /* GLO: global settings */
+    SCR_FX,        /* FX: effects */
+    SCR_ARP,       /* ARP: the arpeggiator */
+    SCR_SEQ,       /* SEQ: the metronome */
+    SCR_SAVE,      /* SAVE */
+    SCR_LOOP,      /* PLAY held: the looper */
+    SCR_N
+};
+static const char *const SCR_NAME[SCR_N] = {"HOME", "CHORD", "ENVELOPE", "BASS", "SOUND", "GLOBAL", "EFFECTS",
+                                             "ARPEGGIO", "METRONOME", "SAVE", "LOOPER"};
+
+/* themes: the one interface colour (GLO > Display > COLOR), a palette ramp, after the M-VAVE synths' panel
+ * colours and a few more */
+typedef struct { const char *name; uint8_t ramp; uint32_t light; } cf_theme_t;   /* light: another lightest step
+                                                                                     * (0xRRGGBB), 0 = the ramp's */
+static const cf_theme_t CF_THEMES[] = {
+    {"Coral", FL_R_ROSE, 0}, {"Amber", FL_R_FIRE, 0}, {"Peach", FL_R_PEACH, 0},
+    {"Lime", FL_R_LIME, 0xB0E34Cu},            /* (the lime ramp's top turned greener: the UI's own) */
+    {"Jade", FL_R_JADE, 0x5BB42Fu},            /* (the jade ramp starts yellow-green: the leaf green instead) */
+    {"Sky", FL_R_SEA, 0}, {"Orchid", FL_R_ORCHID, 0}, {"Bone", FL_R_SAND, 0}, {"Mist", FL_R_SAGE, 0},
+};
+#define CF_NTHEMES ((int)(sizeof CF_THEMES / sizeof CF_THEMES[0]))
+
+/* ------------------------------------------------------------ settings --- */
+/* everything the user sets and the unit keeps (cf_settings.c stores it) */
+typedef struct {
+    cf_chord_cfg_t chord;        /* algorithm, Quantize, Key, Scale, octave, the chord buttons' forms */
+    uint16_t glide_ms;           /* HOME K4 */
+    uint8_t glide_always;        /* GLO > Play: Always (from the last chord too) or Legato (held chords only) */
+    uint8_t vel;                 /* the fixed velocity */
+    uint8_t bass_on, octaver;
+    int8_t bass_oct;
+    uint8_t bass_level;          /* the bass part's P_LEVEL */
+    uint8_t metro_level, beats;  /* SEQ: level 0..100, time signature (beats a bar) */
+    uint16_t bpm;
+    uint8_t accent;              /* the interface colour: a CF_THEMES index */
+    uint8_t env_link;            /* ENV edits the chord and the bass part together */
+    uint8_t midi_out, ch_chord, ch_bass;
+    uint8_t lights;              /* key lights: 0 played only, 1 + the scale */
+    uint8_t click;               /* the metronome's sound (cf_out.c CF_CLICKS) */
+    uint8_t backdrop;            /* what is behind the plant (FL_BD_*, GLO > Display) */
+    cf_fx_t fx;                  /* the effects chain: its order, what is on, the values (FX; cf_fx.c) */
+    uint16_t snd[2];             /* the parts' sounds: indices in the one row (cf_sound.c) */
+    /* (new fields go here, at the end: cf_settings.c reads an older, shorter record and keeps the defaults past it) */
+    uint8_t retrig;              /* a chord changed under held keys (GLO > Play > RETRIG): CF_RT_WAIT a chord button
+                                  * there waits for the next root key, another root moves the sounding voices with no
+                                  * new attack; CF_RT_MOVE a button moves them too, only the tones a chord adds start
+                                  * (the behaviour before WAIT); CF_RT_STRIKE the new notes strike */
+    cf_arp_t arp;                /* the arpeggiator's settings (ARP; on / off is not kept: off at power-on) */
+    cf_loop_t loop;              /* the looper's settings (LOOPER; the loop itself: SAVE > Loop, OBJ_CFLOOP) */
+    uint8_t clock_in;            /* GLO > MIDI > CLOCK IN: MIDI clock's pulses run the beat, start / stop the loop */
+    uint8_t boot_sound;          /* GLO > Display > BOOT SOUND: the chime with the intro */
+} cf_set_t;
+
+static cf_set_t cs;
+
+static void cs_defaults(cf_set_t *s)
+{
+    cf_chord_defaults(&s->chord);
+    s->glide_ms = 0;
+    s->glide_always = 0;              /* Legato: a glide between held chords only */
+    s->vel = 100;
+    s->bass_on = 1;
+    s->octaver = 0;
+    s->bass_oct = 0;
+    s->bass_level = 96;
+    s->metro_level = 0;
+    s->beats = 4;
+    s->bpm = 100;
+    s->accent = 3;                   /* Lime */
+    s->env_link = 1;
+    s->midi_out = 1;
+    s->ch_chord = 0;
+    s->ch_bass = 1;
+    s->lights = 1;
+    s->click = 0;
+    s->backdrop = FL_BD_SCENE;
+    s->fx = CFX_DEFAULT;
+    s->snd[0] = s->snd[1] = 0;
+    s->retrig = CF_RT_WAIT;
+    {
+        static const cf_arp_t A = CF_ARP_DEFAULT;
+        static const cf_loop_t L = CF_LOOP_DEFAULT;
+        s->arp = A;
+        s->loop = L;
+    }
+    s->boot_sound = 1;
+}
+
+/* --------------------------------------------------------- the UI's own --- */
+typedef struct {
+    uint8_t scr;                 /* the screen */
+    uint8_t page[SCR_N];         /* each screen's page (SELECT / PRESETS) */
+    uint8_t sel_btn;             /* SEL: the chord button being edited */
+    uint8_t edit_sec;            /* EDIT: the section (OP1..OP6, PIT, GLO) */
+    uint8_t edit_part;           /* EDIT: the sound edited, 0 chord 1 bass */
+    uint8_t env_tgt;             /* ENV: 0 chord + bass, 1 chord, 2 bass */
+    uint8_t fx_pos;              /* FX: the selected place in the chain */
+    uint8_t arp_on;              /* the arpeggiator plays (the ARP button; off at power-on, as the stock FM-1's) */
+    uint8_t save_new;            /* SAVE: as a new sound (else over itself) */
+    char save_name[13];          /* .. its name, being edited */
+    uint8_t save_cur;            /* .. the letter K3 changes */
+    uint32_t save_hold;          /* .. when SAVE went down on the SAVE screen (0: not held) */
+    uint32_t play_hold, rec_hold;   /* when PLAY / REC went down (0: up): a tap or a hold (cf_loop_poll) */
+    uint8_t play_fired, rec_fired;  /* .. the hold acted: its release does nothing */
+    uint8_t loop_saved_gen;         /* the loop's content (cf_sn.loop_gen) as it was saved or loaded */
+    uint8_t save_del;            /* .. ACTION Delete (a user sound only) */
+    uint32_t now, last_ms;       /* ms */
+    uint32_t frame_dt;           /* ms since the frame before */
+    uint32_t keys;               /* the note keys down (as last read) */
+    uint32_t knob_ms[4];         /* when each knob last moved (its cell lights) */
+    uint8_t knob_last;
+    /* popups over the plant */
+    uint8_t pop;                 /* POP_* */
+    uint32_t pop_until;
+    char msg[24];
+    uint8_t booted;
+    uint32_t frames;
+    uint32_t idle_ms;            /* since the last touch */
+    uint8_t upd_left, upd_stub;  /* the update gesture's countdown (cf_shim.c cr_update_poll) */
+    uint8_t edited[2];           /* a part's sound changed since it was loaded (SAVE keeps it) */
+} cf_ui_t;
+enum { POP_NONE, POP_SOUND_CHORD, POP_SOUND_BASS, POP_ALGO, POP_OCTAVE, POP_MSG };
+static cf_ui_t cu;
+
+/* the plant */
+#define FLW 120
+#define FLH 70
+static uint8_t fl_px[FLW * FLH] __attribute__((section(".pool")));
+static flora_t flo __attribute__((section(".pool")));
+static flc_t fl_cv = {fl_px, FLW, FLH};
+
+/* ---------------------------------------------------------- colours --- */
+/* palette entries 48..55: the interface colour's ramp, twice (C_ACC and C_SEC: the drawing still tells the two roles
+ * apart, they share the one colour) */
+#define C_ACC(s) ((uint8_t)(48 + (s)))
+#define C_SEC(s) ((uint8_t)(52 + (s)))
+static uint32_t cf_pal[64];
+static void cf_palette_build(void)
+{
+    uint32_t i;
+    for (i = 0; i < FL_PAL_SIZE; i++)
+        cf_pal[i] = fl_pal_rgb[i];
+    for (i = 0; i < 4u; i++) {
+        const cf_theme_t *th = &CF_THEMES[cs.accent % CF_NTHEMES];
+        cf_pal[48 + i] = !i && th->light ? th->light : fl_pal_rgb[FL_C(th->ramp, i)];
+        cf_pal[52 + i] = cf_pal[48 + i];
+    }
+    for (i = 0; i < 8u; i++)
+        cf_pal[56 + i] = fl_back_rgb[i];
+    fb_palette(cf_pal, 64);
+}

@@ -1,0 +1,1234 @@
+/* SPDX-License-Identifier: GPL-3.0-only
+ * CoralFlower: the UI - the keys, buttons and knobs, the screens, the key lights, the plant's food.
+ * The main loop's (ui_input / ui_leds / ui_draw through cf_shim.c). Included after cf_draw.c.
+ *
+ * Every screen has the same grammar (docs/SPEC.md): MASTER is the volume; SELECT, PRESETS and ALGORITHM keep
+ * their roles (bass sound, chord sound, chord algorithm) unless a screen needs pages; KNOB 1-4 are the screen's.
+ * A screen's button opens it; pressed again (or HOME) it goes back to HOME. Pages turn only with an encoder.
+ */
+
+static void cf_message(const char *s);
+static int cf_editing_part(void);
+static void cf_edited(uint32_t part);
+static void cf_save_open(void);
+static void cf_save_name_init(void);
+static void snd_num(uint32_t idx, char *b);
+static const char CF_NAME_CHARS[] = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-.+#/";   /* (SAVE: a name's letters) */
+
+/* -------------------------------------------------------- the engine --- */
+static void cf_send_config(void)                 /* the chord settings -> the audio side */
+{
+    fm1_irq_off();
+    cfc_shadow = cs.chord;
+    cfp_cfg.glide_ms = cs.glide_ms;
+    cfp_cfg.glide_always = cs.glide_always;
+    cfp_cfg.vel = cs.vel;
+    cfp_cfg.bass_on = cs.bass_on;
+    cfp_cfg.bass_oct = cs.bass_oct;
+    cfp_cfg.octaver = cs.octaver;
+    cfp_cfg.midi_out = cs.midi_out;
+    cfp_cfg.ch_chord = cs.ch_chord;
+    cfp_cfg.ch_bass = cs.ch_bass;
+    cfp_cfg.retrig = cs.retrig;
+    cfp_cfg.arp_on = cu.arp_on;
+    cfp_cfg.arp = cs.arp;
+    cfp_cfg.bpm = cs.bpm;
+    cfp_cfg.loop = cs.loop;
+    cfp_cfg.clock_in = cs.clock_in;
+    trk[CF_PART_BASS].p[P_LEVEL] = cs.bass_level;
+    fm1_irq_on();
+    cf_fx_apply(&cs.fx);
+    cf_post(CFE_CONFIG, 0, 0, 0);
+}
+static void cf_send_metro(void)
+{
+    cf_post(CFE_TEMPO, 0, 0, cs.bpm);
+    cf_post(CFE_SIG, 0, 0, cs.beats);
+    cf_post(CFE_METRO, cu.scr == SCR_SEQ, cs.metro_level, 0);
+}
+
+static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
+static int wrapi(int v, int n) { return ((v % n) + n) % n; }
+
+/* the arpeggiator's names: a knob cell's (7 characters at most), the screen's title */
+static const char *const CF_ARP_SHORT[CF_ARP_NMODES] = {"Up", "Down", "Incl", "Excl", "Random", "Order", "Repeat",
+                                                        "Strum\x84", "Strum\x85"};
+static const char *const CF_ARP_NAME[CF_ARP_NMODES] = {"Up", "Down", "Inclusive", "Exclusive", "Random", "Order",
+                                                       "Repeat", "Strum up", "Strum down"};
+static const char *const CF_ARP_RATE[CF_ARP_NRATES] = {"1/1", "1/2", "1/4", "1/4T", "1/8", "1/8T", "1/16", "1/16T",
+                                                       "1/32"};
+
+/* ------------------------------------------------------------ spelling --- */
+static cf_spell_t cu_spell;
+static void cu_spell_update(void)
+{
+    if (cs.chord.quantize == CF_Q_OFF)
+        cf_key_spell(0, CF_SC_MAJOR, &cu_spell);
+    else
+        cf_key_spell(cs.chord.tonic, cs.chord.scale, &cu_spell);
+}
+
+/* --------------------------------------------------------------- knobs --- */
+static const char *const Q_NAME[3] = {"Off", "On", "Full"};
+static const char *const ALG_NAME[CF_NALGS] = {"Top", "Top Lock", "Side", "Side Lock"};
+
+static void kfmt(char *b, uint32_t n, const char *s) { str_cpy(b, s, n); }
+static void kint(char *b, int v, const char *unit)
+{
+    char t[12];
+    int k = 0, neg = v < 0, i;
+    unsigned u = (unsigned)(neg ? -v : v);
+    do {
+        t[k++] = (char)('0' + u % 10u);
+        u /= 10u;
+    } while (u && k < 10);
+    i = 0;
+    if (neg)
+        b[i++] = '-';
+    while (k)
+        b[i++] = t[--k];
+    while (unit && *unit && i < 13)
+        b[i++] = *unit++;
+    b[i] = 0;
+}
+static void kpc(char *b, int pc)
+{
+    char n[4];
+    cf_pc_name(pc, &cu_spell, n);
+    fb_signs(n, b, 8);
+}
+
+#include "cf_edit.c"                             /* (the ENV and EDIT screens' engine side) */
+#include "cf_fxui.c"                             /* (the FX screen's controls) */
+
+static uint32_t env_part(void) { return cu.env_tgt == 2u ? CF_PART_BASS : CF_PART_CHORD; }
+
+/* the chord button SEL edits */
+static cf_form_t *sel_form(void)
+{
+    int top = cs.chord.algo == CF_ALG_TOP || cs.chord.algo == CF_ALG_TOP_LOCK;
+    if (top)
+        return &cs.chord.top[cu.sel_btn < CF_TOP_NBTN && cu.sel_btn ? cu.sel_btn : 1];
+    return &cs.chord.side[cu.sel_btn < CF_SIDE_NBTN ? cu.sel_btn : 0];
+}
+
+static void ui_knob_info(int k, cf_knob_t *o)
+{
+    o->bar = -1;
+    switch (cu.scr) {
+    case SCR_HOME:
+        switch (k) {
+        case 0: kfmt(o->name, 12, "QUANTIZE"); kfmt(o->val, 14, Q_NAME[cs.chord.quantize]); break;
+        case 1:
+            kfmt(o->name, 12, "KEY");
+            kpc(o->val, cs.chord.tonic);
+            o->dis = cs.chord.quantize == CF_Q_OFF;
+            break;
+        case 2:
+            kfmt(o->name, 12, "SCALE");
+            kfmt(o->val, 14, CF_SCALES[cs.chord.scale].shrt);
+            o->dis = cs.chord.quantize == CF_Q_OFF;
+            break;
+        default:
+            kfmt(o->name, 12, "GLIDE");
+            if (cs.glide_ms)
+                kint(o->val, cs.glide_ms, "ms");
+            else
+                kfmt(o->val, 14, "Off");
+            o->bar = (int16_t)(cs.glide_ms * 255 / 2000);
+            break;
+        }
+        break;
+    case SCR_SEL: {
+        cf_form_t *f = sel_form();
+        if (cf_is_off(&cs.chord, cu.sel_btn)) {
+            if (k == 0) {
+                kfmt(o->name, 12, "BUTTON");
+                kfmt(o->val, 14, "Off");
+            }
+            return;
+        }
+        switch (k) {
+        case 0: kfmt(o->name, 12, "TYPE"); kfmt(o->val, 14, cf_type_name(f->type)); break;
+        case 1: kfmt(o->name, 12, "ADD"); kfmt(o->val, 14, cf_adds_name(cf_adds_index(f->add))); break;
+        case 2:
+            kfmt(o->name, 12, "INV");             /* (a knob cell holds 8 characters) */
+            kfmt(o->val, 14, f->inv == CF_INV_AUTO ? "Auto" : f->inv == 0 ? "Root" : f->inv == 1 ? "1st" : f->inv == 2 ? "2nd" : "3rd");
+            break;
+        default: {
+            static const char *const DEG[] = {"Root", "2nd tone", "3rd tone", "4th tone", "5th tone", "6th tone"};
+            kfmt(o->name, 12, "BASS");
+            kfmt(o->val, 14, DEG[f->bass < 6 ? f->bass : 0]);
+            break;
+        }
+        }
+        break;
+    }
+    case SCR_ENV: {
+        static const char *const N[4] = {"ATTACK", "DECAY", "SUSTAIN", "RELEASE"};
+        int v = cf_env_get(env_part(), k);
+        kfmt(o->name, 12, N[k]);
+        cf_env_fmt(o->val, k, cf_env_val(env_part(), k));
+        o->bar = (int16_t)(v * 255 / 99);
+        break;
+    }
+    case SCR_EDIT:
+        if (!cfe_info(cu.edit_part, cu.edit_sec, cu.page[SCR_EDIT], (uint32_t)k, o->name, o->val, &o->bar))
+            o->name[0] = 0;
+        break;
+    case SCR_FX:
+        cfx_knob_info(k, o);
+        break;
+    case SCR_BASS:
+        switch (k) {
+        case 0: kfmt(o->name, 12, "BASS"); kfmt(o->val, 14, cs.bass_on ? "On" : "Off"); break;
+        case 1:
+            kfmt(o->name, 12, "LEVEL");
+            kint(o->val, cs.bass_level * 100 / 127, "%");
+            o->bar = (int16_t)(cs.bass_level * 255 / 127);
+            break;
+        case 2:
+            kfmt(o->name, 12, "OCTAVE");
+            kint(o->val, cs.bass_oct, 0);
+            if (cs.bass_oct > 0)
+                o->val[0] = '+', kint(o->val + 1, cs.bass_oct, 0);
+            break;
+        default: kfmt(o->name, 12, "OCTAVER"); kfmt(o->val, 14, cs.octaver ? "On" : "Off"); break;
+        }
+        break;
+    case SCR_LOOP:                               /* LENGTH MODE QUANTIZE COUNT-IN */
+        if (k == 0) {
+            kfmt(o->name, 12, "LENGTH");
+            if (cs.loop.bars % CF_LOOP_NBARS)
+                kint(o->val, CF_LOOP_BARS[cs.loop.bars % CF_LOOP_NBARS], cs.loop.bars == 1u ? " bar" : " bars");
+            else
+                kfmt(o->val, 14, "Free");
+        } else if (k == 1) {
+            kfmt(o->name, 12, "MODE");
+            kfmt(o->val, 14, cs.loop.mode ? "Overdub" : "New");   /* (REC over a loop: a new take, or a layer) */
+        } else if (k == 2) {
+            static const char *const Q[3] = {"Off", "1/8", "1/16"};
+            kfmt(o->name, 12, "QUANTIZE");
+            kfmt(o->val, 14, Q[cs.loop.quant % 3u]);
+        } else {
+            kfmt(o->name, 12, "COUNT-IN");
+            kfmt(o->val, 14, cs.loop.count_in ? "On" : "Off");
+            o->dis = !(cs.loop.bars % CF_LOOP_NBARS);   /* (a Free take starts with its first chord) */
+        }
+        break;
+    case SCR_SAVE: {
+        uint32_t part = cu.page[SCR_SAVE] & 1u;
+        if (cu.page[SCR_SAVE] == 2u) {           /* the loop: only ACTION */
+            if (k == 3) {
+                kfmt(o->name, 12, "ACTION");
+                kfmt(o->val, 14, cu.save_del ? "Delete" : "Save");
+            }
+            break;
+        }
+        if (k == 0) {
+            kfmt(o->name, 12, "SAVE AS");
+            kfmt(o->val, 14, cu.save_new ? "New" : "Replace");
+            o->dis = cf_snd[part].kind == PK_INIT;     /* (INIT: only as new) */
+        } else if (k == 1) {
+            kfmt(o->name, 12, "LETTER");
+            kint(o->val, cu.save_cur + 1, 0);
+        } else if (k == 2) {
+            char ch = cu.save_name[cu.save_cur];
+            kfmt(o->name, 12, "CHAR");
+            if (!ch || ch == ' ')
+                kfmt(o->val, 14, "space");
+            else
+                o->val[0] = ch, o->val[1] = 0;
+        } else {                                 /* ACTION: Save, or Delete (your sounds only) */
+            kfmt(o->name, 12, "ACTION");
+            kfmt(o->val, 14, cu.save_del ? "Delete" : "Save");
+            o->dis = cf_snd[part].kind != PK_USER;
+        }
+        if (cu.save_del && k < 3)                /* (deleting: the name and the way do not matter) */
+            o->dis = 1;
+        break;
+    }
+    case SCR_ARP:
+        if (cu.page[SCR_ARP] == 0) {             /* Pattern: ON/OFF MODE OCTAVE RATE */
+            switch (k) {
+            case 0: kfmt(o->name, 12, "ON/OFF"); kfmt(o->val, 14, cu.arp_on ? "On" : "Off"); break;
+            case 1: kfmt(o->name, 12, "MODE"); kfmt(o->val, 14, CF_ARP_SHORT[cs.arp.mode % CF_ARP_NMODES]); break;
+            case 2: kfmt(o->name, 12, "OCTAVE"); kint(o->val, cs.arp.oct, 0); break;
+            default:
+                kfmt(o->name, 12, "RATE");
+                if (CF_ARP_STRUMMING(cs.arp.mode))   /* (Strum: the time between its notes) */
+                    kint(o->val, cs.arp.strum_ms, " ms");
+                else
+                    kfmt(o->val, 14, CF_ARP_RATE[cs.arp.rate % CF_ARP_NRATES]);
+                break;
+            }
+        } else {                                 /* Feel: TEMPO GATE SWING LATCH (Strum: held, no swing: dim) */
+            int strum = CF_ARP_STRUMMING(cs.arp.mode);
+            switch (k) {
+            case 0:
+                kfmt(o->name, 12, "TEMPO");
+                kint(o->val, cs.bpm, 0);
+                o->dis = cf_sn.ext_clock;        /* (MIDI clock in: the clock's tempo) */
+                break;
+            case 1:
+                kfmt(o->name, 12, "GATE");
+                kint(o->val, cs.arp.gate, "%");
+                o->bar = (int16_t)((cs.arp.gate - 20) * 255 / 80);
+                o->dis = (uint8_t)strum;
+                break;
+            case 2:
+                kfmt(o->name, 12, "SWING");
+                kint(o->val, cs.arp.swing, "%");
+                o->bar = (int16_t)((cs.arp.swing - 50) * 255 / 25);
+                o->dis = (uint8_t)strum;
+                break;
+            default: kfmt(o->name, 12, "LATCH"); kfmt(o->val, 14, cs.arp.latch ? "On" : "Off"); break;
+            }
+        }
+        break;
+    case SCR_SEQ:
+        switch (k) {
+        case 0:
+            kfmt(o->name, 12, "LEVEL");
+            kint(o->val, cs.metro_level, "%");
+            o->bar = (int16_t)(cs.metro_level * 255 / 100);
+            break;
+        case 1: kfmt(o->name, 12, "SOUND"); kfmt(o->val, 14, CF_CLICKS[cs.click % CF_NCLICKS].name); break;
+        case 2:
+            kfmt(o->name, 12, "TEMPO");
+            kint(o->val, cs.bpm, " BPM");
+            o->dis = cf_sn.ext_clock;            /* (MIDI clock in: the clock's tempo) */
+            break;
+        default: {
+            char b[8];
+            kfmt(o->name, 12, "TIME SIG");
+            kint(b, cs.beats, 0);
+            str_cpy(o->val, b, 14);
+            str_cpy(o->val + str_len(o->val), cs.beats == 6 ? "/8" : "/4", 4);
+            break;
+        }
+        }
+        break;
+    case SCR_GLO:
+        switch (cu.page[SCR_GLO]) {
+        case 0: /* Display */
+            if (k == 0) { kfmt(o->name, 12, "COLOR"); kfmt(o->val, 14, CF_THEMES[cs.accent % CF_NTHEMES].name); }
+            if (k == 1) {
+                static const char *const BD[FL_NBD] = {"Scene", "Ripples", "None"};
+                kfmt(o->name, 12, "BACKDROP");
+                kfmt(o->val, 14, BD[cs.backdrop % FL_NBD]);
+            }
+            if (k == 2) { kfmt(o->name, 12, "BOOT SND"); kfmt(o->val, 14, cs.boot_sound ? "On" : "Off"); }
+            break;
+        case 1: /* MIDI */
+            if (k == 0) { kfmt(o->name, 12, "MIDI OUT"); kfmt(o->val, 14, cs.midi_out ? "On" : "Off"); }
+            if (k == 1) { kfmt(o->name, 12, "CHORD CH"); kint(o->val, cs.ch_chord + 1, 0); }
+            if (k == 2) { kfmt(o->name, 12, "BASS CH"); kint(o->val, cs.ch_bass + 1, 0); }
+            if (k == 3) {                        /* MIDI clock in: its tempo, its start / stop */
+                kfmt(o->name, 12, "CLOCK IN");
+                kfmt(o->val, 14, !cs.clock_in ? "Off" : cf_sn.ext_clock ? "Locked" : "On");
+            }
+            break;
+        default: /* Play */
+            if (k == 0) {
+                kfmt(o->name, 12, "VELOCITY");
+                kint(o->val, cs.vel, 0);
+                o->bar = (int16_t)(cs.vel * 255 / 127);
+            }
+            if (k == 1) {
+                kfmt(o->name, 12, "GLIDE");
+                kfmt(o->val, 14, cs.glide_always ? "Always" : "Legato");
+            }
+            if (k == 2) { kfmt(o->name, 12, "LIGHTS"); kfmt(o->val, 14, cs.lights ? "Scale" : "Played"); }
+            if (k == 3) {
+                static const char *const RT[CF_NRT] = {"Wait", "Strike", "Move"};
+                kfmt(o->name, 12, "RETRIG");
+                kfmt(o->val, 14, RT[cs.retrig % CF_NRT]);
+            }
+            break;
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+static void ui_knob_turn(int k, int d)
+{
+    cu.knob_ms[k] = cu.now ? cu.now : 1u;
+    cu.knob_last = (uint8_t)k;
+    switch (cu.scr) {
+    case SCR_HOME:
+        if (k == 0)
+            cs.chord.quantize = (uint8_t)clampi(cs.chord.quantize + d, 0, 2);
+        else if (k == 1 && cs.chord.quantize != CF_Q_OFF)
+            cs.chord.tonic = (uint8_t)wrapi(cs.chord.tonic + d, 12);
+        else if (k == 2 && cs.chord.quantize != CF_Q_OFF)
+            cs.chord.scale = (uint8_t)clampi(cs.chord.scale + d, 0, CF_NSCALES - 1);
+        else if (k == 3) {
+            int g = cs.glide_ms;          /* 0, then 5 ms steps to 50, 10 to 200, 25 to 500, 100 to 2000 */
+            int step = g < 50 ? 5 : g < 200 ? 10 : g < 500 ? 25 : 100;
+            if (d < 0 && g <= 50)
+                step = 5;
+            g = clampi(g + d * step, 0, 2000);
+            if (g > 0 && g < 5)
+                g = d > 0 ? 5 : 0;
+            cs.glide_ms = (uint16_t)g;
+        }
+        cu_spell_update();
+        cf_send_config();
+        break;
+    case SCR_SEL: {
+        cf_form_t *f = sel_form();
+        if (cf_is_off(&cs.chord, cu.sel_btn))
+            break;
+        if (k == 0)
+            f->type = (uint8_t)clampi(f->type + d, 0, CF_NTYPES - 1);
+        else if (k == 1) {
+            int i = cf_adds_index(f->add);
+            f->add = CF_ADDS[clampi((i < 0 ? 0 : i) + d, 0, CF_NADDS - 1)];
+        } else if (k == 2)
+            f->inv = (int8_t)clampi(f->inv + d, CF_INV_AUTO, 3);
+        else
+            f->bass = (uint8_t)clampi(f->bass + d, 0, 5);
+        cf_send_config();
+        break;
+    }
+    case SCR_ENV:
+        if (cu.env_tgt != 2u)
+            cf_env_step(CF_PART_CHORD, k, d);
+        if (cu.env_tgt == 2u)
+            cf_env_step(CF_PART_BASS, k, d);
+        else if (cu.env_tgt == 0u)                   /* linked: the bass takes the chord's value */
+            cf_env_set_val(CF_PART_BASS, k, cf_env_val(CF_PART_CHORD, k));
+        cf_edited(cu.env_tgt == 2u ? 1u : 0u);
+        if (!cu.env_tgt)
+            cf_edited(1u);
+        break;
+    case SCR_EDIT:
+        cfe_turn(cu.edit_part, cu.edit_sec, cu.page[SCR_EDIT], (uint32_t)k, d);
+        cf_edited(cu.edit_part);
+        break;
+    case SCR_FX:
+        cfx_knob_turn(k, d);
+        break;
+    case SCR_BASS:
+        if (k == 0)
+            cs.bass_on = (uint8_t)(d > 0);
+        else if (k == 1)
+            cs.bass_level = (uint8_t)clampi(cs.bass_level + d * 2, 0, 127);
+        else if (k == 2)
+            cs.bass_oct = (int8_t)clampi(cs.bass_oct + d, -2, 2);
+        else
+            cs.octaver = (uint8_t)(d > 0);
+        cf_send_config();
+        break;
+    case SCR_LOOP:
+        if (k == 0)
+            cs.loop.bars = (uint8_t)clampi(cs.loop.bars + d, 0, (int)CF_LOOP_NBARS - 1);
+        else if (k == 1)
+            cs.loop.mode = (uint8_t)(d > 0);
+        else if (k == 2)
+            cs.loop.quant = (uint8_t)clampi(cs.loop.quant + d, 0, 2);
+        else
+            cs.loop.count_in = (uint8_t)(d > 0);
+        cf_send_config();
+        break;
+    case SCR_SAVE: {
+        uint32_t part = cu.page[SCR_SAVE] & 1u, n;
+        if (cu.page[SCR_SAVE] == 2u) {
+            if (k == 3)
+                cu.save_del = (uint8_t)(d > 0);
+            break;
+        }
+        if (k == 0 && cf_snd[part].kind != PK_INIT) {
+            cu.save_new = (uint8_t)(d > 0);
+            cf_save_name_init();
+        } else if (k == 1) {
+            cu.save_cur = (uint8_t)clampi(cu.save_cur + d, 0, 11);
+            for (n = str_len(cu.save_name); n <= cu.save_cur; n++)   /* (past the end: spaces up to it) */
+                cu.save_name[n] = ' ';
+            cu.save_name[n > str_len(cu.save_name) ? n : str_len(cu.save_name)] = 0;
+        } else if (k == 3) {
+            cu.save_del = (uint8_t)(d > 0 && cf_snd[part].kind == PK_USER);
+        } else if (k == 2) {
+            const char *p;
+            int i, nc = (int)sizeof CF_NAME_CHARS - 1;
+            char ch = cu.save_name[cu.save_cur] ? cu.save_name[cu.save_cur] : ' ';
+            for (p = CF_NAME_CHARS; *p && *p != ch; p++)
+                ;
+            i = *p ? (int)(p - CF_NAME_CHARS) : 0;
+            cu.save_name[cu.save_cur] = CF_NAME_CHARS[wrapi(i + d, nc)];
+            if (cu.save_cur >= str_len(cu.save_name))
+                cu.save_name[cu.save_cur + 1u] = 0;
+        }
+        break;
+    }
+    case SCR_ARP:
+        if (cu.page[SCR_ARP] == 0) {
+            if (k == 0)
+                cu.arp_on = (uint8_t)(d > 0);
+            else if (k == 1)
+                cs.arp.mode = (uint8_t)clampi(cs.arp.mode + d, 0, CF_ARP_NMODES - 1);
+            else if (k == 2)
+                cs.arp.oct = (uint8_t)clampi(cs.arp.oct + d, 1, 4);
+            else if (CF_ARP_STRUMMING(cs.arp.mode))
+                cs.arp.strum_ms = (uint8_t)clampi(cs.arp.strum_ms + d * (cs.arp.strum_ms < 40 ? 1 : 5), 5, 250);
+            else
+                cs.arp.rate = (uint8_t)clampi(cs.arp.rate + d, 0, (int)CF_ARP_NRATES - 1);
+        } else {
+            if (k == 0 && !cf_sn.ext_clock) {
+                cs.bpm = (uint16_t)clampi(cs.bpm + d, 30, 300);
+                cf_send_metro();
+            } else if (k == 1) {
+                cs.arp.gate = (uint8_t)clampi(cs.arp.gate + d * 5, 20, 100);
+            } else if (k == 2) {
+                cs.arp.swing = (uint8_t)clampi(cs.arp.swing + d, 50, 75);
+            } else if (k == 3) {
+                cs.arp.latch = (uint8_t)(d > 0);
+            }
+        }
+        cf_send_config();
+        break;
+    case SCR_SEQ:
+        if (k == 0)
+            cs.metro_level = (uint8_t)clampi(cs.metro_level + d * 5, 0, 100);
+        else if (k == 1) {
+            cs.click = (uint8_t)wrapi(cs.click + d, (int)CF_NCLICKS);
+            cf_click_sound = cs.click;
+        }
+        else if (k == 2 && !cf_sn.ext_clock)
+            cs.bpm = (uint16_t)clampi(cs.bpm + d, 30, 300);
+        else {
+            static const uint8_t SIG[] = {2, 3, 4, 5, 6, 7};
+            int i;
+            for (i = 0; i < 6 && SIG[i] != cs.beats; i++)
+                ;
+            cs.beats = SIG[clampi((i < 6 ? i : 2) + d, 0, 5)];
+        }
+        cf_send_metro();
+        cf_send_config();                        /* (the tempo: the arpeggiator's too) */
+        break;
+    case SCR_GLO:
+        switch (cu.page[SCR_GLO]) {
+        case 0:
+            if (k == 0)
+                cs.accent = (uint8_t)wrapi(cs.accent + d, CF_NTHEMES);
+            if (k == 1)
+                cs.backdrop = (uint8_t)wrapi(cs.backdrop + d, FL_NBD);
+            if (k == 2) {
+                cs.boot_sound = (uint8_t)(d > 0);
+                if (cs.boot_sound)
+                    cf_boot_go = 1;              /* (heard as it is set) */
+            }
+            cf_palette_build();
+            break;
+        case 1:
+            if (k == 0)
+                cs.midi_out = (uint8_t)(d > 0);
+            if (k == 1)
+                cs.ch_chord = (uint8_t)clampi(cs.ch_chord + d, 0, 15);
+            if (k == 2)
+                cs.ch_bass = (uint8_t)clampi(cs.ch_bass + d, 0, 15);
+            if (k == 3)
+                cs.clock_in = (uint8_t)(d > 0);
+            cf_send_config();
+            break;
+        default:
+            if (k == 0)
+                cs.vel = (uint8_t)clampi(cs.vel + d * 4, 1, 127);
+            if (k == 1)
+                cs.glide_always = (uint8_t)(d > 0);
+            if (k == 2)
+                cs.lights = (uint8_t)(d > 0);
+            if (k == 3)
+                {                        /* Wait, Move, Strike: from holding the chord to striking it */
+                    static const uint8_t ORD[CF_NRT] = {CF_RT_WAIT, CF_RT_MOVE, CF_RT_STRIKE};
+                    int i = 0;
+                    while (i < CF_NRT - 1 && ORD[i] != cs.retrig)
+                        i++;
+                    cs.retrig = ORD[clampi(i + (d > 0 ? 1 : -1), 0, CF_NRT - 1)];
+                }
+            cf_send_config();
+            break;
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+/* --------------------------------------------------------- the left side --- */
+static void cf_pop(uint32_t kind, uint32_t ms)
+{
+    cu.pop = (uint8_t)kind;
+    cu.pop_until = cu.now + ms;
+}
+static void cf_message(const char *s)
+{
+    str_cpy(cu.msg, s, sizeof cu.msg);
+    cf_pop(POP_MSG, 1200);
+}
+/* what the kept files (upreset.c, fm6_store.c) say goes into the message popup */
+static void ui_message(const char *s) { cf_message(s); }
+static void ui_say(const char *a, const char *b)
+{
+    char m[24];
+    str_cpy(m, a, sizeof m);
+    str_cpy(m + str_len(m), b, (uint32_t)(sizeof m - str_len(m)));
+    cf_message(m);
+}
+
+static uint32_t screen_pages(uint32_t scr)
+{
+    if (scr == SCR_GLO)
+        return 3u;
+    if (scr == SCR_ENV)
+        return 3u;                               /* chord + bass, chord, bass */
+    if (scr == SCR_ARP)
+        return 2u;                               /* Pattern, Feel */
+    if (scr == SCR_SAVE)
+        return 3u;                               /* the chord's sound, the bass's, the loop */
+    if (scr == SCR_EDIT)
+        return cfe_npages(cu.edit_part, cu.edit_sec);
+    return 1u;
+}
+
+/* a page turned (SELECT): which way, when; the picture slides in from that side, that arrow lights (cf_views.c) */
+static uint32_t cv_turn_ms;
+static int8_t cv_turn_dir;
+static void cv_turned(int d)
+{
+    cv_turn_ms = cu.now ? cu.now : 1u;
+    cv_turn_dir = (int8_t)(d > 0 ? 1 : -1);
+}
+
+static void ui_select(int d)                     /* SELECT: the bass sound, or a screen's page */
+{
+    if (cu.scr == SCR_ENV) {                     /* chord + bass (linked: the bass follows), chord, bass */
+        cu.env_tgt = (uint8_t)wrapi(cu.env_tgt + d, 3);
+        cv_turned(d);
+        cs.env_link = (uint8_t)(cu.env_tgt == 0u);
+        if (cs.env_link)
+            cf_env_follow(), cf_edited(1u);
+        return;
+    }
+    if (cu.scr == SCR_EDIT) {
+        int was = cu.page[SCR_EDIT];
+        cu.page[SCR_EDIT] = (uint8_t)clampi(cu.page[SCR_EDIT] + d, 0, (int)screen_pages(SCR_EDIT) - 1);
+        if (cu.page[SCR_EDIT] != was)
+            cv_turned(d);
+        return;
+    }
+    if (cu.scr == SCR_FX) {                      /* FX: the effect along the chain */
+        cu.fx_pos = (uint8_t)clampi(cu.fx_pos + d, 0, CFX_N - 1);
+        return;
+    }
+    if (screen_pages(cu.scr) > 1u) {
+        cu.page[cu.scr] = (uint8_t)wrapi(cu.page[cu.scr] + d, (int)screen_pages(cu.scr));
+        cv_turned(d);
+        if (cu.scr == SCR_SAVE && cu.page[SCR_SAVE] < 2u) {   /* the other part: its sound, its name */
+            uint32_t part = cu.page[SCR_SAVE] & 1u;
+            cu.save_del = 0;
+            cu.save_new = cf_snd[part].kind == PK_INIT || !(cu.edited[part] || cf_snd[part].kind == PK_USER);
+            cf_save_name_init();
+        }
+        return;
+    }
+    if (cu.scr == SCR_SEL) {                     /* SEL: SELECT picks the button to edit, as the keys do */
+        int nb = (cs.chord.algo == CF_ALG_TOP || cs.chord.algo == CF_ALG_TOP_LOCK) ? CF_TOP_NBTN : CF_SIDE_NBTN;
+        cu.sel_btn = (uint8_t)wrapi(cu.sel_btn + d, nb);
+        return;
+    }
+    cf_snd_step(CF_PART_BASS, d);
+    if (cs.env_link)
+        cf_env_follow();
+    cs.snd[1] = (uint16_t)cf_snd_pos(CF_PART_BASS);
+    cf_pop(POP_SOUND_BASS, 1200);
+}
+static void ui_presets(int d)                    /* PRESETS: the chord sound */
+{
+    cf_snd_step(CF_PART_CHORD, d);
+    if (cs.env_link)                             /* linked: the bass takes the new sound's envelope */
+        cf_env_follow();
+    cs.snd[0] = (uint16_t)cf_snd_pos(CF_PART_CHORD);
+    cf_pop(POP_SOUND_CHORD, 1200);
+}
+static void ui_algo(int d)                       /* ALGORITHM: the chord algorithm (FX: moves the effect) */
+{
+    if (cu.scr == SCR_FX) {
+        cfx_move(d);
+        return;
+    }
+    cs.chord.algo = (uint8_t)clampi(cs.chord.algo + d, 0, CF_NALGS - 1);
+    cu.sel_btn = cs.chord.algo >= CF_ALG_SIDE ? 0u : 1u;
+    cf_send_config();
+    cf_pop(POP_ALGO, 1400);
+}
+
+/* --------------------------------------------------------------- buttons --- */
+static void ui_open(uint32_t scr)
+{
+    uint32_t was = cu.scr;
+    cu.scr = (uint8_t)(scr == was && scr != SCR_HOME ? SCR_HOME : scr);
+    if (cu.scr == SCR_SEL && cf_is_off(&cs.chord, cu.sel_btn))
+        cu.sel_btn = 1;
+    if ((was == SCR_SEQ) != (cu.scr == SCR_SEQ))
+        cf_send_metro();
+}
+
+static void ui_button(uint32_t b)
+{
+    switch (b) {
+    case B_HOME: ui_open(SCR_HOME); break;
+    case B_SCL: ui_open(SCR_SEL); break;
+    case B_ENV: ui_open(SCR_ENV); break;
+    case B_LFO: ui_open(SCR_BASS); break;
+    case B_EDIT: ui_open(SCR_EDIT); break;
+    case B_GLO: ui_open(SCR_GLO); break;
+    case B_FX: ui_open(SCR_FX); break;
+    case B_ARP: ui_open(SCR_ARP); break;         /* (its ON/OFF is K1 there, as an effect's: the owner's) */
+    case B_SEQ: ui_open(SCR_SEQ); break;
+    case B_SAVE:                                 /* on SAVE: held 1 s saves, a tap goes HOME (cf_save_poll) */
+        if (cu.scr == SCR_SAVE) {
+            cu.save_hold = cu.now ? cu.now : 1u;
+        } else {
+            cf_save_open();
+        }
+        break;
+    case B_PLAY:                                 /* a tap plays / stops, a hold opens the LOOPER (cf_loop_poll) */
+        cu.play_hold = cu.now ? cu.now : 1u;
+        cu.play_fired = 0;
+        break;
+    case B_REC:                                  /* a tap records, a hold undoes the last layer (cf_loop_poll) */
+        cu.rec_hold = cu.now ? cu.now : 1u;
+        cu.rec_fired = 0;
+        break;
+    case B_OCTDN:
+    case B_OCTUP:
+        if ((fm1_in.buttons & ((1u << panel.btn[B_OCTDN]) | (1u << panel.btn[B_OCTUP]))) ==
+            ((1u << panel.btn[B_OCTDN]) | (1u << panel.btn[B_OCTUP]))) {
+            cs.chord.octave = 0;                 /* both: back to 0, and every note let go */
+            cf_post(CFE_PANIC, 0, 0, 0);
+        } else {
+            cs.chord.octave = (int8_t)clampi(cs.chord.octave + (b == B_OCTUP ? 1 : -1), -3, 3);
+        }
+        cf_send_config();
+        cf_pop(POP_OCTAVE, 900);
+        break;
+    default: break;
+    }
+}
+
+/* ---------------------------------------------------------------- SAVE --- */
+/* SAVE keeps a part's sound (cf_sound.c cf_snd_save): SELECT the part (the one being edited, else the chord, opens),
+ * K1 over itself or as new (a sound not edited: as new), K2 the letter, K3 what it is; SAVE held 1 s saves */
+static void cf_save_name_init(void)
+{
+    uint32_t part = cu.page[SCR_SAVE] & 1u, n;
+    str_cpy(cu.save_name, cf_snd[part].name, sizeof cu.save_name);
+    n = str_len(cu.save_name);
+    if (cu.save_new && n + 2u <= 12u)            /* a new one: its name with a 2, to tell them apart */
+        str_cpy(cu.save_name + n, " 2", 3);
+    cu.save_cur = (uint8_t)(str_len(cu.save_name) ? str_len(cu.save_name) - 1u : 0u);
+}
+static void cf_save_open(void)
+{
+    uint32_t part = cu.scr == SCR_EDIT ? cu.edit_part : (!cu.edited[0] && cu.edited[1]) ? 1u : 0u;
+    cu.page[SCR_SAVE] = (uint8_t)(cu.scr == SCR_LOOP ? 2u : part);   /* (from the LOOPER: the loop) */
+    cu.save_new = cf_snd[part].kind == PK_INIT || !(cu.edited[part] || cf_snd[part].kind == PK_USER);
+    cu.save_hold = 0;
+    cu.save_del = 0;
+    cf_save_name_init();
+    ui_open(SCR_SAVE);
+}
+/* SAVE > Loop: the loop kept in flash (OBJ_CFLOOP), or deleted there and in memory */
+static cfl_data_t cf_loop_buf __attribute__((section(".pool")));
+static void cf_loop_save(int del)
+{
+    uint32_t size;
+    if (cr_safe) {
+        cf_message("Safe mode: no saving");
+        return;
+    }
+    if (cf_sn.loop_cap != CFL_CAP_NONE) {
+        cf_message("Stop recording first");
+        return;
+    }
+    if (del) {
+        memset(&cf_loop_buf, 0, 16u);
+        cf_post(CFE_LOOP, 3, 0, 0);
+        if (st_save(OBJ_CFLOOP, &cf_loop_buf, 16u)) {
+            cf_message("Delete error");
+            return;
+        }
+        cf_message("Loop deleted");
+        cu.loop_saved_gen = (uint8_t)(cf_sn.loop_gen + 1u);
+        ui_open(SCR_HOME);
+        return;
+    }
+    if (cf_sn.loop_state == CFL_EMPTY) {
+        cf_message("No loop to save");
+        return;
+    }
+    fm1_irq_off();                               /* (a still copy: the audio side plays from it) */
+    memcpy(&cf_loop_buf, &cfl.d, sizeof cf_loop_buf);
+    fm1_irq_on();
+    size = (uint32_t)__builtin_offsetof(cfl_data_t, ev) + cf_loop_buf.nev * (uint32_t)sizeof(cfl_ev_t);
+    if (st_save(OBJ_CFLOOP, &cf_loop_buf, size)) {
+        cf_message("Save error");
+        return;
+    }
+    cu.loop_saved_gen = cf_sn.loop_gen;
+    cf_message("Loop saved");
+    ui_open(SCR_HOME);
+}
+static void cf_save_delete(void)
+{
+    uint32_t part = cu.page[SCR_SAVE] & 1u;
+    char b[24], nm[13];
+    int res;
+    str_cpy(nm, cf_snd[part].name, sizeof nm);
+    res = cf_snd_delete(part);
+    if (res) {
+        cf_message(res == -1 ? "Only your sounds delete" : res == -3 ? "Safe mode: no saving" : "Delete error");
+        return;
+    }
+    cs.snd[0] = (uint16_t)cf_snd_pos(0);
+    cs.snd[1] = (uint16_t)cf_snd_pos(1);
+    cu.edited[part] = 0;
+    cu.save_del = 0;
+    str_cpy(b, "Deleted ", sizeof b);
+    str_cpy(b + str_len(b), nm, 13);
+    cf_message(b);
+    ui_open(SCR_HOME);
+}
+static void cf_save_do(void)
+{
+    uint32_t part = cu.page[SCR_SAVE] & 1u, i, n;
+    char name[13], b[24], num[4];
+    int res;
+    str_cpy(name, cu.save_name, sizeof name);
+    for (n = str_len(name); n && name[n - 1u] == ' '; n--)   /* (no trailing spaces) */
+        name[n - 1u] = 0;
+    for (i = 0; name[i] == ' '; i++)
+        ;
+    res = cf_snd_save(part, cu.save_new, name + i);
+    if (res) {
+        cf_message(res == -1 ? "No free slot (32 used)" : res == -2 ? "INIT: save it as new" :
+                   res == -3 ? "Safe mode: no saving" : "Save error");
+        return;
+    }
+    cs.snd[0] = (uint16_t)cf_snd_pos(0);         /* (the row moved: the settings follow) */
+    cs.snd[1] = (uint16_t)cf_snd_pos(1);
+    cu.edited[part] = 0;
+    snd_num(cf_snd_pos(part), num);
+    str_cpy(b, "Saved ", sizeof b);
+    str_cpy(b + str_len(b), num, 4);
+    str_cpy(b + str_len(b), " ", 2);
+    str_cpy(b + str_len(b), cf_snd[part].name, 13);
+    cf_message(b);
+    ui_open(SCR_HOME);
+}
+/* every frame: PLAY and REC, a tap (on its release) or a hold. PLAY held 0.6 s: the LOOPER screen; REC held 1 s:
+ * the last layer undone (as ChoralRoot's) */
+static void cf_loop_poll(void)
+{
+    if (cf_sn.ext_clock && cf_sn.ext_bpm >= 30u && cf_sn.ext_bpm <= 300u && cf_sn.ext_bpm != cs.bpm) {
+        cs.bpm = cf_sn.ext_bpm;                  /* (MIDI clock in: the tempo it makes, on the knobs; the audio side
+                                                  * has it already) */
+        fm1_irq_off();
+        cfp_cfg.bpm = cs.bpm;
+        fm1_irq_on();
+    }
+    if (cu.play_hold) {
+        int held = (fm1_in.buttons >> panel.btn[B_PLAY]) & 1u;
+        if (held && !cu.play_fired && cu.now - cu.play_hold >= 600u) {
+            cu.play_fired = 1;
+            ui_open(cu.scr == SCR_LOOP ? SCR_HOME : SCR_LOOP);
+        } else if (!held) {
+            if (!cu.play_fired)
+                cf_post(CFE_LOOP, 1, 0, 0);
+            cu.play_hold = 0;
+        }
+    }
+    if (cu.rec_hold) {
+        int held = (fm1_in.buttons >> panel.btn[B_REC]) & 1u;
+        if (held && !cu.rec_fired && cu.now - cu.rec_hold >= 1000u) {
+            cu.rec_fired = 1;
+            cf_message(cf_sn.loop_layers > 1u ? "Last layer undone" : cf_sn.loop_state != CFL_EMPTY ||
+                       cf_sn.loop_cap != CFL_CAP_NONE ? "Loop cleared" : "Nothing to undo");
+            cf_post(CFE_LOOP, 2, 0, 0);
+        } else if (!held) {
+            if (!cu.rec_fired)
+                cf_post(CFE_LOOP, 0, 0, 0);
+            cu.rec_hold = 0;
+        }
+    }
+}
+
+/* every frame: SAVE held on the SAVE screen */
+static void cf_save_poll(void)
+{
+    int held;
+    if (!cu.save_hold)
+        return;
+    held = (fm1_in.buttons >> panel.btn[B_SAVE]) & 1u;
+    if (cu.scr != SCR_SAVE) {
+        cu.save_hold = 0;
+    } else if (held && cu.now - cu.save_hold >= 1000u) {
+        cu.save_hold = 0;
+        if (cu.page[SCR_SAVE] == 2u)
+            cf_loop_save(cu.save_del);
+        else if (cu.save_del)
+            cf_save_delete();
+        else
+            cf_save_do();
+    } else if (!held) {                          /* a tap: back HOME, as every screen's own button */
+        cu.save_hold = 0;
+        ui_open(SCR_HOME);
+    }
+}
+
+/* ------------------------------------------------------------- the keys --- */
+/* on SEL a chord button pressed is also picked for editing (it still plays) */
+static void ui_note_key(int key, int down)
+{
+    int idx;
+    if (cu.scr == SCR_EDIT && cf_key_is_upper(key)) {   /* EDIT: OP1..OP6 PIT GLO pick, MONO / POLY: chord / bass */
+        int u = 0, k;
+        for (k = 0; k < key; k++)
+            u += cf_key_is_upper(k);
+        if (down) {
+            if (u < CFE_NSEC) {
+                cu.edit_sec = (uint8_t)u;
+                cu.page[SCR_EDIT] = (uint8_t)clampi(cu.page[SCR_EDIT], 0, (int)cfe_npages(cu.edit_part, (uint32_t)u) - 1);
+            } else if (u == 8 || u == 9) {
+                cu.edit_part = (uint8_t)(u - 8);
+                cu.page[SCR_EDIT] = 0;
+            }
+        }
+        return;
+    }
+    if (down && cu.scr == SCR_SEL && cf_key_role(cs.chord.algo, key, &idx) == CF_ROLE_BUTTON &&
+        !cf_is_off(&cs.chord, idx))
+        cu.sel_btn = (uint8_t)idx;
+    cf_post(CFE_KEY, (uint32_t)key, 0, down);
+}
+
+/* the keys, between the frame's tile rows too. Keys that changed in one scan went at once: the ones let go first,
+ * then the chord buttons pressed, then the roots, so the new chord sounds with its new buttons (in key order a root
+ * could come first and strike with the old ones: the owner heard the last chord slip in) */
+static void cf_ui_pump(void)
+{
+    uint32_t now = fm1_in.notes, ch = now ^ cu.keys, k, pass;
+    if (!ch || !cu.booted)
+        return;
+    for (pass = 0; pass < 3u; pass++)
+        for (k = 0; k < CF_NKEYS; k++)
+            if ((ch >> k) & 1u) {
+                int down = (int)((now >> k) & 1u), idx;
+                int btn = cf_key_role(cs.chord.algo, (int)k, &idx) == CF_ROLE_BUTTON;
+                if ((uint32_t)(down ? (btn ? 1 : 2) : 0) == pass)
+                    ui_note_key((int)k, down);
+            }
+    cu.keys = now;
+    cu.idle_ms = 0;
+}
+
+static void cf_ui_input(void)
+{
+    uint32_t rel = 0, pr = fm1_input_edges(&rel), i;
+    int32_t d;
+    cf_ui_pump();
+    cf_save_poll();
+    cf_loop_poll();
+    for (i = 0; i < 14u; i++)
+        if ((pr >> i) & 1u) {
+            uint32_t b = panel_btn_of(i);
+            if (b < NB)
+                ui_button(b);
+            cu.idle_ms = 0;
+        }
+    if ((d = panel_enc(EN_SELECT)) != 0)
+        ui_select(d), cu.idle_ms = 0;
+    if ((d = panel_enc(EN_PRESET)) != 0)
+        ui_presets(d), cu.idle_ms = 0;
+    if ((d = panel_enc(EN_ALGO)) != 0)
+        ui_algo(d), cu.idle_ms = 0;
+    for (i = 0; i < 4u; i++)
+        if ((d = panel_enc(EN_K1 + i)) != 0)
+            ui_knob_turn((int)i, d), cu.idle_ms = 0;
+}
+
+/* ------------------------------------------------------------ key caps --- */
+static void ui_keycap(int key, cf_keycap_t *o)
+{
+    int idx, role = cf_key_role(cs.chord.algo, key, &idx), down = (cu.keys >> key) & 1u;
+    const cf_chord_out_t *out = &cf_sn.out;
+    if (cu.scr == SCR_EDIT && cf_key_is_upper(key)) {
+        int u = 0, k;
+        for (k = 0; k < key; k++)
+            u += cf_key_is_upper(k);
+        if (u < CFE_NSEC) {
+            str_cpy(o->top, cfe_key_name(cu.edit_part, (uint32_t)u), 8);
+            o->style = u == cu.edit_sec ? KC_ON : KC_BTN;
+        } else if (u == 8 || u == 9) {
+            str_cpy(o->top, u == 8 ? "CHD" : "BAS", 8);
+            o->style = u - 8 == cu.edit_part ? KC_SOUNDING : KC_BTN;
+        } else {
+            o->style = KC_OFF;
+        }
+        return;
+    }
+    if (role == CF_ROLE_BUTTON) {
+        const cf_form_t *f = cf_button_form(&cs.chord, idx);
+        int on = (out->buttons >> idx) & 1u;
+        o->btn = 1;
+        if (cf_is_off(&cs.chord, idx))
+            str_cpy(o->top, "OFF", 8);
+        else
+            cf_form_label(f, o->top);
+        /* held and in the chord: pressed; latched (Lock): lit; held but left out of the chord (a minor button with
+         * a major one, cf_chord.c cfc_used): plain, so it plainly does not count */
+        o->style = down && on ? KC_DOWN : on ? KC_ON : KC_BTN;
+        if (cu.scr == SCR_SEL && idx == cu.sel_btn && !down)
+            o->style = KC_SOUNDING;
+        return;
+    }
+    {
+        int n = cf_key_root_note(&cs.chord, key), pc = n % 12, i, sounding = 0;
+        char nm[4];
+        cf_pc_name(pc, &cu_spell, nm);
+        str_cpy(o->top, nm, 8);
+        if (cs.chord.quantize != CF_Q_OFF)
+            cf_numeral(cs.chord.scale, cs.chord.tonic, pc, o->bot);
+        if (o->bot[0]) {                         /* the degree as a digit, its flat or sharp kept (bVII -> b7) */
+            int d = 0, j, v = 0, k = 0;
+            char acc = o->bot[0] == 'b' || o->bot[0] == '#' ? o->bot[0] : 0;
+            for (j = 0; o->bot[j]; j++) {
+                char ch = o->bot[j];
+                if (ch == 'I' || ch == 'i')
+                    v++;
+                else if (ch == 'V' || ch == 'v')
+                    d = v ? 5 - v : 5, v = 0;
+            }
+            d += v;
+            if (acc)
+                o->bot[k++] = acc;
+            o->bot[k++] = (char)('0' + (d >= 1 && d <= 7 ? d : 0));
+            o->bot[k] = 0;
+        }
+        for (i = 0; i < cf_sn.n; i++)
+            sounding |= cf_sn.note[i] % 12 == pc;
+        o->style = down ? KC_DOWN : (out->sounding && out->root_pc == pc) ? KC_SOUNDING :
+                   (cs.chord.quantize != CF_Q_OFF && pc == cs.chord.tonic) ? KC_SCALE : KC_ROOT;
+        (void)sounding;
+    }
+}
+
+/* ----------------------------------------------------------- the lights --- */
+static uint8_t cu_led_pos[41];
+static void cf_led_init(void)
+{
+    uint32_t id, p, r;
+    for (id = 0; id < 41u; id++) {
+        cu_led_pos[id] = 0xFF;
+        for (p = 0; p < FM1_NCOL; p++)
+            for (r = 1; r < 5u; r++)
+                if (FM1_KEYMAP[r][p] == (int8_t)id)
+                    cu_led_pos[id] = (uint8_t)((p << 3) | r);
+    }
+}
+static void cf_led(uint8_t *m, uint32_t id, int on)
+{
+    uint8_t q = cu_led_pos[id % 41u];
+    if (q != 0xFF && on)
+        m[q >> 3] |= (uint8_t)(1u << (q & 7u));
+}
+
+static void cf_leds(void)
+{
+    uint8_t lit[FM1_NCOL] = {0}, mid[FM1_NCOL] = {0}, dim[FM1_NCOL] = {0}, faint[FM1_NCOL] = {0};
+    static const uint8_t SCR_BTN[SCR_N] = {B_HOME, B_SCL, B_ENV, B_LFO, B_EDIT, B_GLO, B_FX, B_ARP, B_SEQ, B_SAVE,
+                                           B_PLAY};
+    const cf_chord_out_t *out = &cf_sn.out;
+    uint32_t k, blink = (cu.now / 250u) & 1u;
+    /* buttons: the open screen lit, the others dim; PLAY with the beat */
+    for (k = 0; k < SCR_N; k++)
+        cf_led(k == cu.scr ? lit : dim, panel.btn[SCR_BTN[k]], 1);
+    if (cf_sn.loop_cap == CFL_CAP_ARMED || cf_sn.loop_cap == CFL_CAP_OD_ARMED)   /* REC: armed lit, taking blinks */
+        cf_led(lit, panel.btn[B_REC], 1);
+    else if (cf_sn.loop_cap != CFL_CAP_NONE)
+        cf_led(blink ? lit : faint, panel.btn[B_REC], 1);
+    else
+        cf_led(dim, panel.btn[B_REC], 1);
+    if (cu.arp_on)                               /* the arpeggiator plays: ARP lit wherever you are */
+        cf_led(lit, panel.btn[B_ARP], 1);
+    if (cf_sn.running)                           /* PLAY: with the beat while it runs; a loop stopped: mid */
+        cf_led((int32_t)(cf_sn.now_ms - cf_sn.beat_ms) < 120 ? lit : mid, panel.btn[B_PLAY], 1);
+    else
+        cf_led(cf_sn.loop_state == CFL_STOPPED ? mid : dim, panel.btn[B_PLAY], 1);
+    cf_led(cs.chord.octave < 0 ? (cs.chord.octave < -1 ? lit : mid) : faint, panel.btn[B_OCTDN], 1);
+    cf_led(cs.chord.octave > 0 ? (cs.chord.octave > 1 ? lit : mid) : faint, panel.btn[B_OCTUP], 1);
+    /* keys: held lit; the effective chord buttons lit, the others faint; the chord's root mid; the scale dim */
+    for (k = 0; k < CF_NKEYS; k++) {
+        int idx, role = cf_key_role(cs.chord.algo, (int)k, &idx), id = (int)(14u + k);
+        if ((cu.keys >> k) & 1u) {
+            cf_led(lit, (uint32_t)id, 1);
+            continue;
+        }
+        if (cu.scr == SCR_EDIT && cf_key_is_upper((int)k)) {
+            int u = 0, j;
+            for (j = 0; j < (int)k; j++)
+                u += cf_key_is_upper(j);
+            if (u == cu.edit_sec || (u >= 8 && u - 8 == cu.edit_part))
+                cf_led(lit, (uint32_t)id, 1);
+            else if (u < 10)
+                cf_led(blink ? dim : faint, (uint32_t)id, 1);
+            continue;
+        }
+        if (role == CF_ROLE_BUTTON) {
+            if ((out->buttons >> idx) & 1u)
+                cf_led(lit, (uint32_t)id, 1);
+            else if (cu.scr == SCR_SEL && idx == cu.sel_btn)
+                cf_led(blink ? mid : dim, (uint32_t)id, 1);
+            else
+                cf_led(faint, (uint32_t)id, 1);
+        } else if (role == CF_ROLE_ROOT) {
+            int pc = cf_key_root_note(&cs.chord, (int)k) % 12;
+            if (out->sounding && pc == out->root_pc)
+                cf_led(mid, (uint32_t)id, 1);
+            else if (cs.lights && cs.chord.quantize != CF_Q_OFF && pc == cs.chord.tonic)
+                cf_led(dim, (uint32_t)id, 1);
+        }
+    }
+    for (k = 0; k < FM1_NCOL; k++) {
+        fm1_led_faint[k] = faint[k];
+        fm1_led_dim[k] = dim[k];
+        fm1_led_dim2[k] = mid[k];
+        fm1_led[k] = lit[k];
+    }
+}
+
+/* ------------------------------------------------------------ the plant --- */
+static uint32_t cu_last_serial;
+static uint8_t cu_last_onset, cu_last_arp;
+static void cf_feed_plant(uint32_t dt)
+{
+    const cf_chord_out_t *o = &cf_sn.out;
+    uint32_t i, lvl = 0;
+    /* the Top algorithms grow a plant, the Side ones a coral coloured by the key */
+    flora_set_species(&flo, cs.chord.algo >= CF_ALG_SIDE ? FL_SP_CORAL : FL_SP_PLANT);
+    flora_set_key(&flo, cs.chord.tonic);
+    flo.backdrop = cs.backdrop;
+    if (o->serial != cu_last_serial) {
+        fl_chord_t c;
+        cu_last_serial = o->serial;
+        if (o->sounding && o->n) {
+            static const uint8_t QT[CF_NTYPES] = {FL_Q_SINGLE, FL_Q_MAJOR, FL_Q_MINOR, FL_Q_DIM, FL_Q_AUG,
+                                                   FL_Q_SUS2, FL_Q_SUS4, FL_Q_MAJOR};
+            c.n = (uint8_t)(o->n > 8 ? 8 : o->n);
+            for (i = 0; i < c.n; i++)
+                c.note[i] = o->note[i];
+            c.root = o->root_pc;
+            c.quality = o->single ? FL_Q_SINGLE : QT[o->type < CF_NTYPES ? o->type : 1];
+            c.bass = (int8_t)(cf_sn.nb ? cf_sn.bass[cf_sn.nb - 1] : -1);
+            flora_set_chord(&flo, &c);
+        } else {
+            c.n = 0;
+            flora_set_chord(&flo, &c);
+        }
+    }
+    if (cf_sn.onset != cu_last_onset) {
+        cu_last_onset = cf_sn.onset;
+        if (!cf_sn.arp_on)                       /* (the arpeggiator: a pulse a note, below) */
+            for (i = 0; i < cf_sn.n; i++)
+                flora_note_on(&flo, cf_sn.note[i], cs.vel);
+    }
+    if (cf_sn.arp_steps != cu_last_arp) {        /* each note the arpeggiator plays sparkles out of its branch */
+        cu_last_arp = cf_sn.arp_steps;
+        if (cf_sn.arp_on)
+            flora_note_on(&flo, cf_sn.arp_note, cs.vel);
+    }
+    for (i = 0; i < NVOICE; i++) {               /* loudness: the chord part's strongest voice */
+        int32_t e = trk[CF_PART_CHORD].v[i].active ? trk[CF_PART_CHORD].v[i].env_out : 0;
+        if (e < 0)
+            e = -e;
+        if ((uint32_t)e > lvl)
+            lvl = (uint32_t)e;
+    }
+    flora_set_level(&flo, (uint16_t)(lvl > 32767u ? 65535u : lvl * 2u));
+    flora_tick(&flo, dt);
+}
+
+/* the sound editor's part (fm6_store.c: a DX7 voice received goes there), -1 when it is not open */
+static int cf_editing_part(void) { return cu.scr == SCR_EDIT ? (int)cu.edit_part : -1; }
+static void cf_edited(uint32_t part)
+{
+    if (part < 2u)
+        cu.edited[part] = 1;
+}
+
+/* ------------------------------------------------------------------ init --- */
+static void cf_ui_init(void)
+{
+    if (!cfs_loaded)                             /* (cf_splash read the settings record: they stay) */
+        cs_defaults(&cs);
+    cu.scr = SCR_HOME;
+    cu.sel_btn = 1;
+    cf_led_init();
+    cf_palette_build();
+    cu_spell_update();
+    cf_out_init();
+    if (!cr_safe) {                              /* the loop kept in flash: ready, stopped (the audio side idle) */
+        int n = st_load(OBJ_CFLOOP, &cfl.d, sizeof cfl.d);
+        if (n < (int)__builtin_offsetof(cfl_data_t, ev) ||
+            n < (int)(__builtin_offsetof(cfl_data_t, ev) + cfl.d.nev * sizeof(cfl_ev_t)))
+            cfl.d.magic = 0;
+        cfl_loaded();
+        cu.loop_saved_gen = cfl.gen;
+    }
+    if (cfs_loaded) {                            /* the sounds the parts had before the power-off */
+        cf_snd_load_index(CF_PART_CHORD, cs.snd[0]);
+        cf_snd_load_index(CF_PART_BASS, cs.snd[1]);
+    } else {                                     /* a new unit: a warm keys sound for the chords, a round bass */
+#if FELUCCA_VA
+        if (!cf_snd_find(CF_PART_CHORD, ENGI_VA, "POLY KEYS"))
+#endif
+            cf_snd_load_index(CF_PART_CHORD, 1);
+#if FELUCCA_VA
+        if (!cf_snd_find(CF_PART_BASS, ENGI_VA, "DEEP SUB"))
+#endif
+            cf_snd_load_index(CF_PART_BASS, 0);
+    }
+    cs.snd[0] = (uint16_t)cf_snd_pos(CF_PART_CHORD);
+    cs.snd[1] = (uint16_t)cf_snd_pos(CF_PART_BASS);
+    cu.env_tgt = cs.env_link ? 0u : 1u;
+    if (cs.env_link)
+        cf_env_follow();
+    cf_click_sound = cs.click;
+    cf_send_config();
+    cf_send_metro();
+    if (!flo.nseg)
+        flora_init(&flo, 0xC0A1F10Eu, FLW / 2, FLH + 1);   /* (the stem comes up from the bottom edge) */
+    cu.idle_ms = 0x7FFFFFFF;                     /* (the intro runs until the first touch) */
+    fb_full = 1;                                 /* (main.c cleared the panel after the splash) */
+    cu.last_ms = fm1_ms;
+    cu.booted = 1;
+}
+
+static void cf_ui_frame(void)                    /* ui_leds: the snapshot, the plant, the lights */
+{
+    uint32_t now = fm1_ms, dt = now - cu.last_ms;
+    cu.last_ms = now;
+    cu.frame_dt = dt;
+    cu.now = now;
+    cu.idle_ms += dt;
+    cu.frames++;
+    cf_snapshot();
+    cf_feed_plant(dt);
+    cf_leds();
+    if (cu.pop && (int32_t)(cu.now - cu.pop_until) > 0)
+        cu.pop = POP_NONE;
+}
