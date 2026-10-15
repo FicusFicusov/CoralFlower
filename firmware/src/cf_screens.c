@@ -494,10 +494,16 @@ static void cf_ui_draw(void)
     if (cf_intro_draw(cu.frame_dt))
         return;
     if (cu.scr == SCR_HOME) {
-        draw_topbar("", ALG_NAME[cs.chord.algo]);
+        /* the layout's name, and a padlock for the Lock ones */
+        const char *an = cs.chord.algo >= CF_ALG_SIDE ? "Side" : "Top";
+        int lk = cs.chord.algo == CF_ALG_TOP_LOCK || cs.chord.algo == CF_ALG_SIDE_LOCK, xr = lk ? 195 : 206;
+        draw_topbar("", 0);
+        fb_text_r(&CF_FONT_UI, xr, Y_TOP + 1, an, FL_INK3, 1);
+        if (lk)
+            draw_lock(xr + 3, Y_TOP + 3, FL_INK3);
         draw_top_sound(CF_PART_CHORD);
         {
-            int x = 206 - fb_text_w(&CF_FONT_UI, ALG_NAME[cs.chord.algo], 1) - 6;
+            int x = xr - fb_text_w(&CF_FONT_UI, an, 1) - 6;
             if (cu.arp_on) {                     /* the arpeggiator plays: a chip before the algorithm */
                 int w = fb_text_w(&CF_FONT_UI, "ARP", 1) + 6;
                 x -= w;

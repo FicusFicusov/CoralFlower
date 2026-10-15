@@ -44,6 +44,17 @@ static void draw_battery(int x, int y)
         fb_rect(x + 2 + (int)i * 5, y + 2, 4, 6, c);
 }
 
+/* a padlock, 8 x 10, as tall as the battery: the Lock algorithms, after the layout's name in the top bar (the owner,
+ * 2026-10-15: "Top" and a lock, not "Top Lock") */
+static void draw_lock(int x, int y, uint8_t c)
+{
+    fb_hline(x + 2, y, 4, c);                     /* the shackle */
+    fb_rect(x + 1, y + 1, 1, 3, c);
+    fb_rect(x + 6, y + 1, 1, 3, c);
+    fb_rect(x, y + 4, 8, 6, c);                   /* the body, a keyhole in it */
+    fb_rect(x + 3, y + 6, 2, 2, FL_BG);
+}
+
 static void draw_topbar(const char *left, const char *mid)
 {
     fb_rect(0, Y_TOP, FB_W, 16, FL_BG);
