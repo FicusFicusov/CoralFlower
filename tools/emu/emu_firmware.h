@@ -11,6 +11,9 @@
 /* ------------------------------------------------ sound, MIDI, sequencer --- */
 #include <stddef.h>
 #include <stdint.h>
+#define CF_EMU 1                                      /* the device-only parts left out (cf_shim.c, cf_backup.c) and
+                                                       * the palette as designed (cf_state.h: no panel correction);
+                                                       * first, before cf_ui.c brings cf_state.h in */
 #define main hostsim_main
 #ifndef FELUCCA_SEQ
 #define FELUCCA_SEQ 0                                 /* as choralroot.c: no Felucca sequencer */
@@ -141,5 +144,4 @@ static void cf_ui_pump(void);
 #define CRB_STUB_GO(w) do { printf("restart: stub request %08X\n", (unsigned)(w)); fflush(stdout); exit(0); } while (0)
 #define CRB_UPDATE_SCREEN(t) printf("update: screen '%s'\n", (t))
 #define CRB_UBOOT_GO() do { printf("restart: ROM USB boot\n"); fflush(stdout); exit(0); } while (0)
-#define CF_EMU 1                                      /* (cf_shim.c: the device-only parts left out) */
 #include "../../firmware/src/cf_shim.c"
