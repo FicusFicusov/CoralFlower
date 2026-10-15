@@ -250,7 +250,9 @@ static int cfc_resolve(cf_chord_t *c)
         c->play = eff;
     use = c->play;
     off = cfc_is_top(g->algo) ? cfc_off_mask(g) : 0u;
-    o.single = (uint8_t)((use & off) != 0);
+    /* single notes: Off held, or no chord button at all (the owner's rule, 2026-10-15: keys alone play notes, as many
+     * as are held; a chord sounds only while a chord button is down, or latched in Lock) */
+    o.single = (uint8_t)((use & off) != 0 || use == 0);
     o.buttons = (eff & off) ? eff : cfc_used(c, eff, nb);
     o.sounding = c->nroots > 0;
     if (!o.sounding) {

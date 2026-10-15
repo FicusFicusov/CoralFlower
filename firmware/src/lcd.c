@@ -100,9 +100,12 @@ static void lcd_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint1
     lcd_data(px, w * h * 2u);
 }
 
-/* ST7789V init: reset, then 16-bit colour, scan direction and IPS inversion;
- * voltage and gamma stay at the defaults. Format: cmd, n, n data bytes;
- * cmd 0x00 = wait (data byte: ~ms). */
+/* ST7789V init: reset, then 16-bit colour, scan direction, the panel's voltages and gamma, IPS inversion. Format:
+ * cmd, n, n data bytes; cmd 0x00 = wait (data byte: ~ms).
+ * CoralFlower: with the voltages and gamma left at the controller's defaults the FM-1 showed colours faded and
+ * shifted to blue (the owner's photos, 2026-10-15). The block below is TFT_eSPI's ST7789 init for 240 x 240 IPS
+ * panels (Bodmer/TFT_eSPI, TFT_Drivers/ST7789_Init.h): porch, gate, VCOM, power, frame rate, positive and negative
+ * gamma. It is a trial on the device; CF_LCD_DEFAULTS builds without it. */
 static const uint8_t LCD_SEQ[] = {
     0x01, 0,                     /* SWRESET */
     0x00, 1, 150,
@@ -110,6 +113,19 @@ static const uint8_t LCD_SEQ[] = {
     0x00, 1, 120,
     0x3A, 1, 0x55,               /* COLMOD: RGB565 */
     0x36, 1, 0x00,               /* MADCTL: top-left origin, RGB order */
+#ifndef CF_LCD_DEFAULTS
+    0xB2, 5, 0x0C, 0x0C, 0x00, 0x33, 0x33,                   /* PORCTRL */
+    0xB7, 1, 0x35,                                           /* GCTRL */
+    0xBB, 1, 0x28,                                           /* VCOMS */
+    0xC0, 1, 0x0C,                                           /* LCMCTRL */
+    0xC2, 2, 0x01, 0xFF,                                     /* VDVVRHEN */
+    0xC3, 1, 0x10,                                           /* VRHS */
+    0xC4, 1, 0x20,                                           /* VDVSET */
+    0xC6, 1, 0x0F,                                           /* FRCTR2: 60 Hz */
+    0xD0, 2, 0xA4, 0xA1,                                     /* PWCTRL1 */
+    0xE0, 14, 0xD0, 0x00, 0x02, 0x07, 0x0A, 0x28, 0x32, 0x44, 0x42, 0x06, 0x0E, 0x12, 0x14, 0x17,   /* PVGAMCTRL */
+    0xE1, 14, 0xD0, 0x00, 0x02, 0x07, 0x0A, 0x28, 0x31, 0x54, 0x47, 0x0E, 0x1C, 0x17, 0x1B, 0x1E,   /* NVGAMCTRL */
+#endif
     0x21, 0,                     /* INVON: IPS panel */
     0x13, 0,                     /* NORON */
 };

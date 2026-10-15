@@ -1,4 +1,5 @@
-/* CoralFlower: tests of cf_chord.c (the four algorithms, combining, Lock, Quantize, Off, inversion, bass degree).
+/* CoralFlower: tests of cf_chord.c (the four algorithms, combining, Lock, Quantize, Off and no button: single
+ * notes, inversion, bass degree).
  *   cc -std=c99 -Wall -Wextra -Ifirmware/src -o build/cf_chord_test tests/cf_chord_test.c firmware/src/cf_chord.c \
  *      firmware/src/cf_theory.c
  * Keys: key k is MIDI 53 + k (F3 = 0). Upper keys 1 3 5 8 10 13 15 17 20 22 25; lower 0 2 4 6 7 9 11 12 14 ...
@@ -69,23 +70,24 @@ int main(void)
     CHECK(cf_key_role(CF_ALG_SIDE, 6, &idx) == CF_ROLE_BUTTON && idx == 6, "B3 is 9 in Side");
     CHECK(cf_key_role(CF_ALG_SIDE, 8, &idx) == CF_ROLE_ROOT, "C#4 is a root in Side");
 
-    /* Top, Quantize On, C major: no button = the scale's chord */
+    /* Top, Quantize On, C major: no button = single notes, a scale step a key (the owner's rule, 2026-10-15) */
     setup(CF_ALG_TOP, CF_Q_ON, 0, CF_SC_MAJOR);
     down(7);
-    NOTES("C major diatonic", 60, 64, 67);
+    CHECK(C.out.single, "no button: single notes");
+    NOTES("C alone: the note C", 60);
     up(7);
     CHECK(!C.out.sounding, "silent after release");
     down(9);
-    NOTES("ii = Dm", 62, 65, 69);
+    NOTES("the next key: D", 62);
     up(9);
     down(0);
-    NOTES("IV below = F3 major", 53, 57, 60);
+    NOTES("the first key: F3", 53);
     up(0);
 
     /* Quantize Off: chromatic, C on the fifth key */
     setup(CF_ALG_TOP, CF_Q_OFF, 0, CF_SC_MAJOR);
     down(0);
-    NOTES("G#3 major", 56, 60, 63);
+    NOTES("G#3", 56);
     up(0);
 
     /* a type held: On keeps it, Full snaps it */
@@ -157,7 +159,7 @@ int main(void)
     down(15);
     up(15);
     down(7);
-    NOTES("unlocked: the scale's chord", 60, 64, 67);
+    NOTES("unlocked: a single note", 60);
     up(7);
     down(3);
     down(13);
@@ -218,11 +220,11 @@ int main(void)
     setup(CF_ALG_TOP, CF_Q_ON, 0, CF_SC_MAJOR);
     C.keep = 1;
     down(7);
-    NOTES("Top, C alone", 60, 64, 67);
+    NOTES("Top, C alone: the note", 60);
     down(15);
     NOTES("Top, M7 under a bare C: at once, Cmaj7", 60, 64, 67, 71);
     up(15);
-    NOTES("Top, M7 let go: C again", 60, 64, 67);
+    NOTES("Top, M7 let go: the note C again", 60);
     up(7);
     down(15);
     down(7);
@@ -247,7 +249,7 @@ int main(void)
     /* Side: the piano, snapped; quality and extension buttons */
     setup(CF_ALG_SIDE, CF_Q_ON, 0, CF_SC_MAJOR);
     down(8);
-    NOTES("C#4 snaps down to C", 60, 64, 67);
+    NOTES("C#4 snaps down to C", 60);
     up(8);
     down(4);
     down(7);
@@ -309,17 +311,24 @@ int main(void)
     G.top[1].inv = 0;
     cf_chord_config(&C, &G);
     down(7);
-    NOTES("octave up", 72, 76, 79);
+    NOTES("octave up", 72);
     up(7);
 
-    /* a held root falls back to the one held before */
+    /* a chord's held root falls back to the one held before (no button: both are single notes) */
     setup(CF_ALG_TOP, CF_Q_ON, 0, CF_SC_MAJOR);
     down(7);
     down(9);
-    NOTES("Dm on top", 62, 65, 69);
+    NOTES("no button, C and D held: both notes", 60, 62);
     up(9);
-    NOTES("back to C", 60, 64, 67);
     up(7);
+    down(3);
+    down(7);
+    down(9);
+    NOTES("M held, D on top: D", 62, 66, 69);
+    up(9);
+    NOTES("M held, back to C", 60, 64, 67);
+    up(7);
+    up(3);
 
     /* Off in the first builds' place (button 0): single notes, several at once */
     setup(CF_ALG_TOP, CF_Q_ON, 0, CF_SC_MAJOR);
@@ -350,7 +359,7 @@ int main(void)
     up(7);
     up(25);
     down(7);
-    CHECK(!C.out.single && C.out.n == 3, "default: a root alone still plays its chord (%s)", dump());
+    CHECK(C.out.single && C.out.n == 1, "default: a root alone plays its note (%s)", dump());
     up(7);
     down(1);
     down(7);
