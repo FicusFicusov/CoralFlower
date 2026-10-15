@@ -3,6 +3,9 @@
 **Your M-VAVE FM-1, made for chords.** CoralFlower is free firmware for the FM-1. Press one key, and it plays a whole
 chord that fits the scale you chose, with a bass underneath. While you play, a pixel flower grows from your chords.
 
+CoralFlower is inspired by the Telepathic Instruments Orchid. Its controls are redesigned for the FM-1's keys and
+buttons, because every instrument is played differently.
+
 <p align="center"><img src="docs/images/grow.gif" width="480" alt="A pink pixel flower growing and changing as chords are played"></p>
 
 <p align="center">
