@@ -339,7 +339,8 @@ static void glide_set(track_t *t, voice_t *v, int glide)
     if (t->p[P_GLMODE]) {
         int32_t d = v->pitch16 - v->pitch_cur, ticks = 1 + t->p[P_GLIDE] * t->p[P_GLIDE] / 8;
         d = d < 0 ? -d : d;
-        v->gstep = d / ticks > 0 ? d / ticks : 1;
+        v->gstep = d * 256 / ticks > 0 ? d * 256 / ticks : 1;   /* (Q8: core.h) */
+        v->gacc = 0;
     } else {
         v->gstep = 0;
     }
@@ -548,7 +549,8 @@ static void glide_ticks(voice_t *v, uint32_t ticks)
         return;
     }
     d = d < 0 ? -d : d;
-    v->gstep = d / (int32_t)ticks > 0 ? d / (int32_t)ticks : 1;
+    v->gstep = d * 256 / (int32_t)ticks > 0 ? d * 256 / (int32_t)ticks : 1;   /* (Q8: core.h) */
+    v->gacc = 0;
 }
 static voice_t *trk_voice_of(track_t *t, uint32_t note)
 {
@@ -800,10 +802,14 @@ static uint32_t track_render_x(track_t *t, int32_t *out, int32_t *side, uint8_t 
         }
         if (v->pitch_cur != v->pitch16) {               /* glide */
             int32_t d = v->pitch16 - v->pitch_cur;
-            int32_t st = v->gstep ? v->gstep : (int32_t)(ENV_LIN[(p[P_GLIDE] ? p[P_GLIDE] : 40) & 127] >> 14);   /* slide: ~45 ms */
-            if (st < 1)
-                st = 1;
+            int32_t st = (int32_t)(ENV_LIN[(p[P_GLIDE] ? p[P_GLIDE] : 40) & 127] >> 14);   /* slide: ~45 ms */
+            st = v->gstep ? v->gstep : (st < 1 ? 1 : st) * 256;
+            v->gacc += st;                              /* Q8: whole 1/16 st steps move, the fraction waits */
+            st = v->gacc >> 8;
+            v->gacc &= 255;
             v->pitch_cur += d > 0 ? (d < st ? d : st) : (-d < st ? d : -st);
+            if (v->pitch_cur == v->pitch16)
+                v->gacc = 0;
         }
         if (!env && !m.amp0 && v->stage == 2 && !e->sampled)
             continue;                                   /* held at a silent sustain (SUS 0): nothing to render */
