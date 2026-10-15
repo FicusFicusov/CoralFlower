@@ -669,7 +669,14 @@ static void ui_algo(int d)                       /* ALGORITHM: the chord algorit
         cfx_move(d);
         return;
     }
-    cs.chord.algo = (uint8_t)clampi(cs.chord.algo + d, 0, CF_NALGS - 1);
+    {   /* ALGORITHM turns through the Lock variants first (the owner's order): Top Lock, Top, Side Lock, Side. The
+         * stored ids stay CF_ALG_*: only the knob's order is this one. */
+        static const uint8_t ORDER[CF_NALGS] = {CF_ALG_TOP_LOCK, CF_ALG_TOP, CF_ALG_SIDE_LOCK, CF_ALG_SIDE};
+        int at = 0;
+        while (at < CF_NALGS - 1 && ORDER[at] != cs.chord.algo)
+            at++;
+        cs.chord.algo = ORDER[clampi(at + d, 0, CF_NALGS - 1)];
+    }
     cu.sel_btn = cs.chord.algo >= CF_ALG_SIDE ? 0u : sel_first();
     cf_send_config();
     cf_pop(POP_ALGO, 1400);

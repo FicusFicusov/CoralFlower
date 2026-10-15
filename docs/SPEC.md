@@ -73,11 +73,11 @@ piano keyboard (lower: C D E F G A B C D E F G; upper: C# D# | F# G# A# | C# D# 
 Chord types: the main ones (major, minor, the suses, diminished) plus **none** (single degrees only, so a
 button can hold just added degrees).
 
-### The four chord algorithms (ALGORITHM encoder), in this order
-1. **Top** — chord buttons on the upper row.
-2. **Top + Lock** — the same, latching.
-3. **Side** — chord buttons on the left.
-4. **Side + Lock** — the same, latching.
+### The four chord algorithms (ALGORITHM encoder), in this order (the Lock variants first, 2026-10-15)
+1. **Top + Lock** — chord buttons on the upper row, latching. The default.
+2. **Top** — the same, held.
+3. **Side + Lock** — chord buttons on the left, latching.
+4. **Side** — the same, held.
 
 **Algorithm 1 — Top.** The 11 upper keys are chord buttons, default assignment (the owner's order, 2026-10-15):
 `M6  M7  M9 | s2  s4 | m6  m7  m9 | M  m | Off`. While `Off` is active single notes play, as many as keys are held.

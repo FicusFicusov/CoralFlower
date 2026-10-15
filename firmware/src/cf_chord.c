@@ -109,7 +109,7 @@ void cf_chord_defaults(cf_chord_cfg_t *cfg)
         {CF_T_SUS2, 0, 0, 0}, {CF_T_SUS4, 0, 0, 0}, {CF_T_NONE, CF_A_b7, 0, 0}, {CF_T_NONE, CF_A_9, 0, 0},
     };
     int i;
-    cfg->algo = CF_ALG_TOP;
+    cfg->algo = CF_ALG_TOP_LOCK;                 /* (the first on the ALGORITHM knob: cf_ui.c) */
     cfg->quantize = CF_Q_ON;
     cfg->tonic = 0;
     cfg->scale = CF_SC_MAJOR;
