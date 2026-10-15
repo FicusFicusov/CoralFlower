@@ -10,10 +10,13 @@
  * voices are paired by pitch (cf_match: lowest with lowest, common tones stay), a chord that grows starts its extra
  * voices out of the nearest old note, one that shrinks lets the extra voices go. With RETRIG Wait a chord button under
  * held keys changes nothing that sounds (cf_chord_t.keep): the next root key takes it; Move: it moves the voices too
- * (the tones it adds start); Strike: the new notes strike.
+ * (the tones it adds start); Strike (Notes on the screen): the notes that change strike (with a Glide time: out of
+ * the old ones); Chord: the whole new chord strikes, the shared tones too,
+ * each note gliding from the last chord's.
  * Included after voice.c, fx.c, usb.c, cf_theory.c, cf_chord.c (coralflower.c, the emulator's unit). */
 
-enum { CF_RT_WAIT = 0, CF_RT_STRIKE = 1, CF_RT_MOVE = 2, CF_NRT };   /* RETRIG (stored: 0 and 1 were Off and On) */
+enum { CF_RT_WAIT = 0, CF_RT_STRIKE = 1, CF_RT_MOVE = 2, CF_RT_CHORD = 3, CF_NRT };   /* RETRIG (stored: 0 and 1
+                                                                                    * were Off and On) */
 
 typedef struct {                /* the arpeggiator's settings (ARP; cf_arp.c) */
     uint8_t mode;               /* CF_ARP_* */
@@ -141,6 +144,19 @@ static void cfp_bass_mono(void)
     }
 }
 
+/* RETRIG Chord / Notes: the notes a strike replaces fade over the next block (as a stolen voice, voice.c stage 4)
+ * instead of ringing out their release under the new ones: a tail at the old pitch hid the glide (the owner,
+ * 2026-10-15: "the glide does not work in this mode") */
+static void cfp_fade_released(uint32_t part)
+{
+    uint32_t i;
+    for (i = 0; i < NVOICE; i++) {
+        voice_t *v = &trk[part].v[i];
+        if (v->active && !v->gate && v->stage != 4u)
+            v->stage = 4;
+    }
+}
+
 /* part's notes old[n] -> new[m]: restart, keep the shared ones, or glide */
 static void cfp_change(uint32_t part, uint8_t *old, uint8_t *pn, const uint8_t *nw, int m, int mode)
 {
@@ -148,14 +164,20 @@ static void cfp_change(uint32_t part, uint8_t *old, uint8_t *pn, const uint8_t *
     uint32_t vel = cfp_cfg.vel, ticks = cfp_ticks();
     if (part && m)                                   /* the tails of bass notes let go before */
         cfp_bass_mono();
-    if (!m || mode == 0 || mode == 3) {             /* silence, or a fresh strike: everything restarts */
-        uint8_t *prev = part ? cfp.lastb : cfp.last;
+    if (!m || mode == 0 || mode == 3 || mode == 4) {   /* silence, or a fresh strike: everything restarts */
+        uint8_t *prev = part ? cfp.lastb : cfp.last, was[CF_MAX_NOTES];
         int np = part ? cfp.nlb : cfp.nl;
+        if (mode == 4) {                             /* RETRIG Chord: the whole chord strikes, out of the one sounding */
+            for (i = 0; i < n; i++)
+                was[i] = old[i];
+            prev = was;
+            np = n;
+        }
         for (i = 0; i < n; i++)
             cfp_off(part, old[i]);
-        if (part && m)                               /* the old bass notes just let go: they too */
-            cfp_bass_mono();
-        if (m && mode == 3 && np && ticks) {        /* Always: the new notes come out of the last chord's */
+        if ((part && m) || (mode == 4 && m && ticks))   /* the old notes just let go: they too (Chord: gliding) */
+            cfp_fade_released(part);
+        if (m && (mode == 3 || mode == 4) && np && ticks) {   /* Always, Chord: the new notes come out of the last chord's */
             uint8_t pi[24], qj[24], done[CF_MAX_NOTES] = {0};
             int k = cf_match(prev, np, nw, m, pi, qj), x;
             for (x = 0; x < k; x++)
@@ -173,7 +195,8 @@ static void cfp_change(uint32_t part, uint8_t *old, uint8_t *pn, const uint8_t *
             for (i = 0; i < m; i++)
                 cfp_on(part, nw[i], vel);
         }
-    } else if (mode == 2 && n) {                    /* glide: the voices move (no Glide time: at once, RETRIG Off) */
+    } else if ((mode == 2 || mode == 5) && n) {     /* glide: the voices move (no Glide time: at once, RETRIG Off);
+                                                      * 5 (RETRIG Notes): the notes that change strike, gliding */
         uint8_t pi[24], qj[24], used_p[CF_MAX_NOTES] = {0}, used_q[CF_MAX_NOTES] = {0};
         uint8_t from[CF_MAX_NOTES];
         int k = cf_match(old, n, nw, m, pi, qj), x;
@@ -187,7 +210,14 @@ static void cfp_change(uint32_t part, uint8_t *old, uint8_t *pn, const uint8_t *
             int a = pi[x], b = qj[x];
             if (!used_p[a] && !used_q[b]) {          /* the first pairing of this old voice: it moves */
                 used_p[a] = used_q[b] = 1;
-                if (from[a] != nw[b]) {
+                if (from[a] != nw[b] && mode == 5) {    /* the old note fades, the new one strikes out of it */
+                    if (vv[a])
+                        vv[a]->gate = 0, vv[a]->stage = 4;
+                    else
+                        trk_note_off(&trk[part], from[a]);
+                    cfp_midi(0x80u, part ? cfp_cfg.ch_bass : cfp_cfg.ch_chord, from[a], 0);
+                    cfp_on_from(part, nw[b], vel, from[a], ticks);
+                } else if (from[a] != nw[b]) {
                     if (vv[a]) {
                         trk_retune(&trk[part], vv[a], nw[b], ticks);
                     } else {
@@ -289,6 +319,18 @@ static int cfp_holds(uint32_t part, uint32_t note)
     return 0;
 }
 
+/* the same notes (a key that changed nothing that sounds: a Lock button let go): no new strike */
+static int cfp_same(const uint8_t *a, int n, const uint8_t *b, int m)
+{
+    int i;
+    if (n != m)
+        return 0;
+    for (i = 0; i < n; i++)
+        if (!has(b, m, a[i]))
+            return 0;
+    return 1;
+}
+
 /* the parts follow the chord model. how: 0 a fresh strike (a root key went down), 1 a change under held keys */
 static void cfp_sync(int how)
 {
@@ -302,8 +344,14 @@ static void cfp_sync(int how)
     /* Always: a chord struck after a release glides from the last one, if that was within a few seconds */
     int always = cfp_cfg.glide_ms && cfp_cfg.glide_always && !cfp.n && m && cfp.nl &&
                  (uint32_t)(cf_now_ms - cfp.last_ms) < 4000u;
-    int mode = glide && !o->single ? 2 : always && !o->single ? 3 : how == 0 ? 0 : 1;
-    int bmode = glide && cfp.nb && mb ? 2 : always && !cfp.nb && mb && cfp.nlb ? 3 : how == 0 ? 0 : 1;
+    /* RETRIG Chord: a chord changed while one sounds strikes all its notes again, the shared ones too (the owner,
+     * 2026-10-15: the whole chord, not just the tones that change), each sliding from the last chord's at the Glide time */
+    int strike = cfp_cfg.retrig == CF_RT_CHORD && !cfp_same(cfp.note, cfp.n, o->note, m);
+    int notes = cfp_cfg.retrig == CF_RT_STRIKE ? 5 : 2;   /* RETRIG Notes: with a Glide time, the changed notes strike */
+    int mode = strike && cfp.n && m && !o->single ? 4 : glide && !o->single ? notes : always && !o->single ? 3 :
+               how == 0 ? 0 : 1;
+    int bmode = strike && cfp.nb && mb ? 4 : glide && cfp.nb && mb ? notes : always && !cfp.nb && mb && cfp.nlb ? 3 :
+                how == 0 ? 0 : 1;
     if (m && (!cfp.n || how == 0))
         cfp.onset++;
 #ifdef CF_TRACE                                      /* (the headless runner, -DCF_TRACE: every change) */

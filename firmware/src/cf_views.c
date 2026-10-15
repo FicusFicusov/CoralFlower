@@ -282,11 +282,12 @@ static void view_midi(int x0)
 /* ----------------------------------------------------- GLOBAL > Play --- */
 /* two chords on a little piano roll, the way the settings make them sound: GLIDE (Legato: the second pressed while the
  * first is held, the voices slide; Always: they slide even after a release), the loudness under them (VELOCITY its
- * height; RETRIG: a held change strikes again or not), and the keys they light (LIGHTS: the scale too, or only the
+ * height; RETRIG: a held change strikes again or not; a tick: a note that starts again, so Notes leaves the shared C
+ * alone and Chord strikes it too), and the keys they light (LIGHTS: the scale too, or only the
  * keys played) */
 static uint8_t cv_play_mark(int n)               /* (draw_keyline's marks: the second chord; the scale, if lit) */
 {
-    static const uint8_t B[3] = {65, 69, 72};
+    static const uint8_t B[3] = {60, 65, 69};
     int i, pc = (n - (int)cs.chord.tonic + 120) % 12, sc = 0, sz = cf_scale_size(cs.chord.scale);
     for (i = 0; i < 3; i++)
         if (n == B[i])
@@ -299,7 +300,7 @@ static uint8_t cv_play_mark(int n)               /* (draw_keyline's marks: the s
 }
 static void view_play(int x0)
 {
-    static const int8_t A[3] = {0, 4, 7}, B[3] = {5, 9, 12};
+    static const int8_t A[3] = {0, 4, 7}, B[3] = {0, 5, 9};   /* C E G -> C F A: the C is shared */
     int xl = x0 + 20, xr = x0 + 196, mid = x0 + 104, gap = cs.glide_always ? 14 : 0, gl, i, x;
     int yb = VIEW_Y + 34, ye = VIEW_Y + 60, eh = 20, pk = eh * cs.vel / 127, sus = pk * 5 / 8;
     int a1 = mid - gap / 2, b0 = mid + gap / 2;
@@ -317,6 +318,9 @@ static void view_play(int x0)
         } else {
             fb_rect(b0, ybb, xr - b0, 2, C_ACC(1));
         }
+        if (gap || cs.retrig == CF_RT_CHORD || (cs.retrig == CF_RT_STRIKE && A[i] != B[i]))
+            fb_rect(b0 - 2, gl ? ya : ybb, 2, 2, FL_BG),   /* this note starts again (gliding: from the old */
+            fb_rect(b0, (gl ? ya : ybb) - 2, 2, 6, C_ACC(0));   /* pitch): a break, then a tick */
     }
     fb_text_halo(&CF_FONT_UI, xl, VIEW_Y - 4, gl ? (cs.glide_always ? "glides always" : "glides when held") :
                  "glide time: off", FL_INK3, FL_BG, 1);
@@ -330,7 +334,7 @@ static void view_play(int x0)
         fb_line(b0, ye, b0 + 4, ye - pk, C_ACC(1));
         fb_line(b0 + 4, ye - pk, b0 + 16, ye - sus, C_ACC(1));
         fb_hline(b0 + 16, ye - sus, xr - b0 - 16, C_ACC(1));
-    } else if (cs.retrig == CF_RT_STRIKE) {       /* held: struck again */
+    } else if (cs.retrig == CF_RT_STRIKE || cs.retrig == CF_RT_CHORD) {   /* held: struck again */
         fb_hline(xl + 16, ye - sus, mid - xl - 16, C_ACC(1));
         fb_line(mid, ye - sus, mid + 3, ye - pk, C_ACC(0));
         fb_line(mid + 3, ye - pk, mid + 14, ye - sus, C_ACC(1));

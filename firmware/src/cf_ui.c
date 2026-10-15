@@ -350,7 +350,7 @@ static void ui_knob_info(int k, cf_knob_t *o)
             }
             if (k == 2) { kfmt(o->name, 12, "LIGHTS"); kfmt(o->val, 14, cs.lights ? "Scale" : "Played"); }
             if (k == 3) {
-                static const char *const RT[CF_NRT] = {"Wait", "Strike", "Move"};
+                static const char *const RT[CF_NRT] = {"Wait", "Notes", "Slide", "Chord"};   /* (stored: STRIKE, MOVE) */
                 kfmt(o->name, 12, "RETRIG");
                 kfmt(o->val, 14, RT[cs.retrig % CF_NRT]);
             }
@@ -552,7 +552,7 @@ static void ui_knob_turn(int k, int d)
                 cs.lights = (uint8_t)(d > 0);
             if (k == 3)
                 {                        /* Wait, Move, Strike: from holding the chord to striking it */
-                    static const uint8_t ORD[CF_NRT] = {CF_RT_WAIT, CF_RT_MOVE, CF_RT_STRIKE};
+                    static const uint8_t ORD[CF_NRT] = {CF_RT_WAIT, CF_RT_MOVE, CF_RT_STRIKE, CF_RT_CHORD};
                     int i = 0;
                     while (i < CF_NRT - 1 && ORD[i] != cs.retrig)
                         i++;

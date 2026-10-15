@@ -69,11 +69,13 @@ Milestone 1 (skeleton) works in the emulator:
 - ENV shows what is heard: times in ms and s (FM6: the engine's own envelope code run on C4), the sustain in %.
   ENV "chord + bass" links the parts: the bass follows the chord's envelope on every turn and sound change.
 - The bass part is monophonic: a new bass note cuts the old one's release tail (cf_play.c cfp_bass_mono).
-- RETRIG (GLO > Play, three ways, the owner's). Wait (the default): with held keys a chord button changes nothing that
+- RETRIG (GLO > Play, four ways, the owner's; on the screen Wait, Slide, Notes, Chord: Move shows as Slide, Strike as
+  Notes since 2026-10-15). Wait (the default): with held keys a chord button changes nothing that
   sounds, in every algorithm (only its light, and Lock's latch); the next root key takes it (cf_chord_t.keep).
   Move (the behaviour before Wait, kept at the owner's wish): a button moves the sounding voices to the new chord
   with no new attack, only the tones it adds start. In both, another root under held ones moves the voices (at the
-  Glide time, 0: at once). Strike: a change strikes its new notes (the first behaviour).
+  Glide time, 0: at once). Strike: a change strikes its new notes (the first behaviour). Chord (2026-10-15, the owner): a change strikes the whole
+  new chord, the shared tones too, and with a Glide time each note slides from the last chord's.
 - Keys pressed at once: what changed in one scan goes as releases, then chord buttons, then roots (cf_ui_pump; in key
   order a root struck with the old buttons and the last chord slipped in). A button pressed or let go within 50 ms
   of a root going down still makes that root's chord, in Wait too (cf_play.c CFP_GATHER_MS).

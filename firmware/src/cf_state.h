@@ -56,7 +56,8 @@ typedef struct {
     uint8_t retrig;              /* a chord changed under held keys (GLO > Play > RETRIG): CF_RT_WAIT a chord button
                                   * there waits for the next root key, another root moves the sounding voices with no
                                   * new attack; CF_RT_MOVE a button moves them too, only the tones a chord adds start
-                                  * (the behaviour before WAIT); CF_RT_STRIKE the new notes strike */
+                                  * (the behaviour before WAIT); CF_RT_STRIKE the new notes strike; CF_RT_CHORD
+                                  * the whole new chord strikes, the shared tones too, gliding from the last chord */
     cf_arp_t arp;                /* the arpeggiator's settings (ARP; on / off is not kept: off at power-on) */
     cf_loop_t loop;              /* the looper's settings (LOOPER; the loop itself: SAVE > Loop, OBJ_CFLOOP) */
     uint8_t clock_in;            /* GLO > MIDI > CLOCK IN: MIDI clock's pulses run the beat, start / stop the loop */
