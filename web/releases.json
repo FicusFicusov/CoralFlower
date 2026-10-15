@@ -1,0 +1,17 @@
+{
+ "releases": [
+  {
+   "version": "0.1",
+   "tag": "v0.1",
+   "sha256": "2da6ccdb48101bd7a36284f67a12a31bc58bdebf2cbc9b81ca3f82290a52500b",
+   "pkg": "coralflower-0.1.fwsc",
+   "date": "2026-10-15",
+   "title": "The first release",
+   "notes": [
+    "The lower keys play the notes of your scale; hold an upper key, and each note becomes a chord.",
+    "A bass part, an arpeggiator with a strum, a looper and about 60 VA and FM sounds.",
+    "A flower (Top layout) or a coral (Side layout) grows from every chord."
+   ]
+  }
+ ]
+}
