@@ -32,7 +32,9 @@ are summarised at the end.
    LED feedback, boot splash. Each screen gets its own plant "lens".
 4. **Sound.** Curated FM6 and VA presets; the S1 engine and converter; FX chain matching the stock FM-1 set.
 5. **Ship.** Device build on CI, the web installer page, the emulator on GitHub Pages, README and manual,
-   publishing under the owner's new GitHub account.
+   publishing under the owner's new GitHub account. The site (2026-10-15): one page with the installer at `/`, the
+   emulator at `/play/`, `/install/` forwarding to `/#install`; a shared design system (`web/site.css`); built by
+   `tools/make_site.sh`. Its structure, design system and QA report: `docs/site/`.
 
 ## Risks to verify on a real unit
 

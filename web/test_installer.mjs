@@ -2,13 +2,14 @@
 // Copyright (C) 2026 ChoralRoot FM-1 contributors (a fork of Felucca)
 // Copyright (C) 2026 CoralFlower contributors
 //
-// Node checks of CoralFlower's installer page, web/install/index.html (no browser, no hardware), after ChoralRoot's
-// web/test_installer.mjs. Run from the repo root:   node web/test_installer.mjs
+// Node checks of CoralFlower's installer, on the site's first page web/index.html (no browser, no hardware), after
+// ChoralRoot's web/test_installer.mjs. Run from the repo root:   node web/test_installer.mjs
 // - the classification (fm1ota.js classifyFirmware): ChoralRoot's table unchanged, CoralFlower over CoralFlower allowed;
 //   tools/fm1_install.py classify_firmware gives the same answers (when python3 is there); fm1backup.js backupFamily
 // - the page's shape: one module script that imports fm1pkg.js, fm1ota.js and fm1backup.js from its own folder (every
-//   name it imports is exported there), the font one level up, the nav, the emulator page's colour tokens, the Support
-//   button, card, dialog and script copied unchanged from tools/emu/web/index.html, no ChoralRoot-only parts
+//   name it imports is exported there), nothing from elsewhere; the look from site.css alone (no <style>, no colour in
+//   the markup), shared with the emulator page tools/emu/web/index.html, which has the same header, Support button,
+//   card, dialog and script; web/install/index.html forwards to /#install; no ChoralRoot-only parts
 // - the texts: every key the script names, and every error code fm1ota.js throws, has an English text
 // - the page itself (its module script with the three libraries inlined, as a browser links them) against a DOM stub and
 //   a simulated FM-1: no Web MIDI; no releases.json (a file only); the file check (a well-formed FM-1_930 package made
@@ -32,7 +33,9 @@ const eq = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 const HERE = new URL(".", import.meta.url).pathname;
 const ROOT = join(HERE, "..");
 const count = (s, sub) => s.split(sub).length - 1;
-const html = readFileSync(join(HERE, "install/index.html"), "utf8");
+const html = readFileSync(join(HERE, "index.html"), "utf8");
+const css = readFileSync(join(HERE, "site.css"), "utf8");
+const fwd = readFileSync(join(HERE, "install/index.html"), "utf8");
 const emu = readFileSync(join(ROOT, "tools/emu/web/index.html"), "utf8");
 const ota = readFileSync(join(HERE, "fm1ota.js"), "utf8");
 const sha256 = async (b) => Buffer.from(await crypto.subtle.digest("SHA-256", b)).toString("hex");
@@ -89,10 +92,10 @@ const GUARD_CASES = [                            // ChoralRoot's tests/install_t
 /* ------------------------------------------------------------- (b) the shape --- */
 const MOD_OPEN = '<script type="module">';
 const modSrc = html.slice(html.indexOf(MOD_OPEN) + MOD_OPEN.length, html.indexOf("</script>", html.indexOf(MOD_OPEN)));
-const links = html.match(/<link\s[^>]*>/gi) || [];   // only the site's own icons (no stylesheet, nothing from elsewhere)
-ok(count(html, MOD_OPEN) === 1 && count(html, "<script") === 2 && !/<script[^>]*\ssrc=/.test(html) &&
-   links.every((l) => /rel="(icon|apple-touch-icon)"/.test(l) && /href="\.\.\/[a-z0-9.-]+"/.test(l)),
-  "page: one module script and the Support script, no script or stylesheet from elsewhere (links: the icons, ../)");
+const links = html.match(/<link\s[^>]*>/gi) || [];   // the site's own files only: the icons, the font, site.css
+ok(count(html, MOD_OPEN) === 1 && count(html, "<script") === 4 && !/<script[^>]*\ssrc=/.test(html) &&
+   links.every((l) => /href="(?:[a-z0-9-]+\/)?[a-zA-Z0-9.-]+"/.test(l) && !/:\/\//.test(l)) && html.includes('<link rel="stylesheet" href="site.css">'),
+  "page: the module script, the Support script, the page script and the .js flag; links only to this site (site.css, the icons, the font)");
 const imports = [...modSrc.matchAll(/^import \{([^}]*)\} from "([^"]+)";$/gm)].map((m) => ({ names: m[1].split(",").map((s) => s.trim()).filter(Boolean), from: m[2] }));
 ok(imports.map((i) => i.from).join() === "./fm1pkg.js,./fm1ota.js,./fm1backup.js" && count(modSrc, "import ") === 3,
   "page: imports ./fm1pkg.js, ./fm1ota.js, ./fm1backup.js (the same folder, relative)");
@@ -101,33 +104,41 @@ const missingExports = imports.flatMap(({ names, from }) => {
   return names.filter((n) => !new RegExp(`^export (?:async )?(?:function|const|class|let) ${n}\\b`, "m").test(src)).map((n) => `${from}:${n}`);
 });
 ok(!missingExports.length, `page: every imported name is exported by its module${missingExports.length ? " (missing " + missingExports + ")" : ""}`);
-ok(html.includes('src: url("../DepartureMono-Regular.otf")') && html.includes("<title>CoralFlower Installer</title>") && /<html lang="en">/.test(html),
-  "page: the font from one level up, title, lang");
-ok(html.includes('<a href="../">Emulator</a>') && html.includes('<a href="./" aria-current="page">Install</a>') &&
-   html.includes('<span class="c">Coral</span><span class="f">Flower</span>') && html.includes('class="brand"'), "page: the CoralFlower name (rose + lime) with the nav Emulator / Install");
-const tokens = (h) => Object.fromEntries([...h.slice(h.indexOf(":root {"), h.indexOf("}", h.indexOf(":root {"))).matchAll(/(--[a-z0-9]+):\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()]));
-const emuTok = tokens(emu), pageTok = tokens(html);
-const tokDiff = Object.keys(emuTok).filter((k) => k !== "--lcd" && emuTok[k] !== pageTok[k]);
-ok(Object.keys(emuTok).length >= 14 && !tokDiff.length, `page: the emulator page's colour tokens on :root (${Object.keys(pageTok).join(" ")})${tokDiff.length ? "; differ: " + tokDiff : ""}`);
-ok(html.includes(emu.slice(emu.indexOf('<div class="ramp">'), emu.indexOf("</div>", emu.indexOf('<div class="ramp">')) + 6)), "page: the emulator page's colour ramp");
+ok(/<title>CoralFlower[^<]*FM-1<\/title>/.test(html) && /<html lang="en">/.test(html) && count(html, "<h1") === 1, "page: title, lang, one h1");
+for (const [f, at] of [["fonts/DepartureMono.woff", "Departure Mono"], ["fonts/InterTight-400.woff", "Inter Tight"], ["fonts/InterTight-600.woff", "Inter Tight"]])
+  ok(existsSync(join(HERE, f)) && css.includes(`url("${f}")`) && css.includes(`font-family: "${at}"`), `site.css: the font ${f}, from this site`);
+ok(html.includes('class="brand"') && html.includes('<span class="brand-a">Coral</span><span class="brand-b">Flower</span>') &&
+   ["#features", "#garden", "#safety", "#faq", "play/"].every((h) => html.includes(`<a href="${h}">`)) &&
+   ["../#features", "../#garden", "../#safety", "../#faq"].every((h) => emu.includes(`<a href="${h}">`)) && emu.includes('<a href="./" aria-current="page">Play</a>'),
+   "page: the CoralFlower name and the same five links on both pages (four sections, Play)");
+for (const [name, h] of [["web/index.html", html], ["tools/emu/web/index.html", emu]]) {
+  const markup = h.replace(/<script[\s\S]*?<\/script>/g, "");
+  const raw = (markup.match(/(?<!&)#[0-9a-fA-F]{3,8}\b/g) || []).filter((c) => !/^#110A02$/i.test(c));   // (theme-color: the bg token's value)
+  const styles = [...markup.matchAll(/style="([^"]*)"/g)].map((m) => m[1]).filter((v) => !/^--[a-z-]+: var\(--[a-z0-9-]+\)$/.test(v));
+  ok(!/<style/.test(h) && !raw.length && !styles.length && h.includes(name === "web/index.html" ? '<link rel="stylesheet" href="site.css">' : '<link rel="stylesheet" href="../site.css">'),
+    `${name}: its look from site.css only (no <style>, no raw colour, style= only sets a token)${raw.length ? " " + raw : ""}${styles.length ? " " + styles : ""}`);
+}
 {
   const cut = (s, a, b) => { const i = s.indexOf(a); return i < 0 ? null : s.slice(i, s.indexOf(b, i) + b.length); };
   const parts = [
-    ["the Support button", (s) => s.split("\n").find((l) => l.includes('id="supportBtn"')).trim()],
+    ["the colour ramp", (s) => cut(s, '<div class="ramp"', "</div>")],
+    ["the Support button", (s) => s.split("\n").find((l) => l.includes('id="supportBtn"')).trim().replace(/"\.\.\//g, '"')],
     ["the Support card", (s) => cut(s, '<section class="supportcard"', "</section>")],
     ["the dialog", (s) => cut(s, '<dialog id="donate"', "</dialog>")],
-    ["the Support CSS", (s) => cut(s, "/* support: a button in the header", ".opt.copied .go { color: var(--lime); }")],
     ["the Support script with WALLETS", (s) => cut(s, "<script>\n/* Support:", "</script>")],
   ];
-  for (const [what, f] of parts) { const a = f(emu); ok(a && a.length > 40 && html.includes(a), `page: ${what} copied unchanged from tools/emu/web/index.html`); }
+  for (const [what, f] of parts) { const a = f(emu); ok(a && a.length > 40 && html.includes(a), `page: ${what}, the same as on the emulator page`); }
 }
-ok(!html.includes("FM-1_920") && !/Quixotic7\/ChoralRootFM1/.test(html) && !/snd-|Sounds|manager\.html|Inter Tight|InterTight|\/\*(LIB|META)\*\//.test(html) &&
-   !/ChoralRoot (is|has|keeps)/.test(html), "page: no ChoralRoot-only parts (its identity, repo, Sounds, manager, font, placeholders)");
+ok(/http-equiv="refresh" content="0; url=\.\.\/#install"/.test(fwd) && fwd.includes('location.replace("../"') && fwd.includes('href="../#install"'),
+  "web/install/index.html: the old address forwards to /#install (a script, a refresh, a link)");
+ok(!html.includes("FM-1_920") && !/Quixotic7\/ChoralRootFM1/.test(html) && !/snd-|>Sounds<|manager\.html|\/\*(LIB|META)\*\//.test(html) &&
+   !/ChoralRoot (is|has|keeps)/.test(html), "page: no ChoralRoot-only parts (its identity, repo, Sounds, manager, placeholders)");
 ok(html.includes('href="https://www.m-vave.com/download"') && /at your own risk/.test(html) && /Chrome or Edge/.test(html) && /about a minute/.test(html) &&
-   /Do not unplug/.test(html) && /straight to the computer/.test(html) && /Keep this page open/.test(html),
+   /Don’t unplug/.test(html) && /straight to the computer/.test(html) && /Keep this page open/.test(html),
    "page: own risk, the official firmware from m-vave.com, Chrome or Edge, the cable, keep open, do not unplug, about a minute");
 ok(["pkg-file", "pkg-pick", "pkg", "go", "bar", "status", "backup-first", "force-box", "force-risk", "done", "interrupted", "check-go", "unit", "log",
-    "backup-go", "restore-file", "restore-go", "dark", "stock", "stock-file", "stock-go", "stock-recovery", "stock-status", "versions", "nomidi"]
+    "backup-go", "restore-file", "restore-go", "dark", "stock", "stock-file", "stock-go", "stock-recovery", "stock-status", "versions", "nomidi",
+    "backup-status", "pkg-own", "install", "hero-title"]
    .every((id) => html.includes(`id="${id}"`)) && html.includes('id="backup-first" type="checkbox" checked') && html.includes('id="force-box" hidden') &&
    html.includes('id="pkg-file" type="file" accept=".fwsc" hidden'), "page: the elements (the backup on by default, the override hidden, the .fwsc picker)");
 
@@ -404,7 +415,7 @@ async function readyPage(dev, opts = {}) {
   const dev = new FakeFM1(image);
   const p = runPage({ navigator: midiOf(dev) });
   await p.ready;
-  ok(!p.error && p.fetched.join() === "../firmware/releases.json" && p.$.versions.hidden && !p.$["rel-none"].hidden && p.$["rel-some"].hidden &&
+  ok(!p.error && p.fetched.join() === "firmware/releases.json" && p.$.versions.hidden && !p.$["rel-none"].hidden && p.$["rel-some"].hidden &&
      p.$.go.disabled && p.$.go.textContent === en.installNone && p.$.pkg.textContent === "", "no releases.json (404): the file only, Install off and named \"Install CoralFlower\"");
   ok(/releases\.json: HTTP 404/.test(p.$.log.textContent), "no releases.json: the log says so");
   await p.$["pkg-pick"].fire("click");
@@ -496,7 +507,7 @@ async function readyPage(dev, opts = {}) {
   ok(!p.confirms.length && !p.downloads.length && !dev.bkCmds.includes(65) && p.$["backup-note"].hidden === false && p.$["backup-note"].textContent === en.noBackupCf &&
      /backup: skipped/.test(p.$.log.textContent) && /running: FM-1_930 -> allow \(coralflower\)/.test(p.$.log.textContent),
      "early CoralFlower: the backup step skipped (no LIST, no question, no file), the note shown");
-  ok(/cannot make a backup/.test(en.noBackupCf) && /does not erase your sounds and settings/.test(en.noBackupCf) && /firmware area/.test(en.noBackupCf),
+  ok(/can’t make a backup/.test(en.noBackupCf) && /sounds and settings stay safe/.test(en.noBackupCf) && /only rewrites the firmware/.test(en.noBackupCf),
     "early CoralFlower: the note says the backup is impossible and why the update keeps the saved sounds");
   const again = await readyPage(new FakeFM1(image, { identity: "FM-1_930" }));
   again.$["backup-first"].checked = false;
@@ -573,8 +584,14 @@ async function readyPage(dev, opts = {}) {
   await p.$.go.fire("click");
   ok(p.$.status.textContent === en.lost && p.$.interrupted.hidden === false && p.$.done.hidden && p.$.bar.value > 0 && p.$.bar.value < 100 && !p.$.go.disabled,
     `interrupted: the cable lost while writing -> lost, the guidance shown, bar part way (${Math.round(p.$.bar.value)})`);
-  p.document.l.click({ target: { closest: (s) => (s === 'a[href="#dark"]' ? {} : null) } });
-  ok(p.$.dark.open === true, "interrupted: its link to \"Device not found\" opens that help");
+  // the page script (the last one): a link to a folded tool opens it. Run alone, against a small stub
+  const pageSrc = html.slice(html.lastIndexOf("<script>") + 8, html.lastIndexOf("</script>"));
+  const dark = { open: false, parentElement: null }; dark.closest = (sel) => (sel === "details" ? dark : null);
+  const doc = { l: {}, getElementById: (id) => (id === "dark" ? dark : { disabled: true, focus() {}, scrollIntoView() {} }),
+                querySelectorAll: () => [], querySelector: () => null, addEventListener(type, f) { this.l[type] = f; } };
+  vm.runInNewContext(pageSrc, { document: doc, location: { hash: "" }, addEventListener() {}, window: {}, decodeURIComponent });
+  doc.l.click({ target: { closest: (sel) => (sel === 'a[href^="#"]' ? { getAttribute: () => "#dark" } : null) } });
+  ok(html.includes('<a href="#dark">Device not found</a>') && dark.open === true, "interrupted: its link to \"Device not found\" opens that help (the page script)");
 }
 // errors map to their texts
 {
@@ -613,7 +630,7 @@ async function readyPage(dev, opts = {}) {
   ok(u.textContent === en.notfound && u.className === "unit bad", "check: no FM-1 -> notfound");
 }
 
-// the versions of ../firmware/releases.json: chips, the newest loaded and sha256-checked, a file still possible
+// the versions of firmware/releases.json: chips, the newest loaded and sha256-checked, a file still possible
 {
   const pkg01 = good2;
   const list = (sha02) => ({ releases: [
@@ -622,8 +639,8 @@ async function readyPage(dev, opts = {}) {
     { version: "0.0", date: "2026-10-01" },                      // (no sha256: never offered)
   ] });
   const await_sha01 = await sha256(pkg01);
-  const site = (sha02, files = { "../firmware/coralflower-0.2.fwsc": good, "../firmware/coralflower-0.1.fwsc": pkg01 }) => async (url) => {
-    if (url === "../firmware/releases.json") return { ok: true, status: 200, json: async () => list(sha02) };
+  const site = (sha02, files = { "firmware/coralflower-0.2.fwsc": good, "firmware/coralflower-0.1.fwsc": pkg01 }) => async (url) => {
+    if (url === "firmware/releases.json") return { ok: true, status: 200, json: async () => list(sha02) };
     const b = files[url];
     return b ? { ok: true, status: 200, arrayBuffer: async () => b.buffer.slice(b.byteOffset, b.byteOffset + b.length) } : notFound();
   };
@@ -636,8 +653,8 @@ async function readyPage(dev, opts = {}) {
      chips.includes("Newest") && chips.includes('data-ver="0.1" aria-pressed="false"') && !chips.includes('data-ver="0.0"'),
      "releases: two chips (the entry without a SHA-256 left out), the newest chosen");
   ok(p.$.pkg.textContent === en.pkgRelOk.replace("{version}", "0.2") && p.$.pkg.className === "pkg ok" && !p.$.go.disabled && p.$.go.textContent === "Install on your FM-1" && p.$.ver.textContent.startsWith("CoralFlower 0.2") &&
-     p.fetched.includes("../firmware/coralflower-0.2.fwsc"), "releases: the newest fetched from ../firmware/, sha256 and package checked, Install CoralFlower 0.2");
-  ok(p.$.notes.innerHTML.includes("Coral growth follows the chord.") && p.$.notes.innerHTML.includes('href="../firmware/coralflower-0.2.fwsc" download') &&
+     p.fetched.includes("firmware/coralflower-0.2.fwsc"), "releases: the newest fetched from firmware/, sha256 and package checked, Install CoralFlower 0.2");
+  ok(p.$.notes.innerHTML.includes("Coral growth follows the chord.") && p.$.notes.innerHTML.includes('href="firmware/coralflower-0.2.fwsc" download') &&
      p.$.notes.innerHTML.includes("2 November 2026"), "releases: the chosen version's notes, date and download link");
   await p.$.versions.fire("click", { target: { closest: () => ({ dataset: { ver: "0.1" }, disabled: false }) } });
   ok(p.$.ver.textContent.startsWith("CoralFlower 0.1") && p.$.versions.innerHTML.includes('data-ver="0.1" aria-pressed="true"') && p.$.pkg.className === "pkg ok",
@@ -659,6 +676,15 @@ async function readyPage(dev, opts = {}) {
   ok(p.$.versions.hidden && !p.$["rel-none"].hidden && p.$.go.disabled, "releases: a releases.json that is not JSON -> the file only");
 }
 
+// no Web MIDI and a hosted version: the version is named, its package is not downloaded
+{
+  const list = { releases: [{ version: "0.2", sha256: "a".repeat(64), date: "2026-10-15" }] };
+  const p = runPage({ navigator: {}, fetch: async (url) => (url === "firmware/releases.json" ? { ok: true, status: 200, json: async () => list } : notFound()) });
+  await p.ready;
+  ok(p.fetched.join() === "firmware/releases.json" && p.$.ver.textContent.startsWith("CoralFlower 0.2") && p.$.go.disabled && p.$.status.textContent === en.nomidi,
+    "no Web MIDI: the newest version named, its package not downloaded, Install off");
+}
+
 // Back up and Restore
 {
   const cf = backupSide("CoralFlower 0.1", CR_BACKUP_IDS, crData());
@@ -673,18 +699,18 @@ async function readyPage(dev, opts = {}) {
   await until(() => blobText);
   URL.createObjectURL = realCreate;
   const file = blobText && JSON.parse(blobText);
-  ok(p.downloads.length === 1 && /^coralflower-backup-/.test(p.downloads[0].name) && p.$.status.textContent.startsWith(en.backupSaved) && file && file.firmware === "CoralFlower 0.1" &&
+  ok(p.downloads.length === 1 && /^coralflower-backup-/.test(p.downloads[0].name) && p.$["backup-status"].textContent.startsWith(en.backupSaved) && file && file.firmware === "CoralFlower 0.1" &&
      file.objects.length === CR_BACKUP_IDS.length, "Back up: coralflower-backup-*.json with CoralFlower's objects");
   const blank = backupSide("CoralFlower 0.1", CR_BACKUP_IDS);
   dev.bk = () => blank;
   p.$["restore-file"].files = [{ text: async () => "{\"format\":\"other\"}" }];
   await p.$["restore-file"].fire("change");
-  ok(p.$.status.textContent.startsWith(en.badBackup) && p.$["restore-go"].disabled, "Restore: a file that is not a backup is refused");
+  ok(p.$["backup-status"].textContent.startsWith(en.badBackup) && p.$["restore-go"].disabled && p.$.status.textContent === "", "Restore: a file that is not a backup is refused, said in its own tool");
   p.$["restore-file"].files = [{ text: async () => blobText }];
   await p.$["restore-file"].fire("change");
   await p.$["restore-go"].fire("click");
   ok(p.confirms.at(-1) === en.restoreConfirm && blank.log.at(-1) === 1 && crData().every(([id, v]) => blank.objs.get(id)?.every((b, i) => b === v[i])) &&
-     blank.restarts === 1 && p.$.status.textContent.startsWith(en.restored), "Restore: confirmed, every object back, the settings last, RESTART (CoralFlower restarts)");
+     blank.restarts === 1 && p.$["backup-status"].textContent.startsWith(en.restored), "Restore: confirmed, every object back, the settings last, RESTART (CoralFlower restarts)");
 }
 
 // the return to the official V15 (validateStockPackage stands in for the real file, which is not in the repo)

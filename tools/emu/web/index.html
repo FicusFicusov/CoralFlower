@@ -1,198 +1,165 @@
 <!doctype html>
 <!-- SPDX-License-Identifier: GPL-3.0-only -->
+<!-- CoralFlower's emulator page, /play/ on the site: the real firmware in the browser (emu.js, keymap.js, worklet.js,
+     coralflower.wasm, all in this folder). The look is the site's: ../site.css (its tokens and components), the same
+     header, footer and Support dialog as the first page (web/index.html). tools/make_site.sh puts it in play/. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CoralFlower Emulator</title>
-<link rel="icon" href="favicon.svg" type="image/svg+xml">
-<link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png">
-<link rel="apple-touch-icon" href="apple-touch-icon.png">
-<meta name="description" content="CoralFlower, a chord-instrument firmware for the M-VAVE FM-1, running in your browser: the real firmware compiled to WebAssembly, with sound.">
-<style>
-@font-face { font-family: "Departure Mono"; src: url("DepartureMono-Regular.otf") format("opentype"); font-display: swap; }
-:root {
-  --ground: #110A02; --panel: #1A120B; --raise: #271B12; --line: #3A2B22;
-  --ink: #F1ECE0; --ink2: #A89A88; --ink3: #5E5048;
-  --rose: #E86879; --fire: #F9C62A; --orange: #F1750D; --lime: #D6E34C; --sea: #48E6D9; --orchid: #E6658B; --sky: #0D97D5;
-  --lcd: 480px;
-}
-:root[data-theme="light"] { --ground: #F1ECE0; --panel: #E6DED0; --raise: #D8CEBD; --line: #C9BCA8; --ink: #1A120B; --ink2: #5E5048; --ink3: #A89A88; }
-* { box-sizing: border-box; }
-html, body { margin: 0; background: var(--ground); color: var(--ink); }
-body { font: 15px/1.5 "Departure Mono", ui-monospace, SFMono-Regular, Menlo, monospace; }
-a { color: var(--sea); }
-.wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px 48px; }
-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 22px 0 10px; flex-wrap: wrap; }
-header p { margin-top: 6px; }
-h1 { margin: 0; font-size: clamp(26px, 4.6vw, 42px); line-height: 1; font-weight: 400; letter-spacing: 0.01em; }
-h1 .c { color: var(--rose); } h1 .f { color: var(--lime); }
-header p { margin: 0; color: var(--ink2); }
-.ramp { display: flex; height: 6px; margin: 4px 0 22px; }
-.ramp i { flex: 1; }
-.stage { display: flex; flex-direction: column; align-items: center; gap: 16px; }
-.lcdbox { background: #000; padding: 12px; border-radius: 10px; box-shadow: 0 0 0 2px var(--line), 0 12px 40px rgba(0,0,0,0.45); }
-#lcd { display: block; width: var(--lcd); height: var(--lcd); max-width: calc(100vw - 64px); max-height: calc(100vw - 64px);
-       image-rendering: pixelated; image-rendering: crisp-edges; background: #000; border-radius: 2px; }
-#gate { display: flex; align-items: stretch; width: calc(var(--lcd) + 24px); max-width: calc(100vw - 32px); background: var(--panel); border-radius: 8px; overflow: hidden; box-shadow: 0 0 0 2px var(--rose); }
-#gate[hidden] { display: none; }
-#gate p { margin: 0; padding: 12px 16px; color: var(--ink2); line-height: 1.35; }
-button, select { font: inherit; }
-.btn { border: 0; cursor: pointer; color: var(--ground); background: var(--ink); padding: 9px 14px; border-radius: 6px; }
-.btn:hover { background: var(--fire); }
-.btn:focus-visible, select:focus-visible { outline: 3px solid var(--fire); outline-offset: 2px; }
-#start { flex: none; background: var(--rose); color: var(--ground); font-size: 24px; padding: 12px 30px; border-radius: 0; }
-#start:hover { background: var(--fire); }
-.panelbox { position: relative; width: 100%; max-width: 1080px; }
-#panel { display: block; width: 100%; height: auto; touch-action: none; user-select: none; -webkit-user-select: none; }
-#mini { position: absolute; image-rendering: pixelated; pointer-events: none; }
-#panel text { font-family: "Departure Mono", ui-monospace, monospace; pointer-events: none; }
-#panel [data-c] { cursor: pointer; }
-.bar { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; justify-content: center; width: 100%; max-width: 1080px; }
-.bar [hidden] { display: none; }
-.bar label { color: var(--ink2); display: flex; gap: 6px; align-items: center; }
-select { background: var(--raise); color: var(--ink); border: 0; padding: 8px 10px; max-width: 220px; border-radius: 6px; }
-.meter { display: flex; align-items: center; gap: 8px; color: var(--ink2); }
-.meter b { display: block; width: 90px; height: 10px; background: var(--raise); position: relative; border-radius: 2px; overflow: hidden; }
-.meter b i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--lime); }
-#status { min-height: 1.5em; color: var(--ink2); text-align: center; }
-/* the legend: one card per kind of control, each a list of rows "what you press -> what it does on the FM-1";
- * keyboard keys are filled caps, mouse gestures outlined ones; the FM-1's own printed names bright, the rest dim */
-.legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; width: 100%; max-width: 1080px; margin-top: 8px; }
-.legend > div { padding: 12px 14px 14px; background: var(--panel); border-radius: 8px; border-left: 4px solid var(--c); }
-.legend h3 { margin: 0 0 10px; font-size: 13px; font-weight: 400; letter-spacing: 0.08em; text-transform: uppercase; color: var(--c); }
-.legend dl { display: grid; grid-template-columns: 150px 1fr; gap: 7px 14px; align-items: center; margin: 0; font-size: 14px; line-height: 1.3; }
-.legend dt { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; color: var(--ink3); }
-.legend dd { margin: 0; color: var(--ink2); }
-.legend dd b { font-weight: 400; color: var(--ink); }
-.legend hr { grid-column: 1 / -1; width: 100%; margin: 2px 0; border: 0; border-top: 1px solid var(--line); }
-kbd { font: 13px/1 "Departure Mono", ui-monospace, monospace; background: var(--raise); color: var(--ink); padding: 3px 6px; border-radius: 3px; min-width: 1.6em; text-align: center; }
-kbd.m { background: none; color: var(--ink2); box-shadow: inset 0 0 0 1px var(--line); }
-footer { margin-top: 24px; font-size: 13px; color: var(--ink3); text-align: center; }
-footer a { color: var(--ink2); }
-/* support: a button in the header, a card above the footer, a dialog with the wallets and the contacts */
-.support { display: inline-flex; align-items: center; gap: 8px; background: transparent; color: var(--rose); box-shadow: inset 0 0 0 1px var(--rose); }
-.support:hover { background: var(--rose); color: var(--ground); }
-.support svg { width: 14px; height: 14px; fill: currentColor; }
-.supportcard { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; width: 100%; max-width: 1080px; margin-top: 12px; padding: 14px 16px; background: var(--panel); border-radius: 8px; border-left: 4px solid var(--rose); }
-.supportcard > div { flex: 1 1 280px; }
-.supportcard b { display: block; font-weight: 400; color: var(--ink); }
-.supportcard span { display: block; margin-top: 2px; font-size: 14px; color: var(--ink2); }
-.supportcard .contacts { margin-top: 6px; }
-.supportcard .contacts a { color: var(--sea); }
-dialog#donate { width: min(440px, calc(100vw - 32px)); max-height: 88vh; overflow: auto; padding: 20px; color: var(--ink); background: var(--panel); border: 0; border-radius: 10px; box-shadow: 0 0 0 2px var(--rose), 0 24px 60px rgba(0,0,0,0.6); }
-dialog#donate::backdrop { background: rgba(10, 6, 2, 0.7); }
-dialog#donate h2 { margin: 0 0 6px; font-size: 20px; font-weight: 400; color: var(--rose); }
-dialog#donate h3 { margin: 18px 0 8px; font-size: 13px; font-weight: 400; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink3); }
-dialog#donate p { margin: 0 0 14px; font-size: 14px; line-height: 1.5; color: var(--ink2); }
-dialog#donate .note { margin: 10px 0 0; font-size: 12px; color: var(--ink3); }
-dialog#donate .x { position: absolute; top: 12px; right: 12px; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 6px; cursor: pointer; background: var(--raise); color: var(--ink2); font-size: 18px; }
-dialog#donate .x:hover { color: var(--ground); background: var(--rose); }
-.opt { display: flex; align-items: center; gap: 12px; width: 100%; margin-bottom: 8px; padding: 10px 12px; border: 0; border-radius: 8px; cursor: pointer; text-align: left; text-decoration: none; font: inherit; color: var(--ink); background: var(--raise); box-shadow: inset 0 0 0 1px var(--line); }
-.opt:hover { box-shadow: inset 0 0 0 1px var(--rose); }
-.opt:focus-visible { outline: 3px solid var(--fire); outline-offset: 2px; }
-.opt .coin svg, .opt .coin { display: block; width: 30px; height: 30px; flex: none; }
-.opt .glyph { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; flex: none; border-radius: 50%; background: var(--line); color: var(--ink); font-size: 15px; }
-.opt .tx { flex: 1; min-width: 0; }
-.opt .nm { display: block; font-size: 14px; }
-.opt .nm i { font-style: normal; color: var(--ink3); }
-.opt .ad { display: block; overflow: hidden; font-size: 12px; color: var(--ink3); white-space: nowrap; text-overflow: ellipsis; }
-.opt .go { flex: none; font-size: 12px; color: var(--ink3); }
-.opt.copied { box-shadow: inset 0 0 0 1px var(--lime); }
-.opt.copied .go { color: var(--lime); }
-@media (min-width: 1500px) and (min-height: 1250px) { :root { --lcd: 720px; } }
-@media (max-width: 560px) { header { padding-top: 16px; } }
-
-h1 .mark { width: 0.8em; height: 0.8em; margin-right: 0.3em; vertical-align: -0.06em; image-rendering: pixelated; }
-.top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-nav.site { display: flex; gap: 4px; padding: 3px; background: var(--panel); border-radius: 8px; }
-nav.site a { padding: 6px 12px; border-radius: 6px; color: var(--ink2); text-decoration: none; }
-nav.site a:hover { color: var(--ink); background: var(--raise); }
-nav.site a[aria-current="page"] { color: var(--ground); background: var(--ink); }
-nav.site a:focus-visible { outline: 3px solid var(--fire); outline-offset: 2px; }
-</style>
+<title>Play CoralFlower in your browser</title>
+<meta name="description" content="Play CoralFlower, chord firmware for the M-VAVE FM-1, in your browser. It’s the real firmware, compiled to WebAssembly, with sound.">
+<meta name="theme-color" content="#110A02">
+<meta property="og:title" content="Play CoralFlower in your browser">
+<meta property="og:description" content="The real CoralFlower firmware for the M-VAVE FM-1, running in your browser with sound.">
+<meta property="og:image" content="../images/home.png">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="preload" href="../fonts/DepartureMono.woff" as="font" type="font/woff" crossorigin>
+<link rel="stylesheet" href="../site.css">
+<script>document.documentElement.classList.add("js");</script>
 </head>
 <body>
-<div class="wrap">
-  <header>
-    <div>
-      <h1><img class="mark" src="favicon.svg" width="34" height="34" alt=""><span class="c">Coral</span><span class="f">Flower</span> emulator</h1>
-      <p>the FM-1 firmware, running right in your browser</p>
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="container site-header__row">
+    <a class="brand" href="../" aria-label="CoralFlower, home"><img src="../favicon.svg" width="28" height="28" alt=""><span><span class="brand-a">Coral</span><span class="brand-b">Flower</span></span></a>
+    <nav class="site-nav" aria-label="Sections">
+      <a href="../#features">Features</a>
+      <a href="../#garden">Garden</a>
+      <a href="../#safety">Safety</a>
+      <a href="../#faq">FAQ</a>
+      <a href="./" aria-current="page">Play</a>
+    </nav>
+    <button id="supportBtn" class="btn btn--support btn--sm" type="button" aria-haspopup="dialog" aria-label="Support CoralFlower"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13.35 20.13c-.76.69-1.93.69-2.69-.01l-.11-.1C5.3 15.27 1.87 12.16 2 8.28c.06-1.7.93-3.33 2.34-4.29 2.64-1.8 5.9-.96 7.66 1.1 1.76-2.06 5.02-2.91 7.66-1.1 1.41.96 2.28 2.59 2.34 4.29.14 3.88-3.3 6.99-8.55 11.76z"/></svg><span>Support</span></button>
+    <a class="btn btn--primary btn--sm" href="../#install">Install</a>
+  </div>
+  <div class="ramp" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+</header>
+
+<main id="main">
+  <section class="section scope-stage play" aria-labelledby="play-title">
+    <div class="container play__inner">
+      <div class="section-head section-head--center play__head">
+        <h1 class="display-2" id="play-title">Play it in your browser</h1>
+        <p class="lead">This is the real CoralFlower firmware, running in your browser with sound. Tap or click the keys, or use your computer keyboard.</p>
+      </div>
+      <div class="device play__screen">
+        <div class="device__bezel"><canvas id="lcd" width="240" height="240" aria-label="The FM-1 screen"></canvas></div>
+      </div>
+      <div class="play__gate" id="gate">
+        <button id="start" class="btn btn--primary btn--lg" type="button">Start</button>
+      </div>
+      <p class="play__status" id="status" role="status">Loading&hellip;</p>
+      <div class="play__panel">
+        <svg id="panel" viewBox="14 14 876 538" role="application" tabindex="0" aria-label="The FM-1 panel: keys, buttons and knobs. Esc leaves it." aria-describedby="keys-help"></svg>
+        <canvas id="mini" width="240" height="240" aria-hidden="true"></canvas>
+      </div>
+      <div class="actions play__bar">
+        <div class="meter" title="How much of each second the browser spends running the synth">Load <b><i id="load"></i></b> <span id="loadv">&ndash;</span></div>
+        <button id="midi" class="btn btn--secondary btn--sm" type="button">Enable MIDI</button>
+        <label class="play__select" hidden>Out <select id="mout"><option value="">none</option></select></label>
+        <label class="play__select" hidden>In <select id="min"><option value="">none</option></select></label>
+        <button id="reset" class="btn btn--secondary btn--sm" type="button" title="Forget the settings and sounds saved in this browser">Clear saved data</button>
+      </div>
     </div>
-    <div class="top">
-      <nav class="site" aria-label="CoralFlower pages">
-        <a href="./" aria-current="page">Emulator</a>
-        <a href="install/">Install</a>
-      </nav>
-    <button id="supportBtn" class="btn support" aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13.35 20.13c-.76.69-1.93.69-2.69-.01l-.11-.1C5.3 15.27 1.87 12.16 2 8.28c.06-1.7.93-3.33 2.34-4.29 2.64-1.8 5.9-.96 7.66 1.1 1.76-2.06 5.02-2.91 7.66-1.1 1.41.96 2.28 2.59 2.34 4.29.14 3.88-3.3 6.99-8.55 11.76z"/></svg>Support</button>
+  </section>
+
+  <section class="section" aria-labelledby="keys-title">
+    <div class="container">
+      <div class="section-head">
+        <h2 class="display-2" id="keys-title">Keys, buttons and knobs</h2>
+        <p class="lead" id="keys-help">Solid labels are computer keys; outlined labels are mouse actions. Click the panel first. Then Tab picks a knob and Esc returns to the page.</p>
+      </div>
+      <div class="grid grid--3 legend">
+        <section class="card" style="--legend: var(--c-rose-500)" aria-labelledby="lg-keys"><h3 class="legend__title" id="lg-keys">Keys</h3><dl>
+          <dt><kbd>Z</kbd>&ndash;<kbd>M</kbd></dt><dd>lower row <b>F3&ndash;E4</b></dd>
+          <dt><kbd>Q</kbd>&ndash;<kbd>O</kbd></dt><dd>lower row <b>F4&ndash;G5</b></dd>
+          <dt><kbd>S</kbd><kbd>D</kbd><kbd>F</kbd><kbd>H</kbd><kbd>J</kbd></dt><dd>upper row <b>F#3&ndash;D#4</b></dd>
+          <dt><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd><kbd>6</kbd><kbd>7</kbd><kbd>9</kbd></dt><dd>upper row <b>F#4&ndash;F#5</b></dd>
+          <dt class="legend__rule"><kbd class="m">click</kbd></dt><dd class="legend__rule">play</dd>
+          <dt><kbd class="m" title="or Ctrl-click; again to let go">right-click</kbd></dt><dd>hold</dd>
+        </dl></section>
+        <section class="card" style="--legend: var(--c-fire-400)" aria-labelledby="lg-btns"><h3 class="legend__title" id="lg-btns">Buttons</h3><dl>
+          <dt><kbd>F1</kbd><kbd>F2</kbd><kbd>F3</kbd></dt><dd><b>FX SEL ENV</b></dd>
+          <dt><kbd>F4</kbd><kbd>F5</kbd><kbd>F6</kbd></dt><dd><b>LFO EDIT GLO</b></dd>
+          <dt><kbd>Home</kbd></dt><dd><b>HOME</b></dd>
+          <dt><kbd>F8</kbd><kbd>F9</kbd><kbd>F10</kbd></dt><dd><b>SAVE ARP SEQ</b></dd>
+          <dt><kbd>Space</kbd><kbd>Enter</kbd></dt><dd><b>PLAY REC</b></dd>
+          <dt><kbd>-</kbd><kbd>=</kbd></dt><dd><b>OCT&minus; OCT+</b></dd>
+          <dt class="legend__rule"><kbd class="m">click</kbd></dt><dd class="legend__rule">press</dd>
+          <dt><kbd class="m" title="or Ctrl-click; again to let go">right-click</kbd></dt><dd>hold</dd>
+        </dl></section>
+        <section class="card" style="--legend: var(--c-sea-400)" aria-labelledby="lg-knobs"><h3 class="legend__title" id="lg-knobs">Knobs</h3><dl>
+          <dt><kbd>[</kbd><kbd>]</kbd></dt><dd><b>PRESETS</b></dd>
+          <dt><kbd>;</kbd><kbd>'</kbd></dt><dd><b>SELECT</b></dd>
+          <dt><kbd>,</kbd><kbd>.</kbd></dt><dd><b>ALGORITHM</b></dd>
+          <dt><kbd>Tab</kbd></dt><dd>pick a knob</dd>
+          <dt><kbd>&larr;</kbd><kbd>&rarr;</kbd><kbd>&darr;</kbd><kbd>&uarr;</kbd></dt><dd>turn it</dd>
+          <dt><kbd>Esc</kbd></dt><dd>leave the panel</dd>
+          <dt class="legend__rule"><kbd class="m">drag</kbd><kbd class="m">wheel</kbd></dt><dd class="legend__rule">turn</dd>
+        </dl></section>
+      </div>
+      <p class="caption play__note">Settings and sounds you save stay in this browser.</p>
     </div>
-  </header>
-  <div class="ramp"><i style="background:#F9C62A"></i><i style="background:#F6BA7A"></i><i style="background:#F1750D"></i><i style="background:#E86879"></i><i style="background:#962179"></i><i style="background:#0D97D5"></i><i style="background:#48E6D9"></i><i style="background:#22B572"></i><i style="background:#D6E34C"></i></div>
-  <main class="stage">
-    <div class="lcdbox">
-      <canvas id="lcd" width="240" height="240" aria-label="The FM-1 screen"></canvas>
+  </section>
+
+  <section class="section scope-accent final" aria-labelledby="final-title">
+    <div class="container final__inner">
+      <img class="pixel-icon pixel-icon--xl" src="../favicon.svg" width="96" height="96" alt="">
+      <h2 class="display-2" id="final-title">Want it on your FM-1?</h2>
+      <p class="lead">Installing is free and takes about a minute.</p>
+      <div class="actions final__actions">
+        <a class="btn btn--primary btn--lg" href="../#install">Install on your FM-1</a>
+      </div>
     </div>
-    <div id="gate">
-      <button id="start" class="btn">Start</button>
-      <p>The real firmware, in your browser. Press Start for sound, then play with the mouse or your computer keyboard.</p>
-    </div>
-    <div class="panelbox">
-      <svg id="panel" viewBox="14 14 876 538" role="application" aria-label="FM-1 panel: keys, buttons and knobs"></svg>
-      <canvas id="mini" width="240" height="240"></canvas>
-    </div>
-    <div id="status">Loading&hellip;</div>
-    <div class="bar">
-      <div class="meter" title="how much of each second the browser spends running the synth">LOAD <b><i id="load"></i></b> <span id="loadv">&ndash;</span></div>
-      <button id="midi" class="btn">Enable MIDI</button>
-      <label hidden>Out <select id="mout"><option value="">none</option></select></label>
-      <label hidden>In <select id="min"><option value="">none</option></select></label>
-      <button id="reset" class="btn" title="forget the settings and sounds saved in this browser">Reset flash</button>
-    </div>
-    <section class="legend" aria-label="The computer keyboard and the mouse">
-      <div style="--c: var(--rose)"><h3>Keys</h3><dl>
-        <dt><kbd>Z</kbd>&ndash;<kbd>M</kbd></dt><dd>lower <b>F3&ndash;E4</b></dd>
-        <dt><kbd>Q</kbd>&ndash;<kbd>O</kbd></dt><dd>lower <b>F4&ndash;G5</b></dd>
-        <dt><kbd>S</kbd><kbd>D</kbd><kbd>F</kbd><kbd>H</kbd><kbd>J</kbd></dt><dd>upper <b>F#3&ndash;D#4</b></dd>
-        <dt><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd><kbd>6</kbd><kbd>7</kbd><kbd>9</kbd></dt><dd>upper <b>F#4&ndash;F#5</b></dd>
-        <hr><dt><kbd class="m">click</kbd></dt><dd>play</dd>
-        <dt><kbd class="m" title="or Ctrl-click; again to let go">right-click</kbd></dt><dd>hold</dd>
-      </dl></div>
-      <div style="--c: var(--fire)"><h3>Buttons</h3><dl>
-        <dt><kbd>F1</kbd><kbd>F2</kbd><kbd>F3</kbd></dt><dd><b>FX SEL ENV</b></dd>
-        <dt><kbd>F4</kbd><kbd>F5</kbd><kbd>F6</kbd></dt><dd><b>LFO EDIT GLO</b></dd>
-        <dt><kbd>Home</kbd></dt><dd><b>HOME</b></dd>
-        <dt><kbd>F8</kbd><kbd>F9</kbd><kbd>F10</kbd></dt><dd><b>SAVE ARP SEQ</b></dd>
-        <dt><kbd>Space</kbd><kbd>Enter</kbd></dt><dd><b>PLAY REC</b></dd>
-        <dt><kbd>-</kbd><kbd>=</kbd></dt><dd><b>OCT&minus; OCT+</b></dd>
-        <hr><dt><kbd class="m">click</kbd></dt><dd>press</dd>
-        <dt><kbd class="m" title="or Ctrl-click; again to let go">right-click</kbd></dt><dd>hold</dd>
-      </dl></div>
-      <div style="--c: var(--sea)"><h3>Knobs</h3><dl>
-        <dt><kbd>[</kbd><kbd>]</kbd></dt><dd><b>PRESETS</b></dd>
-        <dt><kbd>;</kbd><kbd>'</kbd></dt><dd><b>SELECT</b></dd>
-        <dt><kbd>,</kbd><kbd>.</kbd></dt><dd><b>ALGORITHM</b></dd>
-        <dt><kbd>Tab</kbd></dt><dd>pick a knob</dd>
-        <dt><kbd>&larr;</kbd><kbd>&rarr;</kbd><kbd>&darr;</kbd><kbd>&uarr;</kbd></dt><dd>turn it</dd>
-        <hr><dt><kbd class="m">drag</kbd><kbd class="m">wheel</kbd></dt><dd>turn</dd>
-      </dl></div>
-    </section>
-    <section class="supportcard" aria-label="Support CoralFlower">
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="container">
+    <section class="supportcard" id="support" aria-label="Support CoralFlower">
       <div>
         <b>Support CoralFlower</b>
-        <span>Free, open source and ad-free. Donations fund new features and more free tools for musicians.</span>
-        <span class="contacts">Contact: <a href="https://t.me/ficusficusov" target="_blank" rel="noopener">Telegram channel</a> &middot; <a href="mailto:iambemoli@gmail.com">iambemoli@gmail.com</a></span>
+        <span>CoralFlower has no ads and no paid version. Donations pay for new features and more free tools for musicians.</span>
       </div>
-      <button id="supportBtn2" class="btn support" aria-haspopup="dialog">Support</button>
+      <button id="supportBtn2" class="btn btn--support" type="button" aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13.35 20.13c-.76.69-1.93.69-2.69-.01l-.11-.1C5.3 15.27 1.87 12.16 2 8.28c.06-1.7.93-3.33 2.34-4.29 2.64-1.8 5.9-.96 7.66 1.1 1.76-2.06 5.02-2.91 7.66-1.1 1.41.96 2.28 2.59 2.34 4.29.14 3.88-3.3 6.99-8.55 11.76z"/></svg>Support</button>
     </section>
-    <footer>GPL-3.0 &middot; CoralFlower, after ChoralRoot FM-1 and Felucca &middot; settings and sounds you save stay in this browser</footer>
-  </main>
-</div>
-<dialog id="donate" aria-labelledby="donateTitle">
+    <div class="site-footer__grid">
+      <div>
+        <p><a class="brand" href="../"><img src="../favicon.svg" width="28" height="28" alt=""><span><span class="brand-a">Coral</span><span class="brand-b">Flower</span></span></a></p>
+        <p>CoralFlower is built on ChoralRoot FM-1 by its contributors, <a href="https://github.com/hugelton/Felucca" target="_blank" rel="noopener">Felucca</a> by Leo Kuroshita (Hügelton Instruments) and the FM engine of Melodee. It is free software under the <a href="../firmware/LICENSE">GPL-3.0</a>, with no warranty. Fonts: Departure Mono and Inter Tight, under the SIL OFL 1.1.</p>
+        <p>M-VAVE and FM-1 are trademarks of their respective owners. Orchid is a product of Telepathic Instruments. CoralFlower is not affiliated with M-VAVE, Cuvave or Telepathic Instruments.</p>
+      </div>
+      <nav aria-labelledby="foot-site">
+        <h2 id="foot-site">Site</h2>
+        <ul>
+          <li><a href="./" aria-current="page">Play in the browser</a></li>
+          <li><a href="../#install">Install</a></li>
+          <li><a href="https://github.com/FicusFicusov/CoralFlower/releases" target="_blank" rel="noopener">Releases</a></li>
+          <li><a href="https://github.com/FicusFicusov/CoralFlower" target="_blank" rel="noopener">Source code</a></li>
+          <li><a href="https://github.com/FicusFicusov/CoralFlower/blob/main/LICENSING.md" target="_blank" rel="noopener">All licences</a></li>
+        </ul>
+      </nav>
+      <nav aria-labelledby="foot-contact">
+        <h2 id="foot-contact">Contact</h2>
+        <ul>
+          <li><a href="https://t.me/ficusficusov" target="_blank" rel="noopener">Telegram channel</a></li>
+          <li><a href="mailto:iambemoli@gmail.com">iambemoli@gmail.com</a></li>
+          <li><a href="https://github.com/FicusFicusov/CoralFlower/issues" target="_blank" rel="noopener">GitHub issues</a></li>
+        </ul>
+      </nav>
+    </div>
+  </div>
+</footer>
+
+<dialog id="donate" class="donate" aria-labelledby="donateTitle">
   <form method="dialog"><button class="x" aria-label="Close">&times;</button></form>
   <h2 id="donateTitle">Support CoralFlower</h2>
   <p>CoralFlower is free, open source and ad-free. A donation is not a payment: it funds new features and more free tools for musicians. Thank you for helping it grow.</p>
   <div id="wallets"></div>
-  <p class="note">Send only the coin shown, on the network shown; anything else will be lost. A crypto transfer is a voluntary gift: nothing is sold in return.</p>
+  <p class="fine">Send only the coin shown, on the network shown; anything else will be lost. A crypto transfer is a voluntary gift: nothing is sold in return.</p>
   <h3>Contact</h3>
   <a class="opt" href="https://t.me/ficusficusov" target="_blank" rel="noopener"><span class="glyph" aria-hidden="true">&#10148;</span><span class="tx"><span class="nm">Telegram channel</span><span class="ad">t.me/ficusficusov</span></span><span class="go">&#8599;</span></a>
   <a class="opt" href="mailto:iambemoli@gmail.com"><span class="glyph" aria-hidden="true">@</span><span class="tx"><span class="nm">Email</span><span class="ad">iambemoli@gmail.com</span></span><span class="go">&#8599;</span></a>

@@ -215,8 +215,14 @@
 
   // the computer keyboard (tools/emu/keymap.c)
   const byCode = Object.fromEntries(KEYMAP.map((m) => [m.code, m]));
+  // the page keeps the keys it needs, so the keyboard never gets stuck here: Tab moves through the page and picks a
+  // knob only while the panel has focus (Esc leaves the panel); Enter and Space press a focused link or button
   const typing = (e) => /^(SELECT|INPUT|TEXTAREA)$/.test(e.target.tagName) || e.metaKey || e.altKey ||
-                         !!(e.target.closest && e.target.closest("dialog"));   // (the Support dialog keeps its keys)
+                         !!(e.target.closest && e.target.closest("dialog")) ||   // (the Support dialog keeps its keys)
+                         (e.code === "Tab" && e.target !== svg) ||
+                         ((e.code === "Enter" || e.code === "Space") && !!(e.target.closest && e.target.closest("a, button, summary")));
+  svg.addEventListener("pointerdown", () => svg.focus({ preventScroll: true }));
+  svg.addEventListener("keydown", (e) => { if (e.code === "Escape") svg.blur(); });
   addEventListener("keydown", (e) => {
     const m = byCode[e.code];
     if (!m || typing(e) || (e.ctrlKey && m.kind !== "key")) return;
@@ -256,7 +262,7 @@
   };
   const flashLoad = () => Promise.race([   // (storage can be blocked or hang: then a fresh flash)
     kv("readonly", (s) => s.get("flash")).catch(() => null), new Promise((ok) => setTimeout(() => ok(null), 1500))]);
-  const flashSave = (buf) => kv("readwrite", (s) => s.put(buf, "flash")).catch((e) => status("Could not save the flash: " + e));
+  const flashSave = (buf) => kv("readwrite", (s) => s.put(buf, "flash")).catch((e) => status("Couldn’t save your data in this browser: " + e));
   $("reset").onclick = async () => {
     if (!confirm("Forget the settings, sounds and loops saved in this browser?")) return;
     await kv("readwrite", (s) => s.delete("flash")).catch(() => {});
@@ -288,7 +294,7 @@
       const ex = instance.exports;
       mem = ex.memory;
       if (ex._initialize) ex._initialize();
-      status("Reading the saved flash\u2026");
+      status("Loading your saved data\u2026");
       const f = await flashLoad();
       if (f && f.byteLength === ex.web_flash_size()) {
         new Uint8Array(mem.buffer, ex.web_flash_stage(), f.byteLength).set(new Uint8Array(f));
@@ -335,7 +341,9 @@
         $("loadv").textContent = m.load + "%";
       }
     } else if (m.type === "ready") {
+      const was = document.activeElement;
       $("gate").hidden = true;
+      if (!was || was === document.body || was === $("start")) svg.focus({ preventScroll: true });   // (keys and Tab: the panel's)
       sentK = sentB = -1;
       publish();
       status(m.version + " is running. The lower keys play roots; hold an upper key to change the chord type.");

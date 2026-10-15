@@ -1,12 +1,13 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-only
-# ChoralRoot FM-1 in the browser: the emulator's firmware side as a standalone WebAssembly module, and its page.
+# CoralFlower in the browser: the emulator's firmware side as a standalone WebAssembly module, and its page.
 #   [CR_VERSION=1.0] sh tools/emu/web/build_web.sh
-#   -> build/emu-web/{index.html, emu.js, keymap.js, worklet.js, choralroot.wasm}
+#   -> build/emu-web/{index.html, emu.js, keymap.js, worklet.js, coralflower.wasm}
+# The page takes its look from the site around it (../site.css): tools/make_site.sh OUT puts it in OUT/play/.
 # Needs emcc (the Emscripten SDK: ~/emsdk/emsdk_env.sh is sourced when emcc is not on the PATH) and the firmware's
 # generated headers (build/gen: the generate step of tools/build.py runs when they are missing, as build.sh does).
-# CR_VERSION: the version the firmware shows ("1.0" -> "ChoralRoot 1.0", as tools/build.py --release); default
-# firmware/src/choralroot.c's FELUCCA_VERSION.
+# CR_VERSION: the version the firmware shows ("1.0" -> "CoralFlower 1.0", as tools/build.py --release); default
+# firmware/src/coralflower.c's FELUCCA_VERSION.
 set -e
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
@@ -41,8 +42,7 @@ mkdir -p "$OUT"
 sh tests/hostcc.sh emcc -O2 -w -std=gnu11 -I$W/compat -Ibuild/gen -Ifirmware/src -DEMU_WEB "-DFELUCCA_VERSION=\"$VER\"" \
     --no-entry -sSTANDALONE_WASM -sFILESYSTEM=0 -sSTACK_SIZE=1048576 -sINITIAL_MEMORY=33554432 \
     -o "$OUT/coralflower.wasm" $W/emu_web.c
-cp $W/index.html $W/emu.js $W/keymap.js $W/worklet.js assets/fonts/DepartureMono-Regular.otf \
-   $W/favicon.svg $W/favicon-32.png $W/apple-touch-icon.png "$OUT/"
+cp $W/index.html $W/emu.js $W/keymap.js $W/worklet.js "$OUT/"
 # a new build is a new address: the browser cannot run a cached wasm or script after a rebuild (a plain reload did)
 STAMP=$(cat "$OUT/coralflower.wasm" $W/emu.js $W/keymap.js $W/worklet.js | shasum | cut -c1-10)
 # (sed -i.bak, then the .bak removed: the one form both BSD sed on macOS and GNU sed on the CI runner take)
