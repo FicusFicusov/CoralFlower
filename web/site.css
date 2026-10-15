@@ -57,9 +57,11 @@
   --color-brand-a: var(--c-rose-500);          /* "Coral" */
   --color-brand-b: var(--c-lime-400);          /* "Flower" */
   --color-backdrop: rgb(11 7 3 / 0.78);
-  --color-header: rgb(17 10 2 / 0.88);         /* the ground, a little see-through under the sticky header */
+  --color-header: var(--c-night-900);          /* the sticky header: solid (a see-through one needs a backdrop blur,
+                                                  which Chrome redoes on every frame of a scroll) */
   --glow-accent: rgb(232 104 121 / 0.34);
   --glow-plum: rgb(150 33 121 / 0.2);
+  --glow-fade: rgb(150 33 121 / 0.08);         /* the glow's soft edge (a gradient, not a blur filter) */
   color-scheme: dark;
 }
 /* the stage: the black of the FM-1's screen, for the sections built around a picture */
@@ -291,7 +293,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .btn--support:hover { color: var(--color-on-accent); background: var(--color-accent); }
 
 /* the header: the name, four sections, Support and Install */
-.site-header { position: sticky; top: 0; z-index: var(--z-header); background: var(--color-header); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
+.site-header { position: sticky; top: 0; z-index: var(--z-header); background: var(--color-header); }
 .site-header__row { display: flex; align-items: center; gap: var(--space-s); min-height: var(--header-h); }
 .brand { display: inline-flex; align-items: center; gap: var(--space-2xs); margin-right: auto; font: var(--fs-lg) / var(--lh-display) var(--font-display); color: var(--color-text); text-decoration: none; }
 .brand img { width: 28px; height: 28px; image-rendering: pixelated; }
@@ -335,7 +337,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 /* the device: the FM-1's screen, in a bezel, on a glow */
 .device { position: relative; }
-.device::before { content: ""; position: absolute; inset: -14% -10%; z-index: 0; pointer-events: none; background: radial-gradient(closest-side, var(--glow-accent), var(--glow-plum) 55%, transparent 80%); filter: blur(12px); }
+.device::before { content: ""; position: absolute; inset: -14% -10%; z-index: 0; pointer-events: none; background: radial-gradient(closest-side, var(--glow-accent), var(--glow-plum) 50%, var(--glow-fade) 72%, transparent 90%); }
 .device__bezel { position: relative; z-index: 1; padding: var(--space-s); border-radius: var(--radius-l); background: linear-gradient(180deg, var(--c-night-850), var(--c-night-950)); box-shadow: 0 0 0 2px var(--c-night-700), var(--shadow-m); }
 .device__bezel img, .device__bezel canvas { width: 100%; border-radius: var(--radius-s); image-rendering: pixelated; background: var(--c-night-950); }
 
