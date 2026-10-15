@@ -151,9 +151,10 @@ static uint32_t cf_pal[64];
 #ifndef CF_EMU
 /* The FM-1's panel lifts the dark tones and washes out soft colours: the palette, made on a monitor, came out pale and
  * grey there (the owner's photos, 2026-10-15). On the device every colour is recalculated once, here: its saturation
- * x1.6 (away from its own luma), then a gamma of 1.2 (darks a little deeper, white and black kept). The emulator
- * shows the palette as designed. CF_PANEL_PLAIN builds the device without it. (rc6 had x1.4: "much better",
- * and the owner asked for more.) */
+ * raised away from its own luma, the soft colours most (x1.65) and the saturated ones least (down to about x1.1, by
+ * the square of the colour's own saturation: a flat x1.6 made the blue flower far stronger than the rest), then a
+ * gamma of 1.2 (darks a little deeper, white and black kept). The emulator shows the palette as designed.
+ * CF_PANEL_PLAIN builds the device without it. (rc6 x1.4: "much better"; rc8 x1.6: "super", the blue too strong.) */
 static const uint8_t CF_PANEL_GAMMA[256] = {
       0,   0,   1,   1,   2,   2,   3,   3,   4,   5,   5,   6,   7,   7,   8,   9,
       9,  10,  11,  11,  12,  13,  13,  14,  15,  16,  16,  17,  18,  19,  20,  20,
@@ -175,10 +176,16 @@ static const uint8_t CF_PANEL_GAMMA[256] = {
 static uint32_t cf_panel_fix(uint32_t c)
 {
     int32_t ch[3] = {(int32_t)((c >> 16) & 255u), (int32_t)((c >> 8) & 255u), (int32_t)(c & 255u)};
-    int32_t y = (ch[0] * 77 + ch[1] * 150 + ch[2] * 29) >> 8, i, v;
+    int32_t y = (ch[0] * 77 + ch[1] * 150 + ch[2] * 29) >> 8, i, v, mx, mn, sat, k;
     uint32_t out = 0;
+    mx = ch[0] > ch[1] ? ch[0] : ch[1];
+    mx = mx > ch[2] ? mx : ch[2];
+    mn = ch[0] < ch[1] ? ch[0] : ch[1];
+    mn = mn < ch[2] ? mn : ch[2];
+    sat = mx ? (mx - mn) * 256 / mx : 0;          /* the colour's own saturation, 0..256 */
+    k = 422 - ((154 * ((sat * sat) >> 8)) >> 8);  /* x1.65 .. x1.05, in 1/256 */
     for (i = 0; i < 3; i++) {
-        v = y + (((ch[i] - y) * 410) >> 8);       /* x1.6 */
+        v = y + (((ch[i] - y) * k) >> 8);
         v = v < 0 ? 0 : v > 255 ? 255 : v;
         out = (out << 8) | CF_PANEL_GAMMA[v];
     }
