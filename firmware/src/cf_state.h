@@ -151,8 +151,9 @@ static uint32_t cf_pal[64];
 #ifndef CF_EMU
 /* The FM-1's panel lifts the dark tones and washes out soft colours: the palette, made on a monitor, came out pale and
  * grey there (the owner's photos, 2026-10-15). On the device every colour is recalculated once, here: its saturation
- * x1.4 (away from its own luma), then a gamma of 1.2 (darks a little deeper, white and black kept). The emulator
- * shows the palette as designed. CF_PANEL_PLAIN builds the device without it. */
+ * x1.6 (away from its own luma), then a gamma of 1.2 (darks a little deeper, white and black kept). The emulator
+ * shows the palette as designed. CF_PANEL_PLAIN builds the device without it. (rc6 had x1.4: "much better",
+ * and the owner asked for more.) */
 static const uint8_t CF_PANEL_GAMMA[256] = {
       0,   0,   1,   1,   2,   2,   3,   3,   4,   5,   5,   6,   7,   7,   8,   9,
       9,  10,  11,  11,  12,  13,  13,  14,  15,  16,  16,  17,  18,  19,  20,  20,
@@ -177,7 +178,7 @@ static uint32_t cf_panel_fix(uint32_t c)
     int32_t y = (ch[0] * 77 + ch[1] * 150 + ch[2] * 29) >> 8, i, v;
     uint32_t out = 0;
     for (i = 0; i < 3; i++) {
-        v = y + (((ch[i] - y) * 358) >> 8);       /* x1.4 */
+        v = y + (((ch[i] - y) * 410) >> 8);       /* x1.6 */
         v = v < 0 ? 0 : v > 255 ? 255 : v;
         out = (out << 8) | CF_PANEL_GAMMA[v];
     }
