@@ -105,7 +105,8 @@ static void lcd_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint1
  * CoralFlower: with the voltages and gamma left at the controller's defaults the FM-1 showed colours faded and
  * shifted to blue (the owner's photos, 2026-10-15). The block below is TFT_eSPI's ST7789 init for 240 x 240 IPS
  * panels (Bodmer/TFT_eSPI, TFT_Drivers/ST7789_Init.h): porch, gate, VCOM, power, frame rate, positive and negative
- * gamma. It is a trial on the device; CF_LCD_DEFAULTS builds without it. */
+ * gamma. Tried on the device (rc5): paler and greyer than the defaults, so it is off; CF_LCD_TUNED builds it in.
+ * The colours are now corrected in the palette (cf_state.h cf_panel_fix). */
 static const uint8_t LCD_SEQ[] = {
     0x01, 0,                     /* SWRESET */
     0x00, 1, 150,
@@ -113,7 +114,7 @@ static const uint8_t LCD_SEQ[] = {
     0x00, 1, 120,
     0x3A, 1, 0x55,               /* COLMOD: RGB565 */
     0x36, 1, 0x00,               /* MADCTL: top-left origin, RGB order */
-#ifndef CF_LCD_DEFAULTS
+#ifdef CF_LCD_TUNED
     0xB2, 5, 0x0C, 0x0C, 0x00, 0x33, 0x33,                   /* PORCTRL */
     0xB7, 1, 0x35,                                           /* GCTRL */
     0xBB, 1, 0x28,                                           /* VCOMS */

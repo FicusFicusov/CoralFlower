@@ -147,6 +147,44 @@ static flc_t fl_cv = {fl_px, FLW, FLH};
 #define C_ACC(s) ((uint8_t)(48 + (s)))
 #define C_SEC(s) ((uint8_t)(52 + (s)))
 static uint32_t cf_pal[64];
+
+#ifndef CF_EMU
+/* The FM-1's panel lifts the dark tones and washes out soft colours: the palette, made on a monitor, came out pale and
+ * grey there (the owner's photos, 2026-10-15). On the device every colour is recalculated once, here: its saturation
+ * x1.4 (away from its own luma), then a gamma of 1.2 (darks a little deeper, white and black kept). The emulator
+ * shows the palette as designed. CF_PANEL_PLAIN builds the device without it. */
+static const uint8_t CF_PANEL_GAMMA[256] = {
+      0,   0,   1,   1,   2,   2,   3,   3,   4,   5,   5,   6,   7,   7,   8,   9,
+      9,  10,  11,  11,  12,  13,  13,  14,  15,  16,  16,  17,  18,  19,  20,  20,
+     21,  22,  23,  24,  24,  25,  26,  27,  28,  28,  29,  30,  31,  32,  33,  34,
+     34,  35,  36,  37,  38,  39,  40,  40,  41,  42,  43,  44,  45,  46,  47,  48,
+     49,  49,  50,  51,  52,  53,  54,  55,  56,  57,  58,  59,  60,  61,  62,  62,
+     63,  64,  65,  66,  67,  68,  69,  70,  71,  72,  73,  74,  75,  76,  77,  78,
+     79,  80,  81,  82,  83,  84,  85,  86,  87,  88,  89,  90,  91,  92,  93,  94,
+     95,  96,  97,  98,  99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110,
+    112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127,
+    128, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 144, 145,
+    146, 147, 148, 149, 150, 151, 152, 153, 155, 156, 157, 158, 159, 160, 161, 162,
+    163, 165, 166, 167, 168, 169, 170, 171, 172, 173, 175, 176, 177, 178, 179, 180,
+    181, 183, 184, 185, 186, 187, 188, 189, 191, 192, 193, 194, 195, 196, 197, 199,
+    200, 201, 202, 203, 204, 205, 207, 208, 209, 210, 211, 212, 214, 215, 216, 217,
+    218, 219, 221, 222, 223, 224, 225, 226, 228, 229, 230, 231, 232, 234, 235, 236,
+    237, 238, 239, 241, 242, 243, 244, 245, 247, 248, 249, 250, 251, 253, 254, 255,
+};
+static uint32_t cf_panel_fix(uint32_t c)
+{
+    int32_t ch[3] = {(int32_t)((c >> 16) & 255u), (int32_t)((c >> 8) & 255u), (int32_t)(c & 255u)};
+    int32_t y = (ch[0] * 77 + ch[1] * 150 + ch[2] * 29) >> 8, i, v;
+    uint32_t out = 0;
+    for (i = 0; i < 3; i++) {
+        v = y + (((ch[i] - y) * 358) >> 8);       /* x1.4 */
+        v = v < 0 ? 0 : v > 255 ? 255 : v;
+        out = (out << 8) | CF_PANEL_GAMMA[v];
+    }
+    return out;
+}
+#endif
+
 static void cf_palette_build(void)
 {
     uint32_t i;
@@ -159,5 +197,9 @@ static void cf_palette_build(void)
     }
     for (i = 0; i < 8u; i++)
         cf_pal[56 + i] = fl_back_rgb[i];
+#if !defined CF_EMU && !defined CF_PANEL_PLAIN
+    for (i = 0; i < 64u; i++)
+        cf_pal[i] = cf_panel_fix(cf_pal[i]);
+#endif
     fb_palette(cf_pal, 64);
 }
