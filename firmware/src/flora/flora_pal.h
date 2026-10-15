@@ -1,4 +1,5 @@
-/* CoralFlower palette: ten four-step ramps after the "TLP" 31-colour pixel palette, on a warm near-black.
+/* CoralFlower palette: ten four-step ramps after the "TLP" 31-colour pixel palette, on black. (The background was a
+ * warm near-black, 0x110A02: in RGB565 it is (16, 8, 0), no blue at all, and the FM-1's panel showed it olive.)
  *
  * Every pixel the flora engine and the UI draw is an index into this table; the platform turns the
  * indices into RGB565 once per frame (fl_pal_rgb). A ramp runs from light (step 0) to dark (step 3).
@@ -41,7 +42,7 @@ enum {
 
 /* 0xRRGGBB */
 static const uint32_t fl_pal_rgb[FL_PAL_SIZE] = {
-    0x110A02, 0x1A120B, 0x271B12, 0x3A2B22, 0xF1ECE0, 0xA89A88, 0x5E5048, 0x050200,
+    0x000000, 0x1A120B, 0x271B12, 0x3A2B22, 0xF1ECE0, 0xA89A88, 0x5E5048, 0x000000,
     0xF9C62A, 0xF1750D, 0xB1301B, 0x6C0E26,   /* FIRE */
     0xF6BA7A, 0xDE6E50, 0x8D3E32, 0x46201E,   /* PEACH */
     0xF6BA7A, 0xCA7535, 0x893E36, 0x46201E,   /* COPPER */

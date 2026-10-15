@@ -1192,10 +1192,8 @@ static void cf_ui_init(void)
     if (cfs_loaded) {                            /* the sounds the parts had before the power-off */
         cf_snd_load_index(CF_PART_CHORD, cs.snd[0]);
         cf_snd_load_index(CF_PART_BASS, cs.snd[1]);
-    } else {                                     /* a new unit: a warm keys sound for the chords, a round bass */
-#if FELUCCA_VA
-        if (!cf_snd_find(CF_PART_CHORD, ENGI_VA, "POLY KEYS"))
-#endif
+    } else {                                     /* a new unit: FM BRASS for the chords (the owner's pick), a round bass */
+        if (!cf_snd_find(CF_PART_CHORD, ENGI_FM6, "BRASS"))
             cf_snd_load_index(CF_PART_CHORD, 1);
 #if FELUCCA_VA
         if (!cf_snd_find(CF_PART_BASS, ENGI_VA, "DEEP SUB"))
