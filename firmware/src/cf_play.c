@@ -110,10 +110,12 @@ static void cfp_move(uint32_t part, uint32_t from, uint32_t to, uint32_t ticks)
     uint32_t ch = part ? cfp_cfg.ch_bass : cfp_cfg.ch_chord;
     if (from == to)
         return;
-    if (v)
+    if (v) {
         trk_retune(&trk[part], v, to, ticks);
-    else
-        trk_note_on(&trk[part], to, cfp_cfg.vel);    /* (the voice was stolen meanwhile) */
+    } else {                                         /* (no held voice: stolen, or its note still waits to start) */
+        trk_note_off(&trk[part], from);
+        trk_note_on(&trk[part], to, cfp_cfg.vel);
+    }
     cfp_midi(0x80u, ch, from, 0);
     cfp_midi(0x90u, ch, to, cfp_cfg.vel);
 }
@@ -186,10 +188,15 @@ static void cfp_change(uint32_t part, uint8_t *old, uint8_t *pn, const uint8_t *
             if (!used_p[a] && !used_q[b]) {          /* the first pairing of this old voice: it moves */
                 used_p[a] = used_q[b] = 1;
                 if (from[a] != nw[b]) {
-                    if (vv[a])
+                    if (vv[a]) {
                         trk_retune(&trk[part], vv[a], nw[b], ticks);
-                    else
+                    } else {
+                        /* no held voice for the old note: its note-on may still wait to start (voice.c vsq: a
+                         * stolen voice's fade, a block; xp: an engine switch). Without this it would start a moment
+                         * later and never be let go: the stuck note of a fast chord change (the owner, 2026-10-15) */
+                        trk_note_off(&trk[part], from[a]);
                         trk_note_on(&trk[part], nw[b], vel);
+                    }
                     cfp_midi(0x80u, part ? cfp_cfg.ch_bass : cfp_cfg.ch_chord, from[a], 0);
                     cfp_midi(0x90u, part ? cfp_cfg.ch_bass : cfp_cfg.ch_chord, nw[b], vel);
                 }
@@ -202,6 +209,8 @@ static void cfp_change(uint32_t part, uint8_t *old, uint8_t *pn, const uint8_t *
             if (!used_p[i]) {
                 if (vv[i])
                     vv[i]->gate = 0, vv[i]->stage = part ? 4 : 3;   /* (the bass: at once, it is monophonic) */
+                else
+                    trk_note_off(&trk[part], from[i]);  /* (still waiting to start: it must not start now) */
                 cfp_midi(0x80u, part ? cfp_cfg.ch_bass : cfp_cfg.ch_chord, from[i], 0);
             }
         for (i = 0; i < m; i++)                      /* (a target nobody reached: plainly) */

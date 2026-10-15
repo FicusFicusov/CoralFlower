@@ -326,6 +326,11 @@ void emu_fw_dump(void)
             n += trk[i].v[k].active;
         printf("  part %u: engine %u voices %u level %d\n", (unsigned)i, (unsigned)trk[i].engine, (unsigned)n,
                (int)trk[i].p[P_LEVEL]);
+        printf("  part %u gated:", (unsigned)i);       /* (the held voices' notes: a stuck one shows here) */
+        for (k = 0; k < NVOICE; k++)
+            if (trk[i].v[k].active && trk[i].v[k].gate)
+                printf(" %u", (unsigned)trk[i].v[k].note);
+        printf("\n");
     }
     printf("  plant: %s, segments %u, tiles sent %u\n", flo.species ? "coral" : "plant", (unsigned)flo.nseg,
            (unsigned)fb_tiles_sent);
