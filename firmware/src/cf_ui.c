@@ -846,8 +846,8 @@ static void cf_save_do(void)
     cf_message(b);
     ui_open(SCR_HOME);
 }
-/* every frame: PLAY and REC, a tap (on its release) or a hold. PLAY held 0.6 s: the LOOPER screen; REC held 1 s:
- * the last layer undone (as ChoralRoot's) */
+/* every frame: PLAY and REC, a tap (on its release) or a hold. PLAY held 0.6 s: the LOOPER screen; REC tapped: the
+ * loop's action and the LOOPER screen; REC held 1 s: the last layer undone (as ChoralRoot's) */
 static void cf_loop_poll(void)
 {
     if (cf_sn.ext_clock && cf_sn.ext_bpm >= 30u && cf_sn.ext_bpm <= 300u && cf_sn.ext_bpm != cs.bpm) {
@@ -876,8 +876,12 @@ static void cf_loop_poll(void)
                        cf_sn.loop_cap != CFL_CAP_NONE ? "Loop cleared" : "Nothing to undo");
             cf_post(CFE_LOOP, 2, 0, 0);
         } else if (!held) {
-            if (!cu.rec_fired)
+            if (!cu.rec_fired) {
                 cf_post(CFE_LOOP, 0, 0, 0);
+                if (cu.scr != SCR_LOOP)              /* REC tapped: the LOOPER screen opens with it (the owner looked
+                                                      * for it there, 2026-10-15; PLAY held still opens it too) */
+                    ui_open(SCR_LOOP);
+            }
             cu.rec_hold = 0;
         }
     }
