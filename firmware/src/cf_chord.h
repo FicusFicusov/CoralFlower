@@ -93,6 +93,9 @@ int cf_key_root_note(const cf_chord_cfg_t *cfg, int key);
 const cf_form_t *cf_button_form(const cf_chord_cfg_t *cfg, int btn);
 int cf_is_off(const cf_chord_cfg_t *cfg, int btn);
 #define CF_OFF_ADD 0xFFFFu
+/* the octave the screen calls 0 sounds an octave under the keys' printed pitch (the owner, 2026-10-15: at the printed
+ * pitch a new unit's chords screamed); OCT- / OCT+ still show -3 .. 3 around it */
+#define CF_OCT_BASE (-1)
 
 /* the merge of several held forms (pure; exposed for the tests): forms in press order, oldest first */
 cf_form_t cf_merge_forms(const cf_form_t *forms, int n);

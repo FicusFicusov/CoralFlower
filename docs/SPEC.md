@@ -44,7 +44,8 @@ The essential performance settings.
 - **Quantize On** works like ChoralRoot's Key switch: roots snap to the scale.
 - **Quantize Full** also snaps the individual chord tones to the scale (diatonic chords).
 - Enharmonic spelling must follow the key: D# in E major, E♭ in B♭ major, etc.
-- OCT− / OCT+ shift octaves as usual.
+- OCT− / OCT+ shift octaves as usual (−3 … 3). Octave 0 sounds an octave under the keys' printed pitch (the owner,
+  2026-10-15: at the printed pitch the chords were too high); both buttons together go back to 0.
 
 ### Root keys per chord algorithm
 

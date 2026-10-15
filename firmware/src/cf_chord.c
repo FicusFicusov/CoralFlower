@@ -65,7 +65,7 @@ int cf_key_root_note(const cf_chord_cfg_t *cfg, int key)
         if (cfg->quantize != CF_Q_OFF)
             n = cf_snap(cfg->scale, cfg->tonic, n, !cf_key_is_upper(key));
     }
-    return cfc_clampi(n + 12 * cfg->octave, 0, 127);
+    return cfc_clampi(n + 12 * (cfg->octave + CF_OCT_BASE), 0, 127);
 }
 
 static const cf_form_t OFF_FORM = {CF_T_NONE, CF_OFF_ADD, 0, 0};

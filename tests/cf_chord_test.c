@@ -26,6 +26,7 @@ static void setup(int algo, int q, int tonic, int scale)
 {
     cf_chord_defaults(&G);
     memcpy(G.top, OLD_TOP, sizeof G.top);
+    G.octave = (int8_t)-CF_OCT_BASE;             /* (the checks below are at the keys' printed pitch) */
     G.algo = (uint8_t)algo;
     G.quantize = (uint8_t)q;
     G.tonic = (uint8_t)tonic;
@@ -307,7 +308,7 @@ int main(void)
     NOTES("F after C, auto: C F A", 60, 65, 69);
     up(12);
     up(3);
-    G.octave = 1;
+    G.octave = (int8_t)(1 - CF_OCT_BASE);
     G.top[1].inv = 0;
     cf_chord_config(&C, &G);
     down(7);
@@ -353,7 +354,7 @@ int main(void)
     down(11);
     down(14);
     CHECK(C.out.single, "default: Off (key 25) plays single notes");
-    NOTES("default: Off + C + E + G: three notes, no chord", 60, 64, 67);
+    NOTES("default: Off + C + E + G: three notes, an octave under the printed pitch (octave 0)", 48, 52, 55);
     up(14);
     up(11);
     up(7);
