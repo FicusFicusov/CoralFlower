@@ -1,6 +1,6 @@
 # CoralFlower
 
-**Your M-VAVE FM-1, made for chords.** CoralFlower is free firmware for the FM-1. Hold a chord key, and every note
+**Your M-VAVE FM-1, made for chords.** CoralFlower is free firmware for the FM-1. Press a chord key, and every note
 you play becomes a whole chord, with a bass underneath. While you play, a pixel flower grows from your chords.
 
 CoralFlower is inspired by the Telepathic Instruments Orchid. Its controls are redesigned for the FM-1's keys and
@@ -19,13 +19,15 @@ before you install anything.
 
 ## What it does
 
-- **Notes or chords.** The lower keys play the notes of your scale. Hold an upper key, and each note becomes a
-  chord: major, minor, sus2, sus4, 6, 7 or 9. Hold two upper keys to combine them. With no upper key held, the keys
-  play single notes, several at once. Choose from 26 scales, starting on any note. Chord glide (off by default) slides
+- **Notes or chords.** The lower keys play the notes of a scale you choose. Press an upper key, and each note
+  becomes a chord: major, minor, sus2 or sus4, plus major and minor 6, 7 and add9. Press two upper keys together to
+  combine them. The chord stays on until you choose another one. The key marked Off turns chords off, and the keys
+  play single notes, several at once. Choose from 27 scales, chromatic included, starting on any note. Chord glide (off by default) slides
   each note into the next chord.
 - **Two layouts, each with a Lock mode.** In the Top layout, the upper row picks the chord type and the lower row the
   root. In the Side layout, a few keys on the left pick the type and the rest play roots. Lock mode keeps the chord
-  type you tapped, so you don't have to hold its key.
+  type you tapped, so you don't have to hold its key. A new FM-1 starts in Top with Lock; without Lock, a chord
+  plays only while you hold its key.
 - **A bass part under your chords** (you can turn it off), with its own sound and range, plus an octaver that doubles each bass note.
 - **An arpeggiator** with nine patterns, including a strum like the one on the Orchid chord synth. It locks to the
   metronome or to an external MIDI clock.
