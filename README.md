@@ -1,7 +1,7 @@
 # CoralFlower
 
-**Your M-VAVE FM-1, made for chords.** CoralFlower is free firmware for the FM-1. Press one key, and it plays a whole
-chord that fits the scale you chose, with a bass underneath. While you play, a pixel flower grows from your chords.
+**Your M-VAVE FM-1, made for chords.** CoralFlower is free firmware for the FM-1. Hold a chord key, and every note
+you play becomes a whole chord, with a bass underneath. While you play, a pixel flower grows from your chords.
 
 CoralFlower is inspired by the Telepathic Instruments Orchid. Its controls are redesigned for the FM-1's keys and
 buttons, because every instrument is played differently.
@@ -19,9 +19,10 @@ before you install anything.
 
 ## What it does
 
-- **One key, one chord.** The lower keys play the chords of your scale: in C major, A plays A minor and B plays
-  B diminished. Hold an upper key to change the chord to major, minor, sus2, sus4, 6, 7 or 9, or hold two to combine
-  them. Choose from 26 scales, starting on any note. Chord glide (off by default) slides each note into the next chord.
+- **Notes or chords.** The lower keys play the notes of your scale. Hold an upper key, and each note becomes a
+  chord: major, minor, sus2, sus4, 6, 7 or 9. Hold two upper keys to combine them. With no upper key held, the keys
+  play single notes, several at once. Choose from 26 scales, starting on any note. Chord glide (off by default) slides
+  each note into the next chord.
 - **Two layouts, each with a Lock mode.** In the Top layout, the upper row picks the chord type and the lower row the
   root. In the Side layout, a few keys on the left pick the type and the rest play roots. Lock mode keeps the chord
   type you tapped, so you don't have to hold its key.
