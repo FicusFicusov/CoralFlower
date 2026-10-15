@@ -162,7 +162,7 @@ jobs:
             sed "s/@VERSION@/$VERSION/g" <<'EOT'
           CoralFlower @VERSION@ for the M-VAVE FM-1 (package identity FM-1_930).
 
-          Install it from your browser at https://ficusficusov.github.io/CoralFlower/install/ (Chrome or Edge, with the FM-1 connected by USB). You can also try CoralFlower in the browser first, with no install: https://ficusficusov.github.io/CoralFlower/
+          Install it from your browser at https://ficusficusov.github.io/CoralFlower/ (Chrome or Edge on a computer, with the FM-1 connected by USB). You can also try CoralFlower in the browser first, with no install: https://ficusficusov.github.io/CoralFlower/play/
 
           `SHA256SUMS` lists the package and the app. The package holds three JieLi AC79 SDK files (Apache-2.0); `LICENSE`, `LICENSING.md` and `LICENSES.zip` carry every licence. Installing firmware is at your own risk; the official M-VAVE firmware can always be reinstalled.
           EOT
