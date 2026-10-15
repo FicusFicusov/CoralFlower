@@ -416,7 +416,7 @@ async function readyPage(dev, opts = {}) {
   const p = runPage({ navigator: midiOf(dev) });
   await p.ready;
   ok(!p.error && p.fetched.join() === "firmware/releases.json" && p.$.versions.hidden && !p.$["rel-none"].hidden && p.$["rel-some"].hidden &&
-     p.$.go.disabled && p.$.go.textContent === en.installNone && p.$.pkg.textContent === "", "no releases.json (404): the file only, Install off and named \"Install CoralFlower\"");
+     p.$.go.disabled && p.$.go.textContent === en.installNone && p.$.pkg.textContent === "" && p.$.ver.textContent === en.noRelease, "no releases.json (404): the file only, Install off and named \"Install CoralFlower\"");
   ok(/releases\.json: HTTP 404/.test(p.$.log.textContent), "no releases.json: the log says so");
   await p.$["pkg-pick"].fire("click");
   ok(p.$["pkg-file"].clicks === 1, "\"Choose a .fwsc file\" opens the file picker");

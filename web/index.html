@@ -465,6 +465,7 @@ const TEXT = {
     installNone: "Install on your FM-1",
     noFile: "No file chosen",
     newest: "Newest",
+    noRelease: "No release yet: the first one is still being tested.",
     pkgChecking: "Checking {name} …",
     pkgOk: "Ready to install {name}. Your browser checked it: a complete, undamaged CoralFlower build.",
     pkgRelOk: "Ready to install CoralFlower {version}. The file matches the released one.",
@@ -682,7 +683,8 @@ function renderPick() {
     `<button type="button" class="chip" data-ver="${esc(r.version)}" aria-pressed="${!!(pick && pick.rel === r)}"${writing ? " disabled" : ""}>` +
     `<b>CoralFlower ${esc(r.version)}</b><span>${[i === 0 ? t("newest") : "", dateText(r.date)].filter(Boolean).map(esc).join(" · ")}</span></button>`).join("");
   $("go").textContent = pick && image ? tv("installV", { name: pick.label }) : t("installNone");
-  $("ver").textContent = pick ? [pick.label, pick.rel ? dateText(pick.rel.date) : ""].filter(Boolean).join(" · ") : "";
+  // no version to install yet (no release, nothing chosen): the line under the button says why it is off
+  $("ver").textContent = pick ? [pick.label, pick.rel ? dateText(pick.rel.date) : ""].filter(Boolean).join(" · ") : any ? "" : t("noRelease");
   $("notes").innerHTML = pick && pick.rel ? notesOf(pick.rel) : "";
 }
 function newChoice(p) {                          // a new choice: nothing checked yet, the last run's panels go
