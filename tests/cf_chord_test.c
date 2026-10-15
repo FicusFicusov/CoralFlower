@@ -14,9 +14,17 @@ static int fails, checks;
 static cf_chord_t C;
 static cf_chord_cfg_t G;
 
+/* the checks below were written for the first builds' Top order (Off M m | s2 s4 | M6 M7 M9 | m6 m7 | m9): they keep
+ * it, so they test the engine whatever the default order is (the default's own checks are at the end) */
+static const cf_form_t OLD_TOP[CF_TOP_NBTN] = {
+    {CF_T_NONE, CF_OFF_ADD, 0, 0}, {CF_T_MAJ, 0, 0, 0}, {CF_T_MIN, 0, 0, 0}, {CF_T_SUS2, 0, 0, 0},
+    {CF_T_SUS4, 0, 0, 0}, {CF_T_MAJ, CF_A_6, 0, 0}, {CF_T_MAJ, CF_A_7, 0, 0}, {CF_T_MAJ, CF_A_9, 0, 0},
+    {CF_T_MIN, CF_A_6, 0, 0}, {CF_T_MIN, CF_A_b7, 0, 0}, {CF_T_MIN, CF_A_9, 0, 0},
+};
 static void setup(int algo, int q, int tonic, int scale)
 {
     cf_chord_defaults(&G);
+    memcpy(G.top, OLD_TOP, sizeof G.top);
     G.algo = (uint8_t)algo;
     G.quantize = (uint8_t)q;
     G.tonic = (uint8_t)tonic;
@@ -311,6 +319,53 @@ int main(void)
     NOTES("Dm on top", 62, 65, 69);
     up(9);
     NOTES("back to C", 60, 64, 67);
+    up(7);
+
+    /* Off in the first builds' place (button 0): single notes, several at once */
+    setup(CF_ALG_TOP, CF_Q_ON, 0, CF_SC_MAJOR);
+    down(1);
+    down(7);
+    down(11);
+    CHECK(C.out.single, "old order: Off (button 0) plays single notes");
+    NOTES("old order: Off + C + E: both notes, no chord", 60, 64);
+    up(11);
+    up(7);
+    up(1);
+
+    /* the default order: M6 M7 M9 | s2 s4 | m6 m7 m9 | M m | Off, Off on the last upper key */
+    cf_chord_defaults(&G);
+    G.algo = CF_ALG_TOP;
+    cf_chord_init(&C, &G);
+    CHECK(cf_is_off(&G, 10) && !cf_is_off(&G, 0), "default: Off is the last button, the first is a chord");
+    CHECK(G.top[0].type == CF_T_MAJ && G.top[0].add == CF_A_6 && G.top[8].type == CF_T_MAJ && G.top[8].add == 0 &&
+          G.top[9].type == CF_T_MIN && G.top[9].add == 0, "default: M6 first, M and m before Off");
+    down(25);
+    down(7);
+    down(11);
+    down(14);
+    CHECK(C.out.single, "default: Off (key 25) plays single notes");
+    NOTES("default: Off + C + E + G: three notes, no chord", 60, 64, 67);
+    up(14);
+    up(11);
+    up(7);
+    up(25);
+    down(7);
+    CHECK(!C.out.single && C.out.n == 3, "default: a root alone still plays its chord (%s)", dump());
+    up(7);
+    down(1);
+    down(7);
+    CHECK(!C.out.single && C.out.n == 4, "default: M6 (key 1) under C: four notes (%s)", dump());
+    up(7);
+    up(1);
+    cf_chord_defaults(&G);
+    G.algo = CF_ALG_TOP_LOCK;
+    cf_chord_init(&C, &G);
+    down(25);
+    up(25);
+    down(7);
+    down(11);
+    CHECK(C.out.single && C.out.n == 2, "default, Lock: Off tapped stays on, two keys: two notes (%s)", dump());
+    up(11);
     up(7);
 
     printf("cf_chord: %d checks, %d failures\n", checks, fails);

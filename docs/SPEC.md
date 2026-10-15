@@ -79,9 +79,11 @@ button can hold just added degrees).
 3. **Side** — chord buttons on the left.
 4. **Side + Lock** — the same, latching.
 
-**Algorithm 1 — Top.** The 11 upper keys are chord buttons, default assignment:
-`Off  M  m | s2  s4 | M6  M7  M9 | m6  m7 | m9`. `Off` is fixed: while it is active single notes play.
-All others can be reassigned in SEL. The flow is like FoMni's chord selection, but here a chord *form*
+**Algorithm 1 — Top.** The 11 upper keys are chord buttons, default assignment (the owner's order, 2026-10-15):
+`M6  M7  M9 | s2  s4 | m6  m7  m9 | M  m | Off`. While `Off` is active single notes play, as many as keys are held.
+`Off` is a form, not a place: the button that holds it is Off, and SEL leaves it alone. All others can be reassigned
+in SEL. A settings record still in the first builds' order (`Off  M  m | s2  s4 | M6  M7  M9 | m6  m7 | m9`) moves to
+the new one; a changed one stays as it is. The flow is like FoMni's chord selection, but here a chord *form*
 is chosen.
 
 **Algorithm 2 — Side.** Quality buttons on upper keys 1–3: `M  m  d`; extension buttons on lower keys

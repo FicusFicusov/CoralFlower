@@ -34,7 +34,7 @@ typedef struct {
     uint8_t tonic;              /* pitch class 0..11 (Key) */
     uint8_t scale;              /* CF_SC_* */
     int8_t octave;              /* OCT- / OCT+: -3..3 */
-    cf_form_t top[CF_TOP_NBTN]; /* top[0] is Off: never edited */
+    cf_form_t top[CF_TOP_NBTN]; /* the button whose form is Off (add CF_OFF_ADD) plays single notes: never edited */
     cf_form_t side[CF_SIDE_NBTN];
 } cf_chord_cfg_t;
 

@@ -103,12 +103,21 @@ static void kpc(char *b, int pc)
 
 static uint32_t env_part(void) { return cu.env_tgt == 2u ? CF_PART_BASS : CF_PART_CHORD; }
 
-/* the chord button SEL edits */
+/* the first chord button SEL can edit: the first that is not Off (Side has no Off) */
+static uint8_t sel_first(void)
+{
+    uint8_t b = 0;
+    while (b + 1u < CF_TOP_NBTN && cf_is_off(&cs.chord, b))
+        b++;
+    return b;
+}
+
+/* the chord button SEL edits (the callers leave Off alone: cf_is_off) */
 static cf_form_t *sel_form(void)
 {
     int top = cs.chord.algo == CF_ALG_TOP || cs.chord.algo == CF_ALG_TOP_LOCK;
     if (top)
-        return &cs.chord.top[cu.sel_btn < CF_TOP_NBTN && cu.sel_btn ? cu.sel_btn : 1];
+        return &cs.chord.top[cu.sel_btn < CF_TOP_NBTN ? cu.sel_btn : sel_first()];
     return &cs.chord.side[cu.sel_btn < CF_SIDE_NBTN ? cu.sel_btn : 0];
 }
 
@@ -661,7 +670,7 @@ static void ui_algo(int d)                       /* ALGORITHM: the chord algorit
         return;
     }
     cs.chord.algo = (uint8_t)clampi(cs.chord.algo + d, 0, CF_NALGS - 1);
-    cu.sel_btn = cs.chord.algo >= CF_ALG_SIDE ? 0u : 1u;
+    cu.sel_btn = cs.chord.algo >= CF_ALG_SIDE ? 0u : sel_first();
     cf_send_config();
     cf_pop(POP_ALGO, 1400);
 }
@@ -672,7 +681,7 @@ static void ui_open(uint32_t scr)
     uint32_t was = cu.scr;
     cu.scr = (uint8_t)(scr == was && scr != SCR_HOME ? SCR_HOME : scr);
     if (cu.scr == SCR_SEL && cf_is_off(&cs.chord, cu.sel_btn))
-        cu.sel_btn = 1;
+        cu.sel_btn = sel_first();
     if ((was == SCR_SEQ) != (cu.scr == SCR_SEQ))
         cf_send_metro();
 }
@@ -1176,7 +1185,7 @@ static void cf_ui_init(void)
     if (!cfs_loaded)                             /* (cf_splash read the settings record: they stay) */
         cs_defaults(&cs);
     cu.scr = SCR_HOME;
-    cu.sel_btn = 1;
+    cu.sel_btn = sel_first();
     cf_led_init();
     cf_palette_build();
     cu_spell_update();

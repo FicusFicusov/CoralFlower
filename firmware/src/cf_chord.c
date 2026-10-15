@@ -73,21 +73,36 @@ static const cf_form_t OFF_FORM = {CF_T_NONE, CF_OFF_ADD, 0, 0};
 const cf_form_t *cf_button_form(const cf_chord_cfg_t *cfg, int btn)
 {
     if (cfc_is_top(cfg->algo))
-        return btn == 0 ? &OFF_FORM : &cfg->top[btn < CF_TOP_NBTN ? btn : 1];
-    return &cfg->side[btn < CF_SIDE_NBTN ? btn : 0];
+        return &cfg->top[btn >= 0 && btn < CF_TOP_NBTN ? btn : 0];
+    return &cfg->side[btn >= 0 && btn < CF_SIDE_NBTN ? btn : 0];
 }
 
-int cf_is_off(const cf_chord_cfg_t *cfg, int btn) { return cfc_is_top(cfg->algo) && btn == 0; }
+/* Off is a form, not a place: the Top button that holds it plays single notes, wherever it is (the default puts it on
+ * the last upper key; a settings record from before keeps it on the first) */
+int cf_is_off(const cf_chord_cfg_t *cfg, int btn)
+{
+    return cfc_is_top(cfg->algo) && btn >= 0 && btn < CF_TOP_NBTN && cfg->top[btn].add == CF_OFF_ADD;
+}
+
+static uint16_t cfc_off_mask(const cf_chord_cfg_t *cfg)
+{
+    uint16_t m = 0;
+    int b;
+    for (b = 0; b < CF_TOP_NBTN; b++)
+        if (cf_is_off(cfg, b))
+            m |= (uint16_t)(1u << b);
+    return m;
+}
 
 void cf_chord_defaults(cf_chord_cfg_t *cfg)
 {
+    /* the upper keys in their groups of 3 2 3 2 1: M6 M7 M9 | s2 s4 | m6 m7 m9 | M m | Off (the owner's order) */
     static const cf_form_t TOP[CF_TOP_NBTN] = {
-        {CF_T_NONE, CF_OFF_ADD, 0, 0},
-        {CF_T_MAJ, 0, 0, 0}, {CF_T_MIN, 0, 0, 0},
-        {CF_T_SUS2, 0, 0, 0}, {CF_T_SUS4, 0, 0, 0},
         {CF_T_MAJ, CF_A_6, 0, 0}, {CF_T_MAJ, CF_A_7, 0, 0}, {CF_T_MAJ, CF_A_9, 0, 0},
-        {CF_T_MIN, CF_A_6, 0, 0}, {CF_T_MIN, CF_A_b7, 0, 0},
-        {CF_T_MIN, CF_A_9, 0, 0},
+        {CF_T_SUS2, 0, 0, 0}, {CF_T_SUS4, 0, 0, 0},
+        {CF_T_MIN, CF_A_6, 0, 0}, {CF_T_MIN, CF_A_b7, 0, 0}, {CF_T_MIN, CF_A_9, 0, 0},
+        {CF_T_MAJ, 0, 0, 0}, {CF_T_MIN, 0, 0, 0},
+        {CF_T_NONE, CF_OFF_ADD, 0, 0},
     };
     static const cf_form_t SIDE[CF_SIDE_NBTN] = {
         {CF_T_MAJ, 0, 0, 0}, {CF_T_MIN, 0, 0, 0}, {CF_T_DIM, 0, 0, 0},
@@ -227,15 +242,16 @@ static int cfc_resolve(cf_chord_t *c)
 {
     cf_chord_out_t o = c->out, *old = &c->out;
     const cf_chord_cfg_t *g = &c->cfg;
-    uint16_t eff = cfc_effective(c), use;
+    uint16_t eff = cfc_effective(c), use, off;
     int i, nb = cfc_is_top(g->algo) ? CF_TOP_NBTN : CF_SIDE_NBTN, changed;
     /* the lights show the buttons; the notes come from `play`, which follows them except while kept (cfc_root takes
      * them) */
     if (!(c->keep && c->nroots && !c->bare))
         c->play = eff;
     use = c->play;
-    o.single = (uint8_t)(cfc_is_top(g->algo) && (use & 1u));
-    o.buttons = cfc_is_top(g->algo) && (eff & 1u) ? eff : cfc_used(c, eff, nb);
+    off = cfc_is_top(g->algo) ? cfc_off_mask(g) : 0u;
+    o.single = (uint8_t)((use & off) != 0);
+    o.buttons = (eff & off) ? eff : cfc_used(c, eff, nb);
     o.sounding = c->nroots > 0;
     if (!o.sounding) {
         o.n = 0;

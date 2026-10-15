@@ -55,6 +55,24 @@ static void cfs_sanitize(cf_set_t *s)
     for (i = 0; i < NELEM(s->chord.side); i++)
         if (s->chord.side[i].type >= CF_NTYPES || s->chord.side[i].inv < CF_INV_AUTO || s->chord.side[i].inv > 3)
             s->chord.side[i] = d.chord.side[i];
+    {   /* the Top buttons still in the first builds' default order (Off M m | s2 s4 | M6 M7 M9 | m6 m7 | m9), never
+         * changed: the new default order. A record with no Off button at all: the defaults too. */
+        static const cf_form_t OLD[CF_TOP_NBTN] = {
+            {CF_T_NONE, CF_OFF_ADD, 0, 0}, {CF_T_MAJ, 0, 0, 0}, {CF_T_MIN, 0, 0, 0}, {CF_T_SUS2, 0, 0, 0},
+            {CF_T_SUS4, 0, 0, 0}, {CF_T_MAJ, CF_A_6, 0, 0}, {CF_T_MAJ, CF_A_7, 0, 0}, {CF_T_MAJ, CF_A_9, 0, 0},
+            {CF_T_MIN, CF_A_6, 0, 0}, {CF_T_MIN, CF_A_b7, 0, 0}, {CF_T_MIN, CF_A_9, 0, 0},
+        };
+        uint32_t same = 1, offs = 0;
+        for (i = 0; i < CF_TOP_NBTN; i++) {
+            const cf_form_t *f = &s->chord.top[i];
+            if (f->type != OLD[i].type || f->add != OLD[i].add || f->inv != OLD[i].inv || f->bass != OLD[i].bass)
+                same = 0;
+            offs += f->add == CF_OFF_ADD;
+        }
+        if (same || !offs)
+            for (i = 0; i < CF_TOP_NBTN; i++)
+                s->chord.top[i] = d.chord.top[i];
+    }
     if (s->glide_ms > 2000u) s->glide_ms = d.glide_ms;
     if (!s->vel || s->vel > 127u) s->vel = d.vel;
     if (s->bass_oct < -2 || s->bass_oct > 2) s->bass_oct = 0;
