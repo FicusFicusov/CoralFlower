@@ -49,8 +49,8 @@ static struct {
     uint32_t k3_ms;              /* .. when it was last turned (a pause of 0.7 s: a new turn, a new phrase) */
 } squ = {.len = 1};
 
-#define SQ_ST(p) ((p)->steps[squ.trk][squ.bar])   /* the frame's bar's steps in the open track */
-#define SQ_SU(p) (SQ_U / SQ_ST(p))               /* .. a step's time there (1/96 of a bar) */
+#define SQ_ST(p) sq_steps((p), squ.trk, squ.bar)    /* the frame's bar's steps in the open track */
+#define SQ_SU(p) (SQ_U / SQ_ST(p))               /* .. a step's time there (1/24 of a beat) */
 /* ------------------------------------------------------------- flash --- */
 /* the patterns and the song in flash, six objects of sq_st, written once a change has rested and nothing sounds
  * (an erase stops the audio ~45 ms: never while the sequencer plays), only the objects that changed */
@@ -290,6 +290,7 @@ static int sq_open(void)                         /* returns 1: the track's scree
 }
 
 static void sq_erase_here(void);
+static void sq_materialize(sq_pat_t *p, uint32_t trk, uint32_t b);
 /* SELECT in a track: CHORDS / BASS walk the steps (over the bars, round), DRUMS the bars */
 static void sq_select(int d)
 {
@@ -367,6 +368,7 @@ static void sq_write_poll(void)
         if (o->sounding && o->n) {
             sq_ev_t e;
             uint32_t i, room;
+            sq_materialize(p, squ.trk, squ.bar);   /* (a bar the track repeated: the repeats become its own first) */
             e.trk = squ.trk;
             e.bar = squ.bar;
             e.pos = (uint8_t)(squ.step * SQ_SU(p));
@@ -452,6 +454,7 @@ static void sq_follow_toggle(void)
 static void sq_erase_here(void)
 {
     sq_pat_t *p = sq_cur();
+    sq_materialize(p, squ.trk, squ.bar);
     if (squ.trk == SQ_DRUMS) {
         if (p->hit[squ.lane][squ.bar]) {
             p->hit[squ.lane][squ.bar] = 0;
@@ -495,6 +498,19 @@ static void sq_copy_track_bar(sq_pat_t *p, uint32_t trk, uint32_t from, uint32_t
             sq_put(p, &e);
         }
 }
+/* bar b of a track that repeats its first bars there (sq_src_bar): the repeats up to b become the track's own, so
+ * an edit there changes that bar alone and everything sounds as it did (writing into a repeat lengthened the track,
+ * and the bars between went silent) */
+static void sq_materialize(sq_pat_t *p, uint32_t trk, uint32_t b)
+{
+    uint32_t n, x;
+    if (sq_src_bar(p, trk, b) == b)
+        return;
+    n = sq_track_bars(p, trk);
+    for (x = p->start + n; x <= b; x++)
+        sq_copy_track_bar(p, trk, p->start + (x - p->start) % n, x);
+    sq_touch();
+}
 static void sq_oct_poll(void)                    /* every frame: OCT+ let go in a track */
 {
     char m[24];
@@ -515,6 +531,7 @@ static void sq_oct_poll(void)                    /* every frame: OCT+ let go in 
     sqh.busy = 0;                                /* (an action of its own) */
     sq_undo_poll();
     sq_touch();
+    sq_materialize(sq_cur(), squ.trk, squ.ofrom > squ.bar ? squ.ofrom : squ.bar);   /* (a bar repeated: real first) */
     sq_copy_track_bar(sq_cur(), squ.trk, squ.ofrom, squ.bar);
     str_cpy(m, "Bar ", sizeof m);
     kint(m + str_len(m), squ.ofrom + 1, 0);
@@ -547,6 +564,7 @@ static void sq_clear(void)
     sq_pat_t *p = sq_cur();
     if (squ.trk == SQ_DRUMS)
         return;
+    sq_materialize(p, squ.trk, squ.bar);
     sq_touch();
     {
         int i = sq_at(p, squ.trk, squ.bar, squ.step);
@@ -618,13 +636,10 @@ static int sq_key(int key, int down)             /* returns 1: the key is the se
             squ.lane = (uint8_t)i;
             cf_post(CFE_SEQ, 2, squ.lane, p->dkit[squ.lane % SQ_NLANE]);   /* (the drum heard as it is picked) */
         }
-    } else if (i < SQ_ST(p)) {                   /* (a step with a hit in it, on its start or off it: off; else
-                                                  * a hit on its start) */
-        uint64_t *h = &p->hit[squ.lane][squ.bar], m = sq_span(p, squ.bar, (uint32_t)i);
-        if (*h & m)
-            *h &= ~m;
-        else
-            *h |= (uint64_t)1 << (i * (SQ_H / SQ_ST(p)));
+    } else if (i < SQ_ST(p)) {                   /* (a step: on, off) */
+        uint32_t *h = &p->hit[squ.lane][squ.bar], m = 1u << i;
+        sq_materialize(p, SQ_DRUMS, squ.bar);
+        *h ^= m;
         sq_touch();
         if ((*h & m) && !cf_sn.sq_on)
             cf_post(CFE_SEQ, 2, squ.lane, p->dkit[squ.lane % SQ_NLANE]);   /* (a step set: heard, while nothing
@@ -676,7 +691,7 @@ static void sq_rec_poll(void)
         squ.rr++;
         if (sq_empty(p) || bar >= SQ_BARS || !bt)
             continue;
-        st = p->steps[trk][bar];
+        st = sq_steps(p, trk, bar);
         step = (e.t * st + bt / 2u) / bt;
         if (e.kind == 2) {                       /* a chord ended: its length */
             int i;
@@ -688,7 +703,7 @@ static void sq_rec_poll(void)
                     break;
             if (i < (int)p->nev) {               /* (to where it was let go, over bar lines too; past the window's
                                                   * end round to its top) */
-                uint32_t s0 = sq_ev_start(p, &p->ev[i]), su = SQ_U / p->steps[trk][squ.rbar], len;
+                uint32_t s0 = sq_ev_start(p, &p->ev[i]), su = SQ_U / sq_steps(p, trk, squ.rbar), len;
                 int32_t d = (int32_t)(bar * SQ_U + e.t * SQ_U / bt) - (int32_t)s0;
                 if (d <= 0)
                     d += (int32_t)(p->bars * SQ_U);
@@ -703,7 +718,7 @@ static void sq_rec_poll(void)
         if (step >= st) {                        /* (late in the bar: the next bar's first step) */
             step = 0;
             bar = bar + 1u < (uint32_t)p->start + p->bars ? bar + 1u : p->start;
-            st = p->steps[trk][bar];
+            st = sq_steps(p, trk, bar);
         }
         if (e.kind == 3) {
 #ifdef CF_TRACE
@@ -711,7 +726,8 @@ static void sq_rec_poll(void)
                     (unsigned)step, (unsigned)st, (unsigned)e.t);
 #endif
             if (trk == SQ_DRUMS && step < st) {
-                p->hit[e.n % SQ_NLANE][bar] |= (uint64_t)1 << (step * (SQ_H / st));
+                sq_materialize(p, trk, bar);
+                p->hit[e.n % SQ_NLANE][bar] |= 1u << step;
                 sq_touch();
             }
             continue;
@@ -721,6 +737,7 @@ static void sq_rec_poll(void)
         {
             sq_ev_t v;
             uint32_t i, k;
+            sq_materialize(p, trk, bar);
             v.trk = (uint8_t)trk;
             v.bar = (uint8_t)bar;
             v.pos = (uint8_t)(step * (SQ_U / st));
@@ -1030,7 +1047,7 @@ static void sq_knob_info(int k, cf_knob_t *o)
             kfmt(o->name, 12, sq_lane_label(squ.lane));
             kfmt(o->val, 14, SQ_KITS[p->dkit[squ.lane % SQ_NLANE] % SQ_NKIT].name);
         } else {
-            int i = sq_at(p, squ.trk, squ.bar, squ.step);
+            int i = sq_at(p, squ.trk, sq_src_bar(p, squ.trk, squ.bar), squ.step);   /* (what plays there) */
             uint32_t n = i >= 0 ? sq_len_steps(p, &p->ev[i]) : squ.len;
             kfmt(o->name, 12, "LENGTH");
             kint(o->val, (int)n, n > 1u ? " steps" : " step");
@@ -1121,12 +1138,16 @@ static void sq_knob_turn(int k, int d)
         if (squ.trk == SQ_DRUMS) {
             sq_drum_kit_turn(p, d);
         } else {
-            int i = sq_at(p, squ.trk, squ.bar, squ.step);
+            int i = sq_at(p, squ.trk, sq_src_bar(p, squ.trk, squ.bar), squ.step);
+            if (i >= 0) {                        /* (a step the track repeats there: its own first) */
+                sq_materialize(p, squ.trk, squ.bar);
+                i = sq_at(p, squ.trk, squ.bar, squ.step);
+            }
             if (i >= 0) {                        /* the step under the cursor, and the next ones written (in whole
                                                   * steps of the grid; up to the next step) */
                 sq_ev_t *e = &p->ev[i];
                 int n = clampi((int)sq_len_steps(p, e) + d, 1, 255), r = (int)sq_room(p, e);
-                int su = (int)(SQ_U / p->steps[e->trk][e->bar]);   /* (its bar's steps) */
+                int su = (int)(SQ_U / sq_steps(p, e->trk, e->bar));   /* (its bar's steps) */
                 e->len = (uint16_t)(n * su < r ? n * su : r);
                 squ.len = (uint8_t)sq_len_steps(p, e);
             } else {
@@ -1136,13 +1157,13 @@ static void sq_knob_turn(int k, int d)
     } else if (k == 1 && squ.trk == SQ_DRUMS) {  /* SWING, 5 % a detent */
         p->swing = (uint8_t)clampi(p->swing + d * 5, 0, 100);
     } else if (k == 1) {
-        int i, st = SQ_ST(p), lim = (int)SQ_MAXST;
-        for (i = 0; i < SQ_NDIVS && SQ_DIVS[i] != st; i++)
+        int i, st = SQ_ST(p), k = p->steps[squ.trk][squ.bar];   /* (steps a beat: 1 2 3 4 6 8) */
+        for (i = 0; i < SQ_NKS && SQ_KS[i] != k; i++)
             ;
-        i = clampi((i < SQ_NDIVS ? i : 2) + d, 0, SQ_NDIVS - 1);
-        if (SQ_DIVS[i] <= lim) {
-            squ.step = (uint8_t)(squ.step * SQ_DIVS[i] / st);
-            sq_set_steps(p, squ.trk, squ.bar, SQ_DIVS[i]);
+        i = clampi((i < SQ_NKS ? i : 1) + d, 0, SQ_NKS - 1);
+        if (SQ_KS[i] * sq_beats <= SQ_MAXST) {
+            squ.step = (uint8_t)(squ.step * SQ_KS[i] * sq_beats / st);
+            sq_set_steps(p, squ.trk, squ.bar, SQ_KS[i]);
         }
     } else if (k == 2) {
         if (!squ.k3_base || cu.now - squ.k3_ms > 700u)   /* (a new turn: the phrase the new bars repeat) */
@@ -1214,7 +1235,7 @@ static int sq_keycap(int key, cf_keycap_t *o)    /* returns 1: the cap is the se
             kint(o->top, i * cs.beats / SQ_ST(p) + 1, 0);
         else
             kfmt(o->top, 8, ".");
-        o->style = (cu.keys >> key) & 1u ? KC_DOWN : p->hit[squ.lane][squ.bar] & sq_span(p, squ.bar, (uint32_t)i) ? KC_ON :
+        o->style = (cu.keys >> key) & 1u ? KC_DOWN : (p->hit[squ.lane][sq_src_bar(p, SQ_DRUMS, squ.bar)] >> i) & 1u ? KC_ON :
                    beat ? KC_ROOT : KC_OFF;
     } else {
         o->style = KC_OFF;

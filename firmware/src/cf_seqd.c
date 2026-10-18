@@ -6,11 +6,12 @@
  * the keys play, on a sound of its own: part 2) and DRUMS (eight lanes of hits). A bar is a row of steps, each
  * track's own count of them in each bar (the owner's mock-up: "one bar is one row", its STEPS its divisions; a bar of
  * 16ths can follow a bar of 8ths, the hats can run in 16ths over chords in 8ths): the grid the frame walks and new
- * steps go on. What is written keeps its time when the grid changes (the owner, 2026-10-19: STEPS turned after a take
- * moved every note, and turned to 6 and back lost some): CHORDS / BASS / LAYER keep events (where in its bar a step
- * starts and how long it lasts, in 1/96 of a bar, its notes), DRUMS a bit for each 1/48 of a bar for each lane. The
- * song is a row of patterns played in turn. Included by cf_out.c (the audio side plays it; the UI edits it between
- * blocks). */
+ * steps go on, so many steps a beat (a bar of any metre is whole beats: the grid stays on them). What is written keeps
+ * its time when the grid changes (the owner, 2026-10-19: STEPS turned after a take moved every note, and turned to 6
+ * and back lost some): CHORDS / BASS / LAYER keep events (where in its bar a step starts and how long it lasts, in
+ * 1/24 of a beat, its notes). DRUMS keep a bit a step for each lane: their grid is fixed (the metronome's beats x 4,
+ * the 16 lower keys; x 2 in a bar of more than 4 beats). The song is a row of patterns played in turn. Included by
+ * cf_out.c (the audio side plays it; the UI edits it between blocks). */
 
 #define SQ_NPAT 8u                               /* patterns A..H */
 #define SQ_BARS 8u                               /* bars a pattern can have */
@@ -22,14 +23,16 @@
 #define SQ_SONG 32u                              /* patterns in the song */
 enum { SQ_CHORDS, SQ_BASS, SQ_LAYER, SQ_DRUMS, SQ_NTRK };
 
-/* time in a bar: 96 parts (every count of steps a bar takes, 4 .. 32, divides it), the drums' hits 48 (their counts,
- * 4 .. 16, divide it) */
-#define SQ_U 96u
-#define SQ_H 48u
+/* time: 24 parts a beat (every count of steps a beat takes, 1 2 3 4 6 8, divides it), a bar the metronome's beats of
+ * them (sq_beats: 2 .. 7; a bar's 96 parts were no grid for 5/4's and 7/4's 10 and 14 steps: CoralFlower, 2026-10-19).
+ * The UI keeps sq_beats as cs.beats (cf_ui.c cf_send_metro); both sides read it */
+static uint8_t sq_beats = 4;
+#define SQ_UB 24u
+#define SQ_U ((uint32_t)sq_beats * SQ_UB)
 typedef struct {
-    uint8_t trk, bar, pos, n;                    /* SQ_CHORDS / BASS / LAYER; the bar; where in it it starts (1/96 of a
-                                                  * bar); notes */
-    uint16_t len;                                /* how long it lasts (1/96 of a bar; on over the bar lines after) */
+    uint8_t trk, bar, pos, n;                    /* SQ_CHORDS / BASS / LAYER; the bar; where in it it starts (1/24 of a
+                                                  * beat); notes */
+    uint16_t len;                                /* how long it lasts (1/24 of a beat; on over the bar lines after) */
     uint16_t mask;                               /* the chord's pitch classes over the root (bit 0: the root) */
     uint8_t note[6];
     uint8_t nb, bass[2];                         /* CHORDS: the bass that sounded with it (played when BASS is empty) */
@@ -45,7 +48,7 @@ typedef struct {
     uint8_t start;                               /* the first of them: the bars start .. start + bars - 1 play, the
                                                   * others keep their steps (the screen's green side bars; K4 moves
                                                   * them up and down, the owner's mock-up) */
-    uint8_t steps[SQ_NTRK][SQ_BARS];             /* each track's steps in each bar (its grid there) */
+    uint8_t steps[SQ_NTRK][SQ_BARS];             /* each track's steps a beat in each bar (its grid there: sq_steps) */
     uint8_t nev;
     uint8_t kit;                                 /* the drum kit (SQ_KITS) */
     uint8_t follow;                              /* its chords and bass follow HOME's KEY and SCALE (the keys a step was
@@ -57,7 +60,7 @@ typedef struct {
                                                   * a step, an MPC's 75 %). The drums' K2: their steps a bar stay the
                                                   * metronome's beats x 4, the 16 lower keys (STEPS there was "unusable,
                                                   * no way to tell how to use it": the owner, 2026-10-19) */
-    uint64_t hit[SQ_NLANE][SQ_BARS];             /* lane l, bar b: bit h, a hit at h/48 of the bar */
+    uint32_t hit[SQ_NLANE][SQ_BARS];             /* lane l, bar b: bit i, a hit on the drums' step i (sq_dsteps) */
     sq_ev_t ev[SQ_NEV];
 } sq_pat_t;
 
@@ -68,7 +71,8 @@ typedef struct {
 } sq_song_t;
 
 /* all of it in one block, as flash keeps it (cf_sequi.c: six objects of it) */
-#define SQ_MAGIC 0x32514643u                     /* "CFQ2" (CFQ1: positions in steps, a grid a bar) */
+#define SQ_MAGIC 0x33514643u                     /* "CFQ3" (CFQ2: 1/96 of a bar, the drums at 1/48; CFQ1: positions
+                                                  * in steps, a grid a bar) */
 typedef struct {
     uint32_t magic, size, check;                 /* check: FNV-1a over what follows */
     sq_song_t song;
@@ -96,20 +100,26 @@ static const sq_kit_t SQ_KITS[] = {
 };
 #define SQ_NKIT ((uint32_t)(sizeof SQ_KITS / sizeof SQ_KITS[0]))
 
-/* the steps divisions a bar takes (K2): halves of a beat, thirds, quarters, ... */
-static const uint8_t SQ_DIVS[] = {4, 6, 8, 12, 16, 24, 32};
-#define SQ_NDIVS ((int)(sizeof SQ_DIVS))
+/* the steps a beat takes (K2: quarters, 8ths, 8th triplets, 16ths, 16th triplets, 32nds), a bar's at most SQ_MAXST */
+static const uint8_t SQ_KS[] = {1, 2, 3, 4, 6, 8};
+#define SQ_NKS ((int)(sizeof SQ_KS))
+/* the drums' steps a bar: 16ths (the 16 lower keys hold 4 beats of them), 8ths in a longer bar */
+static uint32_t sq_dsteps(void) { return sq_beats * 4u <= 16u ? sq_beats * 4u : sq_beats * 2u; }
+/* track trk's steps in bar b */
+static uint32_t sq_steps(const sq_pat_t *p, uint32_t trk, uint32_t b)
+{
+    return trk == SQ_DRUMS ? sq_dsteps() : (uint32_t)p->steps[trk][b % SQ_BARS] * sq_beats;
+}
 
 static int sq_empty(const sq_pat_t *p) { return !p->bars; }
 
-/* a pattern written for the first time: 4 bars; chords and bass 2 steps a beat (the owner's default: the
- * metronome's beats x 2), the drums 4 (16 in 4/4, as a drum machine's); it follows the key */
+/* a pattern written for the first time: 4 bars; chords, bass and layer 2 steps a beat (the owner's default: the
+ * metronome's beats x 2); the drums' grid is fixed (sq_dsteps); it follows the key */
 static void sq_fresh(sq_pat_t *p, uint32_t beats)
 {
+    uint32_t b, l;
+    (void)beats;
     p->follow = 1;
-    uint32_t b, l, st = beats * 2u, sd = beats * 4u;
-    st = st < 4u ? 4u : st > SQ_MAXST ? SQ_MAXST : st;
-    sd = sd > 16u ? beats * 2u : sd;             /* (the drums' steps are the 16 lower keys) */
     p->bars = 4;
     p->start = 0;
     p->nev = 0;
@@ -118,8 +128,8 @@ static void sq_fresh(sq_pat_t *p, uint32_t beats)
     for (l = 0; l < SQ_NLANE; l++)
         p->dkit[l] = 0;
     for (b = 0; b < SQ_BARS; b++) {
-        p->steps[SQ_CHORDS][b] = p->steps[SQ_BASS][b] = p->steps[SQ_LAYER][b] = (uint8_t)st;
-        p->steps[SQ_DRUMS][b] = (uint8_t)(sd > 16u ? 16u : sd);
+        p->steps[SQ_CHORDS][b] = p->steps[SQ_BASS][b] = p->steps[SQ_LAYER][b] = 2;
+        p->steps[SQ_DRUMS][b] = 4;                   /* (not read: sq_dsteps) */
         for (l = 0; l < SQ_NLANE; l++)
             p->hit[l][b] = 0;
     }
@@ -174,7 +184,7 @@ static uint32_t sq_ev_end(const sq_pat_t *p, const sq_ev_t *e);
  * over it (from a step before, a bar above too), -1 none */
 static int sq_at(const sq_pat_t *p, uint32_t trk, uint32_t b, uint32_t s)
 {
-    uint32_t i, u = SQ_U / p->steps[trk][b], s0 = b * SQ_U + s * u, s1 = s0 + u, first = 0xFFFFu;
+    uint32_t i, u = SQ_U / sq_steps(p, trk, b), s0 = b * SQ_U + s * u, s1 = s0 + u, first = 0xFFFFu;
     int in = -1, over = -1;
     for (i = 0; i < p->nev; i++) {
         const sq_ev_t *e = &p->ev[i];
@@ -191,12 +201,6 @@ static int sq_at(const sq_pat_t *p, uint32_t trk, uint32_t b, uint32_t s)
     }
     return in >= 0 ? in : over;
 }
-/* DRUMS' step s of bar b: its bits on the 1/48 grid (what a lane has there: hit[l][b] & this) */
-static uint64_t sq_span(const sq_pat_t *p, uint32_t b, uint32_t s)
-{
-    uint32_t w = SQ_H / p->steps[SQ_DRUMS][b];
-    return (((uint64_t)1 << w) - 1u) << (s * w);
-}
 static int sq_count(const sq_pat_t *p, uint32_t trk)
 {
     uint32_t i;
@@ -207,8 +211,7 @@ static int sq_count(const sq_pat_t *p, uint32_t trk)
 }
 static int sq_drums(const sq_pat_t *p)
 {
-    uint32_t l, b;
-    uint64_t n = 0;
+    uint32_t l, b, n = 0;
     for (l = 0; l < SQ_NLANE; l++)
         for (b = 0; b < SQ_BARS; b++)
             n |= p->hit[l][b];
@@ -223,7 +226,7 @@ static void sq_del(sq_pat_t *p, uint32_t i)
     p->nev--;
 }
 
-/* time in the pattern, in 1/96 of a bar: where an event starts and ends. It may run on into the bars after (the
+/* time in the pattern, in 1/24 of a beat: where an event starts and ends. It may run on into the bars after (the
  * owner, 2026-10-19: a chord at a bar's end could not be made longer, it stopped at the bar line) */
 static uint32_t sq_ev_start(const sq_pat_t *p, const sq_ev_t *e)
 {
@@ -260,7 +263,7 @@ static int sq_put(sq_pat_t *p, const sq_ev_t *e)
     return (int)p->nev++;
 }
 
-/* how long an event can last (1/96 of a bar): to the next event of its track, in this bar or a later one, or the
+/* how long an event can last (1/24 of a beat): to the next event of its track, in this bar or a later one, or the
  * grid's end */
 static uint32_t sq_room(const sq_pat_t *p, const sq_ev_t *e)
 {
@@ -279,15 +282,47 @@ static uint32_t sq_room(const sq_pat_t *p, const sq_ev_t *e)
 /* how long an event lasts in the steps of its bar (LENGTH): the nearest whole count, 1 at least */
 static uint32_t sq_len_steps(const sq_pat_t *p, const sq_ev_t *e)
 {
-    uint32_t su = SQ_U / p->steps[e->trk][e->bar], n = (e->len + su / 2u) / su;
+    uint32_t su = SQ_U / sq_steps(p, e->trk, e->bar), n = (e->len + su / 2u) / su;
     return n ? n : 1u;
 }
 
-/* a track's steps in a bar (K2): its grid there. What is written stays where it is in time (the frame and the steps
- * written next go by the new grid; a step off it stands between its marks) */
-static void sq_set_steps(sq_pat_t *p, uint32_t trk, uint32_t b, uint32_t st) { p->steps[trk][b] = (uint8_t)st; }
+/* a track's steps a beat in a bar (K2): its grid there. What is written stays where it is in time (the frame and the
+ * steps written next go by the new grid; a step off it stands between its marks) */
+static void sq_set_steps(sq_pat_t *p, uint32_t trk, uint32_t b, uint32_t k) { p->steps[trk][b] = (uint8_t)k; }
 
 static int sq_plays(const sq_pat_t *p, uint32_t b) { return b >= p->start && b < (uint32_t)p->start + p->bars; }
+
+/* a track's own bars in the window: up to its last bar with something in it (a step that starts or lasts there, a
+ * drum hit), any count; a track shorter than the window plays round in it, from the window's top each time (a bar of
+ * chords under two of drums repeats, and the other way round: the owner, 2026-10-19). An empty track: the window */
+static uint32_t sq_track_bars(const sq_pat_t *p, uint32_t trk)
+{
+    uint32_t b0, i, l, last = 0;
+    for (b0 = 0; b0 < p->bars; b0++) {
+        uint32_t b = p->start + b0, has = 0;
+        if (b >= SQ_BARS)
+            break;
+        if (trk == SQ_DRUMS) {
+            for (l = 0; l < SQ_NLANE; l++)
+                has |= p->hit[l][b];
+        } else {
+            for (i = 0; i < p->nev && !has; i++) {
+                const sq_ev_t *e = &p->ev[i];
+                has = e->trk == trk && sq_ev_start(p, e) < (b + 1u) * SQ_U && sq_ev_end(p, e) > b * SQ_U;
+            }
+        }
+        if (has)
+            last = b0 + 1u;
+    }
+    return last ? last : (p->bars ? p->bars : 1u);
+}
+/* the bar track trk plays at bar b of the window (b itself, or the one it repeats) */
+static uint32_t sq_src_bar(const sq_pat_t *p, uint32_t trk, uint32_t b)
+{
+    if (!sq_plays(p, b))
+        return b;
+    return p->start + (b - p->start) % sq_track_bars(p, trk);
+}
 
 /* the bars played (K3): the window grows at its foot (at the grid's end, at its top); a bar that comes in for the
  * first time (nothing in it) is a copy of the phrase the window had when the turn began (base bars: 1-4 turned to 8

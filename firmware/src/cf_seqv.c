@@ -187,9 +187,10 @@ static void sq_bed(int b, int st, int on, uint32_t busy)   /* busy: bit i, step 
  * on a finer one) */
 static int sq_u_x(uint32_t u) { return SQG_X0 + (int)(u * (uint32_t)(SQG_X1 - SQG_X0) / SQ_U); }   /* (u: in a bar) */
 static int sq_pos_x(uint32_t u) { return sq_u_x(u) + 4; }   /* (a flower at u: as sq_step_x) */
-static void sq_bar_notes(const sq_pat_t *p, uint32_t trk, int b, int on)
+static void sq_bar_notes(const sq_pat_t *p, uint32_t trk, int rb, int on)
 {
-    int st = p->steps[trk][b], y = SQG_Y0 + b * SQG_RH, i;
+    /* rb: the row; b: the bar whose steps grow on it (a bar a short track repeats: its first bars', faint) */
+    int b = (int)sq_src_bar(p, trk, (uint32_t)rb), st = (int)sq_steps(p, trk, (uint32_t)b), y = SQG_Y0 + rb * SQG_RH, i;
     uint32_t e, busy = 0, b0 = (uint32_t)b * SQ_U, b1 = b0 + SQ_U;
     for (e = 0; e < p->nev; e++) {               /* (the steps something grows on or runs over: no grass there) */
         const sq_ev_t *v = &p->ev[e];
@@ -206,8 +207,8 @@ static void sq_bar_notes(const sq_pat_t *p, uint32_t trk, int b, int on)
                 busy |= 1u << i;
         }
     }
-    sq_bed(b, st, on, busy);
-    sq_dim = (uint8_t)!on;
+    sq_bed(rb, st, on, busy);
+    sq_dim = (uint8_t)(!on || b != rb);
     for (e = 0; e < p->nev; e++) {
         const sq_ev_t *v = &p->ev[e];
         int x0, w0, cx[SQ_MAXST], n = 0;
@@ -249,23 +250,20 @@ static void sq_bar_notes(const sq_pat_t *p, uint32_t trk, int b, int on)
     sq_dim = 0;
 }
 
-/* one bar of DRUMS: the drum picked as tall daisies, the other drums' hits as low ones */
-static void sq_bar_drums(const sq_pat_t *p, int b, int on)
+/* one bar of DRUMS: the drum picked as tall daisies, the other drums' hits as low ones (a bar the drums repeat:
+ * their first bars', faint) */
+static void sq_bar_drums(const sq_pat_t *p, int rb, int on)
 {
-    int st = p->steps[SQ_DRUMS][b], y = SQG_Y0 + b * SQG_RH, i, w = sq_cell_x(1, st) - sq_cell_x(0, st);
+    int b = (int)sq_src_bar(p, SQ_DRUMS, (uint32_t)rb), st = (int)sq_dsteps(), y = SQG_Y0 + rb * SQG_RH, i;
+    int w = sq_cell_x(1, st) - sq_cell_x(0, st);
     uint32_t l, busy = 0;
-    uint64_t all = 0;
-    for (l = 0; l < SQ_NLANE; l++)
-        all |= p->hit[l][b];
-    for (i = 0; i < st; i++)                     /* (a hit on a step's start: no grass there) */
-        if ((all >> (i * (int)(SQ_H / (uint32_t)st))) & 1u)
-            busy |= 1u << i;
-    sq_bed(b, st, on, busy);
-    sq_dim = (uint8_t)!on;
-    for (i = 0; i < (int)SQ_H; i++) {            /* (each where it is in time: off the grid too; every second step
-                                                  * of the grid as late as SWING plays it) */
-        int x = sq_pos_x((uint32_t)i * (SQ_U / SQ_H)), gw = (int)SQ_H / st;
-        if (i % gw == 0 && (i / gw) & 1)
+    for (l = 0; l < SQ_NLANE; l++)               /* (a hit: no grass there) */
+        busy |= p->hit[l][b];
+    sq_bed(rb, st, on, busy);
+    sq_dim = (uint8_t)(!on || b != rb);
+    for (i = 0; i < st; i++) {                   /* (every second step as late as SWING plays it) */
+        int x = sq_step_x(i, st);
+        if (i & 1)
             x += p->swing * w / 200;
         if ((p->hit[squ.lane][b] >> i) & 1u) {
             sq_flower(x, y, w, 2, sq_lane_ink(squ.lane), 0);
@@ -351,7 +349,7 @@ static void draw_sq_track(void)
     if (drums) {
         str_cpy(c, sq_lane_name(squ.lane), sizeof c);
     } else {
-        int i = sq_at(p, squ.trk, squ.bar, squ.step);
+        int i = sq_at(p, squ.trk, sq_src_bar(p, squ.trk, squ.bar), squ.step);   /* (what plays there) */
         if (i >= 0)
             sq_ev_name(p, (uint32_t)i, c);
         else
@@ -386,7 +384,7 @@ static void draw_sq_track(void)
     }
     /* the cursor: a step's frame (DRUMS: the bar's) */
     {
-        int y = SQG_Y0 + squ.bar * SQG_RH - 1, st = p->steps[squ.trk][squ.bar];
+        int y = SQG_Y0 + squ.bar * SQG_RH - 1, st = (int)sq_steps(p, squ.trk, squ.bar);
         if (drums) {
             fb_rframe(SQG_X0 - 3, y, SQG_X1 - SQG_X0 + 5, SQG_RH + 1, C_ACC(0));
         } else {
@@ -430,17 +428,18 @@ static void sq_track_strip(const sq_pat_t *p, uint32_t trk, int x0, int ym, int 
     for (b0 = 0; b0 < nb; b0++) {                /* each bar of the window a dark slot 4 px tall, centred on ym (the
                                                   * owner: in the middle of the row), what plays in it over it */
         int bx = x0 + b0 * w / nb, bw = w / nb - 2;
-        int st;
-        b = p->start + b0;
-        st = p->steps[trk][b];
+        int st, sh;
+        b = (int)sq_src_bar(p, trk, (uint32_t)(p->start + b0));   /* (a bar the track repeats: its first bars', faint) */
+        sh = b != p->start + b0 ? 2 : 1;
+        st = (int)sq_steps(p, trk, (uint32_t)b);
         fb_rect(bx, ym - 2, bw, 4, FL_BG2);
         if (trk == SQ_DRUMS) {
-            for (i = 0; i < (int)SQ_H; i++) {
+            for (i = 0; i < st; i++) {
                 uint32_t l;
                 for (l = 0; l < SQ_NLANE; l++)
                     if ((p->hit[l][b] >> i) & 1u) {   /* (kick, snare, clap the slot's lower half; the rest its upper) */
-                        fb_rect(bx + i * bw / (int)SQ_H, l < 3u ? ym : ym - 2, 1 + (bw >= 2 * st), 2,
-                                FL_C(sq_lane_ink(l).ramp, 1));
+                        fb_rect(bx + i * bw / st, l < 3u ? ym : ym - 2, 1 + (bw >= 2 * st), 2,
+                                FL_C(sq_lane_ink(l).ramp, sh));
                     }
             }
         } else {
@@ -449,7 +448,7 @@ static void sq_track_strip(const sq_pat_t *p, uint32_t trk, int x0, int ym, int 
                 const sq_ev_t *v = &p->ev[e];
                 if (v->trk == trk && v->bar == b) {
                     int x = bx + v->pos * bw / (int)SQ_U, xw = v->len * bw / (int)SQ_U - 1;
-                    fb_rect(x, ym - 2, xw > 1 ? xw : 1, 4, FL_C(sq_root_ink(sqv_root(e)).ramp, 1));
+                    fb_rect(x, ym - 2, xw > 1 ? xw : 1, 4, FL_C(sq_root_ink(sqv_root(e)).ramp, sh));
                 }
             }
         }

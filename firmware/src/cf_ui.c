@@ -50,6 +50,7 @@ static void cf_send_config(void)                 /* the chord settings -> the au
 }
 static void cf_send_metro(void)
 {
+    sq_beats = (uint8_t)(cs.beats >= 2u && cs.beats <= 7u ? cs.beats : 4u);   /* (the sequencer's bar: cf_seqd.c) */
     cf_post(CFE_TEMPO, 0, 0, cs.bpm);
     cf_post(CFE_SIG, 0, 0, cs.beats);
     cf_post(CFE_METRO, 0, cs.metro_level, 0);   /* (the click only while the beat runs, PLAY: the owner, 2026-10-19;
@@ -1209,7 +1210,7 @@ static int sq_key_led(uint32_t k, uint8_t *lit, uint8_t *mid, uint8_t *dim, uint
             if ((int32_t)(cf_sn.now_ms - cf_sn.sq_lane_t[i]) < 110 && cf_sn.sq_lane_t[i])
                 cf_led(lit, id, 1);
             else
-                cf_led(i == squ.lane ? lit : p->hit[i][squ.bar] ? dim : faint, id, 1);
+                cf_led(i == squ.lane ? lit : p->hit[i][sq_src_bar(p, SQ_DRUMS, squ.bar)] ? dim : faint, id, 1);
             return 1;
         }
         if (i >= st)
@@ -1217,7 +1218,7 @@ static int sq_key_led(uint32_t k, uint8_t *lit, uint8_t *mid, uint8_t *dim, uint
         if (cf_sn.sq_on && cf_sn.sq_pat == squ.pat && !cf_sn.sq_song && cf_sn.sq_bar == squ.bar && cf_sn.sq_bt &&
             (int)(cf_sn.sq_t * (uint32_t)st / cf_sn.sq_bt) == i)
             cf_led(lit, id, 1);                  /* (the running light) */
-        else if (p->hit[squ.lane][squ.bar] & sq_span(p, squ.bar, (uint32_t)i))
+        else if ((p->hit[squ.lane][sq_src_bar(p, SQ_DRUMS, squ.bar)] >> i) & 1u)   /* (what plays in the bar) */
             cf_led(mid, id, 1);
         else if ((i * cs.beats) % st == 0)
             cf_led(faint, id, 1);
@@ -1230,7 +1231,7 @@ static int sq_key_led(uint32_t k, uint8_t *lit, uint8_t *mid, uint8_t *dim, uint
         uint32_t rk = squ.trk == SQ_LAYER ? cf_sn.sq_lkey : cf_sn.sq_ckey, bl = 0;
         uint32_t bt = squ.trk == SQ_LAYER ? cf_sn.sq_lbtns : cf_sn.sq_cbtns;
         if (rk == 0xFFu && !bt) {
-            int e = cf_sn.sq_on ? -1 : sq_at(p, squ.trk, squ.bar, squ.step);
+            int e = cf_sn.sq_on ? -1 : sq_at(p, squ.trk, sq_src_bar(p, squ.trk, squ.bar), squ.step);
             if (e < 0)
                 return 0;
             rk = p->ev[e].rootkey;
@@ -1269,7 +1270,8 @@ static void cf_leds(void)
             cf_led(blink ? mid : dim, panel.btn[B_EDIT], 1);
             cf_led(dim, panel.btn[B_SAVE], 1);
         } else {
-            int clear = squ.trk != SQ_DRUMS && sq_at(p, squ.trk, squ.bar, squ.step) >= 0;   /* (DRUMS: SEL nothing) */
+            int clear = squ.trk != SQ_DRUMS && sq_at(p, squ.trk, sq_src_bar(p, squ.trk, squ.bar), squ.step) >= 0;
+            /* (DRUMS: SEL nothing) */
             cf_led(mid, panel.btn[B_SAVE], 1);   /* (EDIT does nothing in a track: dark) */
             if (squ.trk != SQ_DRUMS)
                 cf_led(clear ? mid : faint, panel.btn[B_SCL], 1);
