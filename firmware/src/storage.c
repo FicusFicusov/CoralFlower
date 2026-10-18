@@ -27,7 +27,8 @@
  * slots 17..32 (OBJ_CZSTORE1), 0xA2000..0xB1FFF the eight CZ-1 banks A..H (cz_bank.c, OBJ_CZBANK0 + k: an A/B pair
  * each). FELUCCA_QUAD: 0xB2000 / 0xB3000 the QUAD patch store (quad_store.c, OBJ_QUADSTORE: the user sample slot 2's
  * flash); 0xB4000 / 0xB5000 the session (cr_settings.c, OBJ_SESSION: where the unit was left, 0.18);
- * 0xB6000..0xC7FFF stays free (CoralFlower: 0xB6000 / 0xB7000 its loop, OBJ_CFLOOP) */
+ * 0xB6000..0xC7FFF stays free (CoralFlower: 0xB6000 / 0xB7000 its loop, OBJ_CFLOOP; 0xB8000..0xC3FFF its sequencer's
+ * patterns and song, OBJ_CFSEQ0..5, six A/B pairs) */
 enum { OBJ_SETTINGS, OBJ_PROJECT0, OBJ_UPRESET0 = OBJ_PROJECT0 + 4, OBJ_FM6BANK = OBJ_UPRESET0 + 2,
 #if FELUCCA_CZ && FELUCCA_QUAD
        OBJ_CZSTORE1, OBJ_CZBANK0, OBJ_QUADSTORE = OBJ_CZBANK0 + 8, OBJ_SESSION, OBJ_COUNT
@@ -36,6 +37,8 @@ enum { OBJ_SETTINGS, OBJ_PROJECT0, OBJ_UPRESET0 = OBJ_PROJECT0 + 4, OBJ_FM6BANK 
 #else
 #ifdef CF_LOOP_STORE
        OBJ_CFLOOP,                             /* CoralFlower's loop (cf_loop.c): 0xB6000 / 0xB7000, free in every build */
+       OBJ_CFSEQ0,                             /* .. the sequencer's (cf_sequi.c): 0xB8000.., six pairs */
+       OBJ_CFSEQ5 = OBJ_CFSEQ0 + 5,
 #endif
        OBJ_COUNT
 #endif
@@ -92,6 +95,8 @@ static uint32_t st_sector(uint32_t obj, uint32_t copy)  /* flash offset of copy 
 #if defined(CF_LOOP_STORE) && !FELUCCA_CZ
     if (obj == OBJ_CFLOOP)
         return 0xB6000u + copy * ST_SECTOR;
+    if (obj >= OBJ_CFSEQ0 && obj <= OBJ_CFSEQ5)
+        return 0xB8000u + (obj - OBJ_CFSEQ0) * 2u * ST_SECTOR + copy * ST_SECTOR;
 #endif
     if (obj >= OBJ_UPRESET0)
         return 0xDC000u + (obj - OBJ_UPRESET0) * 2u * ST_SECTOR + copy * ST_SECTOR;

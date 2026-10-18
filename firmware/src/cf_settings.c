@@ -83,6 +83,8 @@ static void cfs_sanitize(cf_set_t *s)
     if (s->accent >= (uint8_t)CF_NTHEMES) s->accent = d.accent;
     if (s->ch_chord > 15u) s->ch_chord = d.ch_chord;
     if (s->ch_bass > 15u) s->ch_bass = d.ch_bass;
+    if (s->ch_layer > 15u) s->ch_layer = d.ch_layer;
+    if (s->ch_drums > 15u) s->ch_drums = d.ch_drums;
     if (s->click >= CF_NCLICKS) s->click = d.click;
     if (s->backdrop >= FL_NBD) s->backdrop = d.backdrop;
     s->glide_always = s->glide_always != 0;
@@ -92,7 +94,7 @@ static void cfs_sanitize(cf_set_t *s)
     s->midi_out = s->midi_out != 0;
     s->lights = s->lights != 0;
     if (s->retrig >= CF_NRT) s->retrig = d.retrig;
-    s->clock_in = s->clock_in != 0;
+    if (s->clock_in > 2u) s->clock_in = 0;      /* (0 Off, 1 In, 2 Out) */
     s->boot_sound = s->boot_sound != 0;
     if (s->arp.mode >= CF_ARP_NMODES || s->arp.oct < 1u || s->arp.oct > 4u || s->arp.rate >= CF_ARP_NRATES ||
         s->arp.gate < 20u || s->arp.gate > 100u || s->arp.swing < 50u || s->arp.swing > 75u || s->arp.latch > 1u ||

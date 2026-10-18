@@ -3,6 +3,7 @@
  *
  *   sh tools/emu/cf_headless.sh SCRIPT [OUTDIR]
  *
+ * dump also counts what went out on MIDI since the start (clock, start, stop, note-ons by channel).
  * Script lines ('#' lines are comments): wait MS | key K down|up (K: 0..26 or a note name such as C4; keyq: the same with
  *   no time after it, for keys pressed at once) | clock BPM MS (MIDI clock in) | midi start|continue|stop | btn NAME (a tap: FX SEL
  * ENV LFO EDIT GLO HOME SAVE ARP SEQ PLAY REC OCT- OCT+) | hold NAME down|up | turn ROLE N (SELECT ALGORITHM PRESETS
@@ -66,15 +67,29 @@ static void wav_hdr(FILE *f, uint32_t frames)
     v = 16; fwrite(&v, 4, 1, f); v = 0x00020001u; fwrite(&v, 4, 1, f); v = 44100; fwrite(&v, 4, 1, f);
     v = 44100 * 4; fwrite(&v, 4, 1, f); v = 0x00100004u; fwrite(&v, 4, 1, f); fwrite("data", 1, 4, f); fwrite(&data, 4, 1, f);
 }
+extern uint32_t web_midi_out_take(void);
+static uint32_t mo_count[256];                   /* MIDI out, drained as it runs: packets by status byte (dump) */
+static void mo_drain(void)
+{
+    uint32_t p;
+    while ((p = web_midi_out_take()) != 0u)
+        mo_count[(p >> 8) & 0xFFu]++;
+}
 static void step(uint32_t ms)
 {
     if (!wav) {
-        web_step(ms);
+        while (ms) {                             /* (10 ms at a time: MIDI out drained before its queue fills) */
+            uint32_t k = ms > 10u ? 10u : ms;
+            web_step(k);
+            mo_drain();
+            ms -= k;
+        }
         return;
     }
     while (ms--) {   /* 1 ms = 44.1 frames: render in 441-frame chunks every 10 ms */
         static uint32_t acc;
         web_step(1);
+        mo_drain();
         if (++acc >= 10u) {
             uint32_t i;
             int16_t s[441 * 2];
@@ -190,7 +205,13 @@ int main(int argc, char **argv)
             step(40);
             shot(dir, a);
         } else if (!strcmp(cmd, "dump")) {
+            uint32_t on = 0, c;
             web_dump();
+            for (c = 0x90u; c <= 0x9Fu; c++)
+                on += mo_count[c];
+            printf("  midi out: clock F8 %u, start FA %u, stop FC %u, notes on %u (ch 1 %u, 2 %u, 3 %u, 10 %u)\n",
+                   (unsigned)mo_count[0xF8], (unsigned)mo_count[0xFA], (unsigned)mo_count[0xFC], (unsigned)on,
+                   (unsigned)mo_count[0x90], (unsigned)mo_count[0x91], (unsigned)mo_count[0x92], (unsigned)mo_count[0x99]);
         } else if (!strcmp(cmd, "wav")) {
             if (!strcmp(a, "on") && !wav) {
                 char p[512];

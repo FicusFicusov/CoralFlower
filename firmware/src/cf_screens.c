@@ -57,6 +57,7 @@ static void draw_top_sound(uint32_t part)
 }
 
 #include "cf_views.c"                           /* (the heads, the pager, the central pictures) */
+#include "cf_seqv.c"                            /* (the SEQUENCER screens' pictures) */
 static void draw_title(const char *t, const char *note);
 /* ------------------------------------------------------------------- FX --- */
 /* the selected effect's own little picture, x0..x0+w along, its foot on yb, at most h tall */
@@ -323,17 +324,18 @@ static void draw_edit(void)
 
 static void draw_generic(void)
 {
-    static const char *const PG_GLO[3] = {"Display", "MIDI", "Play"};
+    static const char *const PG_GLO[4] = {"Display", "MIDI", "Channels", "Play"};
     flora_render(&flo, &fl_cv);
     draw_plant(Y_VIEW);
     fb_veil(0, Y_VIEW, FB_W, H_VIEW, FL_BG);   /* (the plant faint: the picture leads) */
     switch (cu.scr) {
     case SCR_GLO: {
         static const char *const H[2] = {"SELECT", "page"};
-        static void (*const V[3])(int) = {view_display, view_midi, view_play};
-        uint32_t p = cu.page[SCR_GLO] % 3u;
+        static void (*const V[4])(int) = {view_display, view_midi, view_midi, view_play};   /* (MIDI and Channels:
+                                                                                               * one picture) */
+        uint32_t p = cu.page[SCR_GLO] % 4u;
         draw_head(PG_GLO[p]);
-        draw_pager((int)p, 3, 1, 0);
+        draw_pager((int)p, 4, 1, 0);
         draw_view(V[p]);
         draw_hints(H, 1);
         break;
@@ -359,6 +361,15 @@ static void draw_generic(void)
         kint(s2, cs.beats, 0);
         str_cpy(s2 + str_len(s2), cs.beats == 6 ? "/8" : "/4", 4);
         draw_title(b, s2);
+        /* (the owner's words, in the middle of the picture: on one line it ran edge to edge, at the foot it sat on
+         * the keys; "по центру экрана", 2026-10-19) */
+        draw_chip_text_c(Y_VIEW + 70, "Press [SEQ] again", FL_INK2);
+        draw_chip_text_c(Y_VIEW + 84, "to open sequencer", FL_INK2);
+        {
+            static const char *const H[2] = {"PLAY", "start"};   /* (the click sounds only while the beat runs) */
+            static const char *const H2[2] = {"PLAY", "stop"};
+            draw_hints(cf_sn.running ? H2 : H, 1);
+        }
         break;
     }
     case SCR_ARP: {                              /* the mode; Pattern and Feel; the pattern pictured */
@@ -373,15 +384,26 @@ static void draw_generic(void)
         break;
     }
     case SCR_SAVE: {                             /* the name being given, its letter under edit; Chord / Bass / Loop */
-        static const char *const PG[3] = {"Chord", "Bass", "Loop"};
+        static const char *const PG[4] = {"Chord", "Bass", "Loop", "Pattern"};
         static const char *const H[4] = {"SELECT", "part", "SAVE", "hold"};
         uint32_t part = cu.page[SCR_SAVE] & 1u;
         char pre[13];
+        if (cu.page[SCR_SAVE] == 3u) {           /* the sequencer's pattern: copied or cleared */
+            char t[12];
+            str_cpy(t, "Pattern ", sizeof t);
+            t[8] = (char)('A' + sq_save_src);
+            t[9] = 0;
+            draw_head(t);
+            draw_pager(3, 4, 1, PG[3]);
+            draw_view(view_save_pattern);
+            draw_hints(H, 2);
+            break;
+        }
         if (cu.page[SCR_SAVE] == 2u) {           /* the loop */
             char b[24];
             cv_loop_note(b);
             draw_head(cf_sn.loop_len ? "Loop" : "No loop");
-            draw_pager(2, 3, 1, PG[2]);
+            draw_pager(2, 4, 1, PG[2]);
             if (cf_sn.loop_len && cf_sn.loop_gen != cu.loop_saved_gen)
                 fb_text_r(&CF_FONT_UI, 234, HEAD_LINE, "not saved", C_ACC(1), 1);
             else if (b[0])
@@ -393,7 +415,7 @@ static void draw_generic(void)
         draw_head(cu.save_name[0] ? cu.save_name : " ");
         str_cpy(pre, cu.save_name, (uint32_t)cu.save_cur + 1u);
         fb_rect(6 + fb_text_w(&CF_FONT_UI, pre, 2), HEAD_Y + 25, 13, 2, C_ACC(0));   /* (under the letter K3 sets) */
-        draw_pager((int)part, 3, 1, PG[part]);
+        draw_pager((int)part, 4, 1, PG[part]);
         if (cu.edited[part])
             fb_text_r(&CF_FONT_UI, 234, HEAD_LINE, "edited", C_ACC(1), 1);
         draw_view(view_save);
@@ -420,7 +442,7 @@ static void draw_pop_sound(uint32_t part)
     uint32_t n = cf_snd_count(part), pos = cf_snd_pos(part);
     char a[4], b[4], t[12];
     draw_panel(x, y, w, h);
-    fb_text(&CF_FONT_UI, x + 8, y + 5, part ? "BASS SOUND" : "CHORD SOUND", C_ACC(0), 1);
+    fb_text(&CF_FONT_UI, x + 8, y + 5, part == 2u ? "LAYER SOUND" : part ? "BASS SOUND" : "CHORD SOUND", C_ACC(0), 1);
     snd_num(pos, a);
     snd_num(n ? n - 1u : 0u, b);
     str_cpy(t, a, sizeof t);
@@ -466,6 +488,7 @@ static void draw_popup(void)
     switch (cu.pop) {
     case POP_SOUND_CHORD: draw_pop_sound(CF_PART_CHORD); break;
     case POP_SOUND_BASS: draw_pop_sound(CF_PART_BASS); break;
+    case POP_SOUND_LAYER: draw_pop_sound(CF_PART_LAYER); break;
     case POP_ALGO: draw_pop_algo(); break;
     case POP_OCTAVE: {
         char b[12];
@@ -511,6 +534,19 @@ static void cf_ui_draw(void)
                 fb_text(&CF_FONT_UI, x + 3, Y_TOP + 1, "ARP", FL_BG, 1);
                 x -= 4;
             }
+            if (cf_sn.sq_on) {                   /* the sequencer plays: its pattern (the song's) and bar */
+                char b[12];
+                int w;
+                str_cpy(b, cf_sn.sq_song ? "SONG " : "SEQ ", sizeof b);
+                b[str_len(b) + 1] = 0;
+                b[str_len(b)] = (char)('A' + cf_sn.sq_pat % SQ_NPAT);   /* (the letter alone: "A3" read as a note) */
+                w = fb_text_w(&CF_FONT_UI, b, 1) + 12;
+                x -= w;
+                fb_rbox(x, Y_TOP + 2, w, 11, 2, cf_panel(2));
+                fb_rect(x + 3, Y_TOP + 5, 4, 4, C_ACC(0));
+                fb_text(&CF_FONT_UI, x + 9, Y_TOP + 1, b, FL_INK, 1);
+                x -= 4;
+            }
             if (cf_sn.loop_cap != CFL_CAP_NONE || cf_sn.loop_state != CFL_EMPTY) {   /* the loop: REC / where */
                 char b[12];
                 int rec = cf_sn.loop_cap == CFL_CAP_REC || cf_sn.loop_cap == CFL_CAP_OD ||
@@ -532,7 +568,9 @@ static void cf_ui_draw(void)
         }
         (void)top;
     } else {
-        draw_topbar(SCR_NAME[cu.scr], 0);
+        draw_topbar(cu.scr == SCR_SQED ? (squ.trk == SQ_DRUMS ? "DRUMS" : squ.trk == SQ_BASS ? "BASS" :
+                                          squ.trk == SQ_LAYER ? "LAYER" : "CHORDS") :
+                    SCR_NAME[cu.scr], 0);
         if (cu.scr == SCR_EDIT)                  /* the sound edited, after SOUND */
             fb_text(&CF_FONT_UI, 4 + fb_text_w(&CF_FONT_UI, SCR_NAME[cu.scr], 1) + 7, Y_TOP + 1,
                     cf_snd[cu.edit_part].name, FL_INK3, 1);
@@ -549,11 +587,21 @@ static void cf_ui_draw(void)
         draw_edit();
     else if (cu.scr == SCR_FX)
         draw_fx();
+    else if (sq_screen(cu.scr))
+        draw_seq();
     else
         draw_generic();
     draw_popup();
     fb_unclip();
-    if (cu.scr != SCR_HOME)
+    if (cu.scr == SCR_SQED) {                    /* the open track and its sound (PRESETS turns it) */
+        const char *tn = squ.trk == SQ_DRUMS ? "DRUMS" : squ.trk == SQ_BASS ? "BASS" : squ.trk == SQ_LAYER ? "LAYER" :
+                         "CHORDS";
+        const char *sn = squ.trk == SQ_DRUMS ? sq_kit_name(sq_cur()) : cf_snd[squ.trk == SQ_LAYER ? CF_PART_LAYER :
+                         squ.trk == SQ_BASS ? CF_PART_BASS : CF_PART_CHORD].name;
+        int x = 4 + fb_text_w(&CF_FONT_UI, tn, 1) + 7;
+        fb_text(&CF_FONT_UI, x, Y_TOP + 1, sn, FL_INK3, 1);
+        draw_top_hints(x + fb_text_w(&CF_FONT_UI, sn, 1));
+    } else if (cu.scr != SCR_HOME)
         draw_top_hints(4 + fb_text_w(&CF_FONT_UI, SCR_NAME[cu.scr], 1) +
                        (cu.scr == SCR_EDIT ? 7 + fb_text_w(&CF_FONT_UI, cf_snd[cu.edit_part].name, 1) : 0));
     if (cu.upd_left) {                           /* the update gesture: a countdown over everything */
@@ -567,6 +615,9 @@ static void cf_ui_draw(void)
         cf_present();
         return;
     }
+    fb_rect(0, Y_VIEW + H_VIEW, FB_W, Y_KEYS - Y_VIEW - H_VIEW, FL_BG);   /* the gap over the keys: the intro's plant
+                                                  * (cf_splash.c, 4 px lower) left its stem's foot there, and no
+                                                  * screen draws it (the owner saw it over the m6 key, 2026-10-19) */
     draw_keys();
     draw_knobs();
     cf_present();

@@ -23,7 +23,9 @@
 #ifndef ENGI_VA
 #define ENGI_VA (13u + FELUCCA_SLICE)   /* engines.c ENGINES[] (append-only): 13 on ChoralRoot */
 #endif
-#define VA_NPART 2u              /* parts with a VA patch (ChoralRoot: chord, bass) */
+#ifndef VA_NPART
+#define VA_NPART 2u              /* parts with a VA patch (ChoralRoot: chord, bass; CoralFlower: and its LAYER) */
+#endif
 #define VA_POLY 8                /* engine_t.poly (docs/VA.md: CPU) */
 #define VA_BLOB 110u             /* packed patch: 2 bytes magic / version, VA_NP values, zero padding */
 #define VA_MAGIC 0x56u           /* 'V' */

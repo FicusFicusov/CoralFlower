@@ -15,10 +15,13 @@ enum {
     SCR_SEQ,       /* SEQ: the metronome */
     SCR_SAVE,      /* SAVE */
     SCR_LOOP,      /* PLAY held: the looper */
+    SCR_SQ,        /* SEQ again: the sequencer, a pattern's tracks or the song (cf_sequi.c) */
+    SCR_SQED,      /* .. a track open: its steps */
     SCR_N
 };
 static const char *const SCR_NAME[SCR_N] = {"HOME", "CHORD", "ENVELOPE", "BASS", "SOUND", "GLOBAL", "EFFECTS",
-                                             "ARPEGGIO", "METRONOME", "SAVE", "LOOPER"};
+                                             "ARPEGGIO", "METRONOME", "SAVE", "LOOPER", "SEQUENCER",
+                                             "PATTERN"};
 
 /* themes: the one interface colour (GLO > Display > COLOR), a palette ramp, after the M-VAVE synths' panel
  * colours and a few more */
@@ -60,8 +63,13 @@ typedef struct {
                                   * the whole new chord strikes, the shared tones too, gliding from the last chord */
     cf_arp_t arp;                /* the arpeggiator's settings (ARP; on / off is not kept: off at power-on) */
     cf_loop_t loop;              /* the looper's settings (LOOPER; the loop itself: SAVE > Loop, OBJ_CFLOOP) */
-    uint8_t clock_in;            /* GLO > MIDI > CLOCK IN: MIDI clock's pulses run the beat, start / stop the loop */
+    uint8_t clock_in;            /* GLO > MIDI > CLOCK: 0 Off; 1 In, MIDI clock's pulses run the beat, start / stop the
+                                  * loop; 2 Out, the unit sends its beat as MIDI clock */
     uint8_t boot_sound;          /* GLO > Display > BOOT SOUND: the chime with the intro */
+    uint8_t level_chord, level_layer, level_drums;   /* the parts' P_LEVEL (the sequencer's tracks, K1; the bass's:
+                                                      * bass_level) */
+    uint16_t snd_layer;          /* the LAYER's sound (part 2): its index in the chord sounds' row; 0xFFFF: the default */
+    uint8_t ch_layer, ch_drums;  /* GLO > Channels: the sequencer's LAYER and DRUMS out on MIDI, 0..15 */
 } cf_set_t;
 
 static cf_set_t cs;
@@ -97,6 +105,11 @@ static void cs_defaults(cf_set_t *s)
         s->loop = L;
     }
     s->boot_sound = 1;
+    s->level_chord = s->level_layer = 104;       /* (params.c P_LEVEL's own) */
+    s->level_drums = 104;
+    s->snd_layer = 0xFFFFu;
+    s->ch_layer = 2;                             /* (channel 3) */
+    s->ch_drums = 9;                             /* (channel 10: General MIDI's drums) */
 }
 
 /* --------------------------------------------------------- the UI's own --- */
@@ -132,7 +145,7 @@ typedef struct {
     uint8_t upd_left, upd_stub;  /* the update gesture's countdown (cf_shim.c cr_update_poll) */
     uint8_t edited[2];           /* a part's sound changed since it was loaded (SAVE keeps it) */
 } cf_ui_t;
-enum { POP_NONE, POP_SOUND_CHORD, POP_SOUND_BASS, POP_ALGO, POP_OCTAVE, POP_MSG };
+enum { POP_NONE, POP_SOUND_CHORD, POP_SOUND_BASS, POP_ALGO, POP_OCTAVE, POP_MSG, POP_SOUND_LAYER };
 static cf_ui_t cu;
 
 /* the plant */

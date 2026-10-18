@@ -33,7 +33,14 @@
 #define FELUCCA_FM4 0
 #define FELUCCA_SAMPLE 0
 #define FELUCCA_GRAIN 0
-#define FELUCCA_DRUM 0
+#define FELUCCA_DRUM 1             /* the sequencer's DRUMS (part 3: eng_drum.c keeps its own state) */
+#define DRUM_PART0 3u              /* eng_drum.c: the kit's state for part 3 alone */
+#define DRUM_NPART 1u
+#define DRUM_LANE_KNOBS 1         /* eng_drum.c: each drum its own kit (the sequencer mixes kits) */
+#define ENG_STATE_NPART 3u         /* engines.c: the chord, the bass and the sequencer's LAYER (part 2, a sound of its
+                                    * own) have an engine's state; the drums need none */
+#define VA_NPART 3u                /* eng_va.c: .. and a VA patch */
+#define MIX_NPART 4u               /* fx.c: all four parts sound */
 #define FELUCCA_ANALOG 0
 #define FELUCCA_PHASE 0
 #define FELUCCA_LOFI 0

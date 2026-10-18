@@ -37,7 +37,15 @@
 #define FELUCCA_GRAIN 0
 #endif
 #ifndef FELUCCA_DRUM
-#define FELUCCA_DRUM 0
+#define FELUCCA_DRUM 1                                /* as coralflower.c: the sequencer's DRUMS on part 2 */
+#endif
+#define DRUM_PART0 3u              /* as coralflower.c: the drums on part 3, the LAYER on part 2 */
+#define DRUM_NPART 1u
+#define DRUM_LANE_KNOBS 1          /* as coralflower.c: each drum its own kit */
+#define ENG_STATE_NPART 3u
+#define VA_NPART 3u
+#ifndef MIX_NPART
+#define MIX_NPART 4u
 #endif
 #ifndef FELUCCA_ANALOG
 #define FELUCCA_ANALOG 0                              /* as choralroot.c: ANALOG retired (engine 0) */

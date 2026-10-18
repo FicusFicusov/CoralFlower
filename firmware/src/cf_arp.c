@@ -93,7 +93,7 @@ static int cfa_pick(uint32_t i)
 static void cfa_note_off(void)
 {
     if (cfa.cur)
-        cfp_off(0, cfa.cur);
+        cfp_off(cfp_cp, cfa.cur);
     cfa.cur = 0;
 }
 static void cfa_strum_off(void)
@@ -101,7 +101,7 @@ static void cfa_strum_off(void)
     uint32_t i;
     for (i = 0; i < cfa.sn; i++)
         if (cfa.son[i]) {
-            cfp_off(0, cfa.snote[i]);
+            cfp_off(cfp_cp, cfa.snote[i]);
             cfa.son[i] = 0;
         }
     cfa.sn = cfa.si = 0;
@@ -119,7 +119,7 @@ static void cfa_play(uint32_t note)
 #ifdef CF_TRACE
     fprintf(stderr, "%6u arp %u\n", (unsigned)cf_now_ms, (unsigned)note);
 #endif
-    cfp_on(0, note, cfp_cfg.vel);
+    cfp_on(cfp_cp, note, cfp_cfg.vel);
     cfa.steps++;
     cfa.last_note = (uint8_t)note;
 }

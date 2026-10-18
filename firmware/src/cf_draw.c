@@ -16,7 +16,8 @@
 #define Y_KNOBS 203
 
 typedef struct { char name[12]; char val[14]; int16_t bar; uint8_t dis, sel; } cf_knob_t;   /* bar 0..255, -1 none */
-typedef struct { char top[8]; char bot[8]; uint8_t style, btn; } cf_keycap_t;   /* btn: a chord button's cap */
+typedef struct { char top[8]; char bot[8]; uint8_t style, btn, icon; } cf_keycap_t;   /* btn: a chord button's cap;
+                                                                                   * icon: a drum's picture (1 + lane) */
 enum { KC_ROOT, KC_BTN, KC_ON, KC_DOWN, KC_OFF, KC_SOUNDING, KC_SCALE };
 
 static void ui_knob_info(int k, cf_knob_t *o);           /* cf_ui.c */
@@ -126,6 +127,29 @@ static void draw_button_name(int x, int y, int w, int h, const char *name, uint8
         fb_text(&CF_FONT_MICRO, cx + wl, y + (h - 8) / 2, dg, ink, 1);
 }
 
+/* a drum's picture on its key (the sequencer's DRUMS): 7 x 7, centred on cx, cy */
+static void draw_drum_icon(int cx, int cy, uint32_t lane, uint8_t c)
+{
+    static const char *const IC[11][7] = {
+        {"..###..", ".#...#.", "#..#..#", "#.###.#", "#..#..#", ".#...#.", "..###.."},   /* kick: the skin, the beater */
+        {".#####.", "#.....#", "#######", "#.#.#.#", "#.#.#.#", "#######", "......."},   /* snare: the shell, its wires */
+        {"#..#..#", ".#.#.#.", "..###..", "###.###", "..###..", ".#.#.#.", "#..#..#"},   /* clap: a burst */
+        {".......", "..###..", "#######", "#######", "...#...", "...#...", "..###.."},   /* hat: two cymbals shut */
+        {"..###..", "#######", ".......", "#######", "...#...", "...#...", "..###.."},   /* open hat: apart */
+        {".......", ".#####.", "#.....#", "#######", "#.....#", "#######", "..#.#.."},   /* low tom: the big one */
+        {".......", ".......", ".#####.", ".#...#.", ".#####.", ".#####.", "..#.#.."},   /* mid tom */
+        {".......", ".......", ".......", "..###..", "..#.#..", "..###..", "..#.#.."},   /* high tom: the small one */
+        {"#......", ".#.....", "..#....", "#######", "#..#..#", "#######", "......."},   /* rim: a stick on the edge */
+        {"...#...", "..###..", "..###..", ".#####.", ".#####.", "#######", "...#..."},   /* bell */
+        {"##.....", "..###..", ".....##", "...#...", "...#...", "...#...", "..###.."},   /* crash: a tilted cymbal */
+    };
+    int i, j;
+    for (j = 0; j < 7; j++)
+        for (i = 0; i < 7; i++)
+            if (IC[lane % 11u][j][i] == '#')
+                fb_pset(cx - 3 + i, cy - 3 + j, c);
+}
+
 /* a keycap: a chord button (upper row) shows its name; a root key (lower row) its note over the scale degree, both
  * in the UI face (the UI face's caps are 8 rows, 3 rows under the top of its cell). A name the UI face cannot fit
  * (OFF) is drawn in the micro face. */
@@ -139,6 +163,7 @@ static void draw_keycap(int key)
     c.top[0] = c.bot[0] = 0;
     c.style = KC_ROOT;
     c.btn = 0;
+    c.icon = 0;
     ui_keycap(key, &c);
     switch (c.style) {
     case KC_ON: fill = C_ACC(1); ink = FL_BG; ink2 = FL_BG; break;
@@ -150,6 +175,10 @@ static void draw_keycap(int key)
     default: fill = cf_panel(1); ink = FL_INK2; ink2 = FL_INK3; break;
     }
     fb_rbox(x, y, w, h, 1, fill);
+    if (c.icon) {
+        draw_drum_icon(x + w / 2, y + h / 2, c.icon - 1u, ink);
+        return;
+    }
     if (!c.top[0])
         return;
     fb_signs(c.top, b, sizeof b);
@@ -279,8 +308,8 @@ static int draw_chip(int x, int y, const char *name)
     return w;
 }
 /* a caption whose [NAMES] are controls, drawn as chips ("hold [SAVE] to keep it": a space next to a chip becomes a
- * 4-pixel gap); returns the width */
-static int draw_chip_text(int x, int y, const char *s, uint8_t c)
+ * 4-pixel gap); returns the width. draw 0: the width only */
+static int chip_text(int x, int y, const char *s, uint8_t c, int draw)
 {
     char b[32];
     int x0 = x;
@@ -292,7 +321,7 @@ static int draw_chip_text(int x, int y, const char *s, uint8_t c)
             b[n] = 0;
             if (*s == ']')
                 s++;
-            x += draw_chip(x, y, b);
+            x += draw ? draw_chip(x, y, b) : fb_text_w(&CF_FONT_UI, b, 1) + 6;
             if (*s == ' ' || *s == ':' || *s == ',')
                 x += *s == ' ' ? (s++, 4) : 1;
             continue;
@@ -302,12 +331,16 @@ static int draw_chip_text(int x, int y, const char *s, uint8_t c)
         if (*s == '[' && n && b[n - 1u] == ' ')
             n--;                                 /* (the space before a chip: a gap instead) */
         b[n] = 0;
-        x += fb_text_halo(&CF_FONT_UI, x, y, b, c, FL_BG, 1);
+        x += draw ? fb_text_halo(&CF_FONT_UI, x, y, b, c, FL_BG, 1) : fb_text_w(&CF_FONT_UI, b, 1);
         if (*s == '[')
             x += 4;
     }
     return x - x0;
 }
+static int draw_chip_text(int x, int y, const char *s, uint8_t c) { return chip_text(x, y, s, c, 1); }
+/* .. centred on the screen (a caption under a screen's picture: the owner, 2026-10-19, "по центру, не прибивать к
+ * краю") */
+static void draw_chip_text_c(int y, const char *s, uint8_t c) { chip_text((FB_W - chip_text(0, 0, s, c, 0)) / 2, y, s, c, 1); }
 static void draw_top_hints(int left)            /* left: where the screen's name ends */
 {
     int n = cu_nhints, x, i;

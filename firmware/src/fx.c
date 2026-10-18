@@ -1149,7 +1149,9 @@ static void mix_part(track_t *t, uint32_t n)
  * routes are parts 0 / 1), so their matrix, render and mix have nothing to do. What a silent part still does to the
  * others stays: its LFO's tick (voice.c lfo_rand: part 3's S&H draws from the shared generator, whose sequence the
  * engines' noise and the notes' RAND follow) and the SLICER's step clock (slicer.c: a stub in the unit). */
+#ifndef MIX_NPART
 #define MIX_NPART ENG_STATE_NPART
+#endif
 static void mix_part_idle(track_t *t, uint32_t n)
 {
     track_lfo_tick(t);

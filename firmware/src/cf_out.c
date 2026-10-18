@@ -225,6 +225,8 @@ enum {
     CFE_SIG,          /* v: beats a bar 1..12 */
     CFE_TRANSPORT,    /* v: 1 start (from beat 1), 0 stop */
     CFE_LOOP,         /* a: 0 REC tapped, 1 PLAY tapped, 2 REC held (undo), 3 cleared (SAVE > Loop > Delete) */
+    CFE_SEQ,          /* the sequencer: a 0 stop, 1 play pattern b (SQ_NPAT: the song from place v), 2 drum b heard (kit v),
+                       * 3 pattern b next (the song from place v), 4 a take on pattern b, track v, 5 the take ends */
 };
 typedef struct { uint8_t op, a, b, rsv; int16_t v; } cf_ev_in_t;
 #define CF_EVQ 128u                              /* a power of two */
@@ -309,6 +311,38 @@ static void cfm_tick(uint32_t n, uint32_t pulses)
                                                                           * without a 64-bit division, which the
                                                                           * device has none of) */
 }
+/* MIDI clock out (CLOCK Out): while the beat runs (PLAY, a loop, the sequencer), 24 pulses a beat on the metronome's
+ * own grid (cf_grid.g24: a beat's first pulse is its downbeat), a start when it begins, a stop when it ends. USB MIDI
+ * CIN 0x0F: a single-byte system real-time message (as ChoralRoot's cr_out.c sent them) */
+static struct { uint8_t was; uint32_t g24, gen; } cfo;
+static void cf_clock_out(void)
+{
+    int run = cfp_cfg.clock_out && cfp_cfg.midi_out && cfm.running && !cfx_in.active;
+    if (run != cfo.was) {
+        cfo.was = (uint8_t)run;
+        midi_out_event(0x0Fu | (run ? 0xFAu : 0xFCu) << 8);
+        cfo.g24 = cf_grid.g24;
+        cfo.gen = cf_grid.gen;
+        if (run)
+            midi_out_event(0x0Fu | 0xF8u << 8);  /* (the downbeat's pulse with the start) */
+        return;
+    }
+    if (!run)
+        return;
+    if (cfo.gen != cf_grid.gen) {                /* the beat started again from 1 (a new take, the sequencer's PLAY):
+                                                  * start again with it */
+        cfo.gen = cf_grid.gen;
+        cfo.g24 = cf_grid.g24;
+        midi_out_event(0x0Fu | 0xFAu << 8);
+        midi_out_event(0x0Fu | 0xF8u << 8);
+        return;
+    }
+    while (cfo.g24 < cf_grid.g24) {
+        cfo.g24++;
+        midi_out_event(0x0Fu | 0xF8u << 8);
+    }
+}
+
 static void cfm_restart(void)
 {
     cfm.acc = 0;
@@ -318,6 +352,8 @@ static void cfm_restart(void)
 }
 
 #include "cf_loop.c"                             /* (the looper: on the metronome's clock) */
+#include "cf_seqd.c"                             /* (the sequencer's patterns and song) */
+#include "cf_seqp.c"                             /* (.. playing them) */
 
 /* the metronome's sounds: a decaying resonator (the accent on the downbeat a different pitch), some with noise.
  * a1 = 2 r cos w and a2 = r^2 (Q14), s = sin w (x 10000) sets the start; len: samples to -60 dB; noise: % */
@@ -339,7 +375,8 @@ static void cf_click_mix(int32_t *out, uint32_t n)
     uint32_t i;
     if (cfm.click) {
         const cf_click_t *k = &CF_CLICKS[cf_click_sound < CF_NCLICKS ? cf_click_sound : 0];
-        int32_t lv = cfl.click && cfm.level < 60u ? 60 : (int32_t)cfm.level;   /* (a count-in is always heard) */
+        int32_t lv = (cfl.click || sqp.click) && cfm.level < 60u ? 60 : (int32_t)cfm.level;   /* (a count-in and a
+                                                                                              * take are always heard) */
         int32_t amp = (cfm.on || cfm.running) ? 10000 * lv / 100 : 0;
         int acc = cfm.click == 2u;
         cf_ck_a1 = acc ? k->a1_acc : k->a1;
@@ -432,8 +469,23 @@ static void cf_apply(const cf_ev_in_t *e)
         break;
     case CFE_CONFIG: cfp_config(); break;
     case CFE_PANIC:
+        sqp_stop();
         cfl_panic();
         cfp_panic();
+        break;
+    case CFE_SEQ:
+        if (e->a == 1)
+            sqp_start(e->b, (uint32_t)e->v);
+        else if (e->a == 2)
+            sqp_audition(e->b, (uint32_t)e->v);
+        else if (e->a == 3)
+            sqp_queue(e->b, (uint32_t)e->v);
+        else if (e->a == 4)
+            sqp_rec_start(e->b, (uint32_t)e->v);
+        else if (e->a == 5)
+            sqp_rec_stop();
+        else
+            sqp_stop();
         break;
     case CFE_LOOP:
         if (e->a == 0)
@@ -509,7 +561,9 @@ static void cf_audio_block(uint32_t n)
         cfx_in.active = cfp_cfg.clock_in && cfx_in.bpm && (uint32_t)(cf_now_ms - cfx_in.last_ms) < 300u;
         cfa_tick(n);                             /* (the arpeggiator: its steps, its strum) */
         cfl_tick(n, pulses);                     /* (the looper: its takes, its playing) */
+        sqp_tick(n, pulses);                     /* (the sequencer) */
         cfm_tick(n, pulses);
+        cf_clock_out();
     }
 }
 
@@ -528,6 +582,15 @@ typedef struct {
     uint16_t loop_nev;
     uint8_t ext_clock;           /* MIDI clock in runs the beat */
     uint16_t ext_bpm;            /* .. at this tempo */
+    uint8_t sq_on, sq_song, sq_pat, sq_slot, sq_bar;   /* the sequencer: playing, the song, where */
+    uint32_t sq_t, sq_bt;        /* .. ticks into the bar, of the bar */
+    uint8_t sq_lit[SQ_NTRK];     /* .. each track's step that sounded last */
+    uint32_t sq_lit_t[SQ_NTRK];  /* .. when */
+    uint32_t sq_lane_t[SQ_NLANE];   /* .. each drum's last hit */
+    uint8_t sq_rec, sq_next;     /* .. a take's track (0xFF none); the pattern coming in next (0xFF none) */
+    uint32_t sq_cin;             /* .. count-in ticks left */
+    uint8_t sq_ckey, sq_lkey;    /* .. the chord, the layer sounding: its root key (0xFF), its buttons */
+    uint16_t sq_cbtns, sq_lbtns;
 } cf_sn_t;
 static cf_sn_t cf_sn;
 
@@ -570,5 +633,25 @@ static void cf_snapshot(void)
     cf_sn.beats_done = cfm.beats_done;
     cf_sn.beat_ms = cfm.beat_ms;
     cf_sn.now_ms = cf_now_ms;
+    cf_sn.sq_on = sqp.on;
+    cf_sn.sq_rec = sqp.rec;
+    cf_sn.sq_next = sqp.next;
+    cf_sn.sq_cin = sqp.cin;
+    cf_sn.sq_song = sqp.song;
+    cf_sn.sq_pat = sqp.pat;
+    cf_sn.sq_slot = sqp.slot;
+    cf_sn.sq_bar = sqp.bar;
+    cf_sn.sq_t = sqp.t;
+    cf_sn.sq_bt = sqp_bar_ticks();
+    for (i = 0; i < SQ_NTRK; i++) {
+        cf_sn.sq_lit[i] = sqp.lit[i];
+        cf_sn.sq_lit_t[i] = sqp.lit_t[i];
+    }
+    for (i = 0; i < SQ_NLANE; i++)
+        cf_sn.sq_lane_t[i] = sqp.lane_t[i];
+    cf_sn.sq_ckey = sqp.on && sqp.n ? sqp.ckey : 0xFFu;
+    cf_sn.sq_cbtns = sqp.on && sqp.n ? sqp.cbtns : 0u;
+    cf_sn.sq_lkey = sqp.on && sqp.ln ? sqp.lkey : 0xFFu;
+    cf_sn.sq_lbtns = sqp.on && sqp.ln ? sqp.lbtns : 0u;
     fm1_irq_on();
 }

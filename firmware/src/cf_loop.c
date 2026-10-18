@@ -79,7 +79,7 @@ static const cf_chord_out_t *cfl_chord(int *n)
 static void cfl_off(uint32_t part, uint32_t note)
 {
     uint32_t ch = part ? cfp_cfg.ch_bass : cfp_cfg.ch_chord;
-    if (cfp_holds(part, note))                       /* (the keys sound it too: they let it go) */
+    if (cfp_holds(part, note) || sqp_holds(part, note))   /* (the keys or the sequencer sound it too: they let go) */
         return;
     trk_note_off(&trk[part], note);
     cfp_midi(0x80u, ch, note, 0);

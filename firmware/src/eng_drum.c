@@ -46,7 +46,30 @@ typedef struct {
     uint8_t pad;
 } drum_lane_t;
 
-static drum_lane_t drum_kit[NPART][DV_NLANE] __attribute__((section(".pool")));
+/* DRUM_PART0, DRUM_NPART: the parts that can play the kit (Felucca's: all four; CoralFlower: its sequencer's part 2
+ * alone, 1.8 KB instead of 7.3) */
+#ifndef DRUM_PART0
+#define DRUM_PART0 0u
+#define DRUM_NPART NPART
+#endif
+static drum_lane_t drum_kit[DRUM_NPART][DV_NLANE] __attribute__((section(".pool")));
+
+/* DRUM_LANE_KNOBS: each lane takes its own eight knobs (KIT .. DRV) from drum_lane_knobs, set by the caller before a
+ * hit (CoralFlower's sequencer: a kit a drum, kits mixed), instead of the part's E1..E8 */
+#ifdef DRUM_LANE_KNOBS
+static int16_t drum_lane_knobs[DRUM_NPART][DV_NLANE][8];
+#endif
+/* knob i (0 KIT .. 7 DRV) of lane `lane` of the part t plays */
+static int32_t drum_knob(const track_t *t, uint32_t lane, uint32_t i)
+{
+#ifdef DRUM_LANE_KNOBS
+    if (t >= &trk[DRUM_PART0] && t < &trk[DRUM_PART0 + DRUM_NPART])
+        return drum_lane_knobs[t - trk - DRUM_PART0][lane % DV_NLANE][i & 7u];
+#else
+    (void)lane;
+#endif
+    return t->p[P_E0 + (i & 7u)];
+}
 
 static const char *const N_DRUM_KIT[] = {"STD", "HAND", "CYM", "H+CYM"};
 static const char *const N_DRUM_KICK[] = {"PUNCH", "ROUND"};
@@ -65,12 +88,12 @@ static const int8_t DRUM_GM[47][2] = {
 };
 /* the drum of a note (DVT_*) and its semitones; KICK picks the kick, KIT swaps TOM RIM for CONGA CLAVE
  * (HAND) and BELL for CYM (CYM) */
-static uint32_t drum_gm(const int16_t *p, uint32_t note, int32_t *st)
+static uint32_t drum_gm_k(int32_t kit_knob, int32_t kick_knob, uint32_t note, int32_t *st)
 {
     uint32_t n = note >= 35u && note <= 81u ? note : 36u + (note + 120u - 36u) % 12u, t = (uint32_t)DRUM_GM[n - 35u][0];
-    uint32_t kit = (uint32_t)clamp(p[P_E0], 0, 3);       /* STD HAND CYM H+CYM */
+    uint32_t kit = (uint32_t)clamp(kit_knob, 0, 3);      /* STD HAND CYM H+CYM */
     *st = DRUM_GM[n - 35u][1];
-    if (t == DVT_PUNCH && p[P_E6] > 0)
+    if (t == DVT_PUNCH && kick_knob > 0)
         t = DVT_ROUND;
     if (kit & 1u)
         t = t == DVT_TOM ? DVT_CONGA : t == DVT_RIM ? DVT_CLAVE : t;
@@ -154,7 +177,7 @@ static void step_to_grid(step_t *s)
 
 static drum_lane_t *drum_kit_of(const track_t *t)
 {
-    return t >= &trk[0] && t < &trk[NPART] ? drum_kit[t - trk] : 0;
+    return t >= &trk[DRUM_PART0] && t < &trk[DRUM_PART0 + DRUM_NPART] ? drum_kit[t - trk - DRUM_PART0] : 0;
 }
 
 /* the lane voice v plays, 0 when it plays none (any more) */
@@ -187,7 +210,8 @@ static void drum_note_on(track_t *t, voice_t *v)
     int32_t st;
     if (!K || i >= NVOICE)
         return;
-    role = drum_gm(t->p, v->note, &st);
+    lane = drum_lane(v->note);                           /* (KIT-proof: the lane's own knobs pick the variant) */
+    role = drum_gm_k(drum_knob(t, lane, 0), drum_knob(t, lane, 6), v->note, &st);
     lane = DV_TYPE_LANE[role];
     L = &K[(uint32_t)v->s[0] & (DV_NLANE - 1u)];
     if (L->owner == i + 1u)                              /* this voice played another lane: it stops there */
@@ -227,22 +251,25 @@ static int32_t drum_amp(track_t *t, voice_t *v, int32_t adsr)
 
 static void drum_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const vmod_t *m)
 {
-    const int16_t *p = t->p;
     drum_lane_t *L = drum_lane_of(t, v);
     dv_param_t k;
-    int32_t y[CTL], mb[CTL], acc = clamp(p[P_E5] * v->vel * 4, 0, 65536), drv = p[P_E7], g = 0, mk = 0;   /* acc Q16 */
+    int32_t y[CTL], mb[CTL], acc, drv, g = 0, mk = 0, e[8];
     uint32_t i, r;
     if (!L)
         return;
+    for (i = 0; i < 8u; i++)                             /* (the lane's knobs: the part's, or its own) */
+        e[i] = drum_knob(t, (uint32_t)(L - drum_kit_of(t)), i);
+    acc = clamp(e[5] * v->vel * 4, 0, 65536);            /* (Q16) */
+    drv = e[7];
     if (n > CTL)
         n = CTL;
     r = L->role;
     dv_default(&k, r);                                   /* the knobs move every lane from its design (64) */
-    k.decay = (uint8_t)clamp(k.decay + p[P_E3] - 64, 0, 127);
-    k.tone = (uint8_t)clamp(k.tone + p[P_E2] - 64, 0, 127);
-    k.extra = (uint8_t)clamp(k.extra + p[P_E4] - 64, 0, 127);
+    k.decay = (uint8_t)clamp(k.decay + e[3] - 64, 0, 127);
+    k.tone = (uint8_t)clamp(k.tone + e[2] - 64, 0, 127);
+    k.extra = (uint8_t)clamp(k.extra + e[4] - 64, 0, 127);
     k.accent = (uint8_t)clamp(acc >> 9, 0, 127);         /* (Q16 -> 0..127) */
-    k.tune = (int16_t)(L->st * 16 + (p[P_E1] - 64) * 3);   /* +-12 semitones */
+    k.tune = (int16_t)(L->st * 16 + (e[1] - 64) * 3);    /* +-12 semitones */
     if (((const uint32_t *)&k)[0] != ((const uint32_t *)&L->key)[0] ||
         ((const uint32_t *)&k)[1] != ((const uint32_t *)&L->key)[1]) {
         dv_setup(&L->c, &k);                             /* (a parameter moved) */
@@ -261,7 +288,7 @@ static void drum_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const 
         int32_t s = y[i];
         if (g)
             s = (softclip((s * g) >> 12) * mk) >> 15;
-        out[i] += voice_amp(soft_knee(s + (s >> 2), 24000), m, i) << 1;
+        out[i] += voice_amp(soft_knee(s + (s >> 2), 24000), m, i) * 2;   /* (x 2, not << 1: a negative sample) */
     }
 }
 

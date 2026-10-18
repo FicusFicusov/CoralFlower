@@ -226,12 +226,21 @@ static void view_display(int x0)
 /* ----------------------------------------------------- GLOBAL > MIDI --- */
 /* the unit, its USB cable, two lanes out of it: the chord part on its channel, the bass on its own; a note sent runs
  * along its lane. MIDI OUT Off: the lanes dark, cut */
-static uint32_t cv_mpulse[2][4];
-static uint8_t cv_mp_i[2], cv_m_onset, cv_m_nb;
+static uint32_t cv_mpulse[4][4];
+static uint8_t cv_mp_i[4], cv_m_onset, cv_m_nb;
+static uint32_t cv_m_sq[2];                      /* (the sequencer's LAYER and DRUMS: their last step seen) */
+/* GLO > MIDI and > Channels: the unit, four lanes out of it to the four channels (the chord, the bass, the
+ * sequencer's LAYER and DRUMS), a pulse down a lane for each note that goes out; cut when MIDI OUT is off */
 static void view_midi(int x0)
 {
-    int ym = VIEW_Y + 36, lane[2] = {ym - 16, ym + 16}, xa = x0 + 54, xb = x0 + 150, p, i;
-    int on = cs.midi_out;
+    static const char *const NM[4] = {"CHORD", "BASS", "LAYER", "DRUMS"};
+    int ym = VIEW_Y + 32, xa = x0 + 54, xb = x0 + 160, p, i;
+    int on = cs.midi_out, chs = cu.page[SCR_GLO] == 2u;
+    uint8_t ch[4];
+    ch[0] = cs.ch_chord;
+    ch[1] = cs.ch_bass;
+    ch[2] = cs.ch_layer;
+    ch[3] = cs.ch_drums;
     if (cf_sn.onset != cv_m_onset) {            /* a chord began: one pulse down its lane, one down the bass's */
         cv_m_onset = cf_sn.onset;
         cv_mpulse[0][cv_mp_i[0]++ & 3u] = cu.now ? cu.now : 1u;
@@ -241,41 +250,53 @@ static void view_midi(int x0)
         cv_mpulse[1][cv_mp_i[1]++ & 3u] = cu.now ? cu.now : 1u;
     }
     cv_m_nb = cf_sn.nb ? cf_sn.bass[0] : 0u;
+    for (p = 0; p < 2; p++)                      /* the sequencer's LAYER, DRUMS: a step that sounded */
+        if (cf_sn.sq_lit_t[SQ_LAYER + p] != cv_m_sq[p]) {
+            cv_m_sq[p] = cf_sn.sq_lit_t[SQ_LAYER + p];
+            cv_mpulse[2 + p][cv_mp_i[2 + p]++ & 3u] = cu.now ? cu.now : 1u;
+        }
     /* the unit */
     fb_rbox(x0 + 12, ym - 15, 36, 30, 3, cf_panel(2));
     for (i = 0; i < 5; i++)
         fb_rect(x0 + 16 + i * 6, ym + 4, 4, 7, cf_panel(1));
     fb_rect(x0 + 16, ym - 10, 28, 3, on ? C_ACC(1) : FL_INK3);
     fb_text_c(&CF_FONT_MICRO, x0 + 30, ym + 19, "USB", FL_INK3, 1);
-    if (cs.clock_in) {                           /* MIDI clock in: what comes into the unit, a beat light when locked */
+    if (cs.clock_in == 1u) {                     /* MIDI clock in: what comes into the unit, a beat light when locked */
         int lit = cf_sn.ext_clock && (int32_t)(cf_sn.now_ms - cf_sn.beat_ms) < 120;
         fb_text_c(&CF_FONT_MICRO, x0 + 30, ym - 26, cf_sn.ext_clock ? "CLOCK IN" : "NO CLOCK", cf_sn.ext_clock ?
                   C_ACC(1) : FL_INK3, 1);
         fb_rect(x0 + 28, ym - 19, 4, 4, lit ? C_ACC(0) : FL_BG3);
+    } else if (cs.clock_in == 2u) {              /* .. out: the unit's beat going out, its light while it runs */
+        int lit = cf_sn.running && (int32_t)(cf_sn.now_ms - cf_sn.beat_ms) < 120;
+        fb_text_c(&CF_FONT_MICRO, x0 + 30, ym - 26, "CLOCK OUT", on ? C_ACC(1) : FL_INK3, 1);
+        fb_rect(x0 + 28, ym - 19, 4, 4, lit && on ? C_ACC(0) : FL_BG3);
     }
-    for (p = 0; p < 2; p++) {
+    for (p = 0; p < 4; p++) {                    /* four lanes 18 px apart, their names on them */
+        int lane = ym - 27 + p * 18, mid = (xa + xb) / 2;
         uint8_t c = on ? (p ? FL_INK2 : C_ACC(1)) : FL_BG3;
         char b[8];
-        fb_line(x0 + 48, ym, xa, lane[p], c);
+        fb_line(x0 + 48, ym, xa, lane, c);
         if (on) {
-            fb_hline(xa, lane[p], xb - xa, c);
+            fb_hline(xa, lane, xb - xa, c);
         } else {                                 /* cut */
-            fb_hline(xa, lane[p], (xb - xa) / 2 - 6, c);
-            fb_hline(xa + (xb - xa) / 2 + 6, lane[p], (xb - xa) / 2 - 6, c);
+            fb_hline(xa, lane, mid - 6 - xa, c);
+            fb_hline(mid + 6, lane, xb - mid - 6, c);
         }
-        fb_text_halo(&CF_FONT_UI, xa + 4, lane[p] - 12, p ? "BASS" : "CHORD", on ? FL_INK2 : FL_INK3, FL_BG, 1);
-        fb_rbox(xb, lane[p] - 9, 52, 18, 3, on ? cf_panel(2) : cf_panel(1));
-        str_cpy(b, "CH ", sizeof b);
-        kint(b + 3, (p ? cs.ch_bass : cs.ch_chord) + 1, 0);
-        fb_text_c(&CF_FONT_UI, xb + 26, lane[p] - 6, b, on ? (p ? FL_INK : C_ACC(0)) : FL_INK3, 1);
         if (on)
             for (i = 0; i < 4; i++) {           /* the notes going out */
                 uint32_t t = cu.now - cv_mpulse[p][i];
                 if (cv_mpulse[p][i] && t < 420u) {
                     int px = xa + (int)t * (xb - xa) / 420;
-                    fb_rect(px - 2, lane[p] - 2, 5, 5, p ? FL_INK : C_ACC(0));
+                    fb_rect(px - 2, lane - 2, 5, 5, p ? FL_INK : C_ACC(0));
                 }
             }
+        fb_text_halo(&CF_FONT_UI, xa + 6, lane - 6, NM[p], on ? FL_INK2 : FL_INK3, FL_BG, 1);
+        fb_rbox(xb, lane - 7, 46, 14, 3, on ? cf_panel(2) : cf_panel(1));
+        if (chs)                                 /* (Channels: the knob over each, K1..K4) */
+            fb_rframe(xb, lane - 7, 46, 14, C_ACC(1));
+        str_cpy(b, "CH ", sizeof b);
+        kint(b + 3, ch[p] + 1, 0);
+        fb_text_c(&CF_FONT_UI, xb + 23, lane - 6, b, on ? (p ? FL_INK : C_ACC(0)) : FL_INK3, 1);
     }
 }
 

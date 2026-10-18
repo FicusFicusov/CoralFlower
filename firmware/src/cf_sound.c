@@ -9,9 +9,11 @@
 
 #define CF_PART_CHORD 0u
 #define CF_PART_BASS 1u
+#define CF_PART_LAYER 2u                         /* the sequencer's LAYER: a sound of its own, from the chord sounds */
+#define CF_PART_DRUMS 3u                         /* the sequencer's DRUMS (the DRUM engine) */
 
 typedef struct { char name[13]; uint8_t engine, kind, fk, slot; uint16_t pos; } cf_snd_t;
-static cf_snd_t cf_snd[2];
+static cf_snd_t cf_snd[3];
 
 static const uint8_t CF_ENGINES[] = {ENGI_FM6,
 #if FELUCCA_VA
@@ -181,6 +183,40 @@ static void cf_load_factory(uint32_t part, uint32_t e, uint32_t pi)
     str_cpy(cf_snd[part].name, pr->name, sizeof cf_snd[part].name);
 }
 
+/* the sequencer's drums (cf_seqp.c): part 3 on the DRUM engine, its kit (eng_drum.c's one preset). Power-on */
+static void cf_drums_init(void)
+{
+    track_t *t = &trk[CF_PART_DRUMS];
+    const engine_t *en = ENGINES[ENGI_DRUM];
+    const preset_t *pr;
+    uint32_t i;
+    if (!en->npresets)
+        return;
+    pr = &en->presets[0];
+    fm1_irq_off();
+    t->eng_req = ENGI_DRUM;
+    t->preset = 0;
+    t->user = 0;
+    t->trim = 0;
+    for (i = 0; i < P_E0; i++)
+        t->p[i] = TP[i].def;
+    for (i = 0; i < 8u; i++)
+        t->p[P_E0 + i] = (int16_t)pr->e[i];
+    t->p[P_ATK] = pr->env[0];
+    t->p[P_DEC] = pr->env[1];
+    t->p[P_SUS] = pr->env[2];
+    t->p[P_REL] = pr->env[3];
+#ifdef DRUM_LANE_KNOBS
+    {                                            /* (every lane in the kit's design until the sequencer's first hit) */
+        uint32_t l;
+        for (l = 0; l < DV_NLANE; l++)
+            for (i = 0; i < 8u; i++)
+                drum_lane_knobs[0][l][i] = (int16_t)pr->e[i];
+    }
+#endif
+    fm1_irq_on();
+}
+
 /* user slot k into part (upreset.c's records): every parameter but the part's own */
 static void cf_load_user(uint32_t part, uint32_t k)
 {
@@ -289,7 +325,7 @@ static int cf_snd_find(uint32_t part, uint32_t e, const char *name)
 static void cf_snd_resync(void)
 {
     uint32_t p;
-    for (p = 0; p < 2u; p++) {
+    for (p = 0; p < 3u; p++) {
         cf_snd_t *s = &cf_snd[p];
         uint32_t e = s->engine % NENGINES;
         if (s->kind == PK_USER && up_used(s->slot))

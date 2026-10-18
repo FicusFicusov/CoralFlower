@@ -42,6 +42,7 @@ typedef struct {                /* the looper's settings (the LOOPER screen; cf_
 static int cfl_holds(uint32_t part, uint32_t note);
 static const cf_chord_out_t *cfl_chord(int *n);
 static int cfp_holds(uint32_t part, uint32_t note);   /* (below: a note the keys' player sounds) */
+static int sqp_holds(uint32_t part, uint32_t note);   /* (cf_seqp.c: a note the sequencer sounds) */
 
 typedef struct {
     uint16_t glide_ms;          /* 0 = Off */
@@ -57,7 +58,12 @@ typedef struct {
     cf_arp_t arp;
     uint16_t bpm;               /* the tempo (the metronome's): the arpeggiator's steps */
     cf_loop_t loop;
-    uint8_t clock_in;           /* follow MIDI clock in (GLO > MIDI > CLOCK IN): its pulses run the beat */
+    uint8_t clock_in;           /* follow MIDI clock in (GLO > MIDI > CLOCK In): its pulses run the beat */
+    uint8_t clock_out;          /* send MIDI clock (GLO > MIDI > CLOCK Out): 24 pulses a beat while the beat runs,
+                                 * start and stop with it */
+    uint8_t cpart;              /* the part the keys' chords play: 0, or 2 while the sequencer's LAYER is open (its
+                                 * own sound; the bass is silent then) */
+    uint8_t ch_layer, ch_drums; /* the sequencer's LAYER (part 2) and DRUMS (part 3) out on MIDI, 0..15 */
 } cf_play_cfg_t;
 
 /* the beat grid the arpeggiator locks to while the metronome's clock runs (cf_out.c cfm_tick writes it): on, where it
@@ -68,6 +74,8 @@ static uint32_t cf_now_ms, cf_ms_rem;                /* the engine clock: audio 
 static cf_chord_t cfc;                               /* the chord model: the ISR's */
 static cf_chord_cfg_t cfc_shadow;                    /* the UI's copy; CFE_CONFIG takes it (IRQ off while written) */
 static cf_play_cfg_t cfp_cfg = {0, 0, 100, 1, 0, 0, 1, 0, 1, 0, 0, CF_ARP_DEFAULT, 120, CF_LOOP_DEFAULT, 0};
+static uint8_t cfp_cp;                               /* the part the keys' chords sound on now (cfp_cfg.cpart, taken
+                                                     * at a CFE_CONFIG with the notes let go) */
 
 static struct {
     uint8_t n, note[CF_MAX_NOTES];                   /* what part 0 plays now, low to high */
@@ -84,33 +92,43 @@ static uint32_t cfp_ticks(void)                      /* Glide in control blocks 
     return (uint32_t)cfp_cfg.glide_ms * FS / (1000u * CTL);
 }
 
+/* a part's MIDI out channel: the chord's, the bass's, the sequencer's LAYER's and DRUMS' (GLO > Channels; the
+ * LAYER's notes first went out on the bass's channel) */
+static uint32_t cfp_ch(uint32_t part)
+{
+    return part == 0u ? cfp_cfg.ch_chord : part == 1u ? cfp_cfg.ch_bass : part == 2u ? cfp_cfg.ch_layer :
+           part == 3u ? cfp_cfg.ch_drums : 0xFFu;
+}
 static void cfp_midi(uint32_t st, uint32_t ch, uint32_t d1, uint32_t d2)
 {
+    if (ch > 15u)
+        return;
     if (cfp_cfg.midi_out)
         midi_out_event((st >> 4) | (st | (ch & 15u)) << 8 | (d1 & 0x7Fu) << 16 | (d2 & 0x7Fu) << 24);
 }
 static void cfp_on(uint32_t part, uint32_t note, uint32_t vel)
 {
     trk_note_on(&trk[part], note, vel);
-    cfp_midi(0x90u, part ? cfp_cfg.ch_bass : cfp_cfg.ch_chord, note, vel);
+    cfp_midi(0x90u, cfp_ch(part), note, vel);
 }
 static void cfp_off(uint32_t part, uint32_t note)
 {
-    if (cfl_holds(part, note))                       /* (the loop sounds it too: it goes when the loop lets go) */
+    if (cfl_holds(part, note) || sqp_holds(part, note))   /* (the loop or the sequencer sounds it too: it goes when
+                                                              * they let go) */
         return;
     trk_note_off(&trk[part], note);
-    cfp_midi(0x80u, part ? cfp_cfg.ch_bass : cfp_cfg.ch_chord, note, 0);
+    cfp_midi(0x80u, cfp_ch(part), note, 0);
 }
 static void cfp_on_from(uint32_t part, uint32_t note, uint32_t vel, uint32_t from, uint32_t ticks)
 {
     trk_note_on_from(&trk[part], note, vel, from, ticks);
-    cfp_midi(0x90u, part ? cfp_cfg.ch_bass : cfp_cfg.ch_chord, note, vel);
+    cfp_midi(0x90u, cfp_ch(part), note, vel);
 }
 /* a held voice moved to another note: MIDI says it as an off and an on */
 static void cfp_move(uint32_t part, uint32_t from, uint32_t to, uint32_t ticks)
 {
     voice_t *v = trk_voice_of(&trk[part], from);
-    uint32_t ch = part ? cfp_cfg.ch_bass : cfp_cfg.ch_chord;
+    uint32_t ch = cfp_ch(part);
     if (from == to)
         return;
     if (v) {
@@ -215,7 +233,7 @@ static void cfp_change(uint32_t part, uint8_t *old, uint8_t *pn, const uint8_t *
                         vv[a]->gate = 0, vv[a]->stage = 4;
                     else
                         trk_note_off(&trk[part], from[a]);
-                    cfp_midi(0x80u, part ? cfp_cfg.ch_bass : cfp_cfg.ch_chord, from[a], 0);
+                    cfp_midi(0x80u, cfp_ch(part), from[a], 0);
                     cfp_on_from(part, nw[b], vel, from[a], ticks);
                 } else if (from[a] != nw[b]) {
                     if (vv[a]) {
@@ -227,8 +245,8 @@ static void cfp_change(uint32_t part, uint8_t *old, uint8_t *pn, const uint8_t *
                         trk_note_off(&trk[part], from[a]);
                         trk_note_on(&trk[part], nw[b], vel);
                     }
-                    cfp_midi(0x80u, part ? cfp_cfg.ch_bass : cfp_cfg.ch_chord, from[a], 0);
-                    cfp_midi(0x90u, part ? cfp_cfg.ch_bass : cfp_cfg.ch_chord, nw[b], vel);
+                    cfp_midi(0x80u, cfp_ch(part), from[a], 0);
+                    cfp_midi(0x90u, cfp_ch(part), nw[b], vel);
                 }
             } else if (used_p[a] && !used_q[b]) {    /* a split: a new voice out of this old note */
                 used_q[b] = 1;
@@ -241,7 +259,7 @@ static void cfp_change(uint32_t part, uint8_t *old, uint8_t *pn, const uint8_t *
                     vv[i]->gate = 0, vv[i]->stage = part ? 4 : 3;   /* (the bass: at once, it is monophonic) */
                 else
                     trk_note_off(&trk[part], from[i]);  /* (still waiting to start: it must not start now) */
-                cfp_midi(0x80u, part ? cfp_cfg.ch_bass : cfp_cfg.ch_chord, from[i], 0);
+                cfp_midi(0x80u, cfp_ch(part), from[i], 0);
             }
         for (i = 0; i < m; i++)                      /* (a target nobody reached: plainly) */
             if (!used_q[i])
@@ -299,7 +317,9 @@ static int cfp_bass_notes(uint8_t out[2]) { return cfp_bass_notes_of(&cfc.out, o
 static int cfp_holds(uint32_t part, uint32_t note)
 {
     uint32_t i;
-    if (part) {
+    if (part != cfp_cp) {
+        if (part != 1u)
+            return 0;
         for (i = 0; i < cfp.nb; i++)
             if (cfp.bass[i] == note)
                 return 1;
@@ -336,7 +356,7 @@ static void cfp_sync(int how)
 {
     const cf_chord_out_t *o = &cfc.out;
     uint8_t nb[2];
-    int m = o->sounding ? o->n : 0, mb = cfp_bass_notes(nb), lm = 0;
+    int m = o->sounding ? o->n : 0, mb = cfp_cp ? 0 : cfp_bass_notes(nb), lm = 0;   /* (the LAYER: no bass) */
     const cf_chord_out_t *lo = 0;
     /* RETRIG Off: a chord changed while the last one still sounds under held keys (another chord button, another
      * root) moves its voices there with no new attack, at the Glide time (0: at once) */
@@ -374,7 +394,7 @@ static void cfp_sync(int how)
             cfp.note[i] = o->note[i];
         cfp.n = (uint8_t)m;
     } else {
-        cfp_change(0, cfp.note, &cfp.n, o->note, m, mode);
+        cfp_change(cfp_cp, cfp.note, &cfp.n, o->note, m, mode);
     }
     if (!(cfa.latched && !mb))                       /* (LATCH: the bass held under the arpeggio too) */
         cfp_change(1, cfp.bass, &cfp.nb, nb, mb, bmode);
@@ -399,13 +419,22 @@ static void cfp_key(int key, int down)
 static void cfp_config(void)                         /* CFE_CONFIG: the UI's settings */
 {
     uint8_t was = cfa.on, latched = cfa.latched, i;
+    if (cfp_cfg.cpart != cfp_cp) {                   /* the keys move to another part: what they sound there goes */
+        cfa_stop();
+        for (i = 0; i < cfp.n; i++)
+            cfp_off(cfp_cp, cfp.note[i]);
+        for (i = 0; i < cfp.nb; i++)
+            cfp_off(1, cfp.bass[i]);
+        cfp.n = cfp.nb = 0;
+        cfp_cp = (uint8_t)(cfp_cfg.cpart == 2u ? 2u : 0u);
+    }
     cfc.keep = cfp_cfg.retrig == CF_RT_WAIT;
     cf_chord_config(&cfc, &cfc_shadow);
     cfa_config(cfc.out.sounding);
     if (cfa.on != was) {                             /* ARP switched: part 0's notes go to the arpeggiator, or back */
         if (cfa.on)
             for (i = 0; i < cfp.n; i++)
-                cfp_off(0, cfp.note[i]);
+                cfp_off(cfp_cp, cfp.note[i]);
         cfp.n = 0;                                   /* (switched off: cfa_config let its notes go) */
         cfp_sync(1);
     } else if (cfc.out.serial != cfp.serial || latched != cfa.latched) {
@@ -420,12 +449,14 @@ static void cfp_panic(void)
     cf_chord_reset(&cfc);
     cf_chord_config(&cfc, &cfc.cfg);
     for (i = 0; i < cfp.n; i++)
-        cfp_off(0, cfp.note[i]);
+        cfp_off(cfp_cp, cfp.note[i]);
     for (i = 0; i < cfp.nb; i++)
         cfp_off(1, cfp.bass[i]);
     cfp.n = cfp.nb = 0;
     trk_all_off(&trk[0]);
     trk_all_off(&trk[1]);
+    trk_all_off(&trk[2]);
+    trk_all_off(&trk[3]);
 }
 
 static void cfp_init(void)

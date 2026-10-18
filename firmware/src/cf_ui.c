@@ -16,6 +16,7 @@ static void snd_num(uint32_t idx, char *b);
 static const char CF_NAME_CHARS[] = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-.+#/";   /* (SAVE: a name's letters) */
 
 /* -------------------------------------------------------- the engine --- */
+static uint8_t sq_live_part(void);              /* (cf_sequi.c) */
 static void cf_send_config(void)                 /* the chord settings -> the audio side */
 {
     fm1_irq_off();
@@ -29,13 +30,20 @@ static void cf_send_config(void)                 /* the chord settings -> the au
     cfp_cfg.midi_out = cs.midi_out;
     cfp_cfg.ch_chord = cs.ch_chord;
     cfp_cfg.ch_bass = cs.ch_bass;
+    cfp_cfg.ch_layer = cs.ch_layer;
+    cfp_cfg.ch_drums = cs.ch_drums;
     cfp_cfg.retrig = cs.retrig;
     cfp_cfg.arp_on = cu.arp_on;
     cfp_cfg.arp = cs.arp;
     cfp_cfg.bpm = cs.bpm;
     cfp_cfg.loop = cs.loop;
-    cfp_cfg.clock_in = cs.clock_in;
+    cfp_cfg.clock_in = cs.clock_in == 1u;
+    cfp_cfg.clock_out = cs.clock_in == 2u;
     trk[CF_PART_BASS].p[P_LEVEL] = cs.bass_level;
+    trk[CF_PART_CHORD].p[P_LEVEL] = cs.level_chord;
+    trk[CF_PART_LAYER].p[P_LEVEL] = cs.level_layer;
+    trk[CF_PART_DRUMS].p[P_LEVEL] = cs.level_drums;
+    cfp_cfg.cpart = sq_live_part();              /* (the keys play the LAYER's sound while it is open) */
     fm1_irq_on();
     cf_fx_apply(&cs.fx);
     cf_post(CFE_CONFIG, 0, 0, 0);
@@ -44,7 +52,8 @@ static void cf_send_metro(void)
 {
     cf_post(CFE_TEMPO, 0, 0, cs.bpm);
     cf_post(CFE_SIG, 0, 0, cs.beats);
-    cf_post(CFE_METRO, cu.scr == SCR_SEQ, cs.metro_level, 0);
+    cf_post(CFE_METRO, 0, cs.metro_level, 0);   /* (the click only while the beat runs, PLAY: the owner, 2026-10-19;
+                                                  * it sounded all the time the METRONOME or the SEQUENCER was open) */
 }
 
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
@@ -100,6 +109,8 @@ static void kpc(char *b, int pc)
 
 #include "cf_edit.c"                             /* (the ENV and EDIT screens' engine side) */
 #include "cf_fxui.c"                             /* (the FX screen's controls) */
+static void cv_turned(int d);
+#include "cf_sequi.c"                            /* (the SEQUENCER screens' controls) */
 
 static uint32_t env_part(void) { return cu.env_tgt == 2u ? CF_PART_BASS : CF_PART_CHORD; }
 
@@ -227,6 +238,10 @@ static void ui_knob_info(int k, cf_knob_t *o)
         break;
     case SCR_SAVE: {
         uint32_t part = cu.page[SCR_SAVE] & 1u;
+        if (cu.page[SCR_SAVE] == 3u) {           /* the sequencer's pattern: K1 where to (as SAVE AS), K4 ACTION */
+            sq_save_knob_info(k, o);
+            break;
+        }
         if (cu.page[SCR_SAVE] == 2u) {           /* the loop: only ACTION */
             if (k == 3) {
                 kfmt(o->name, 12, "ACTION");
@@ -295,29 +310,9 @@ static void ui_knob_info(int k, cf_knob_t *o)
             }
         }
         break;
-    case SCR_SEQ:
-        switch (k) {
-        case 0:
-            kfmt(o->name, 12, "LEVEL");
-            kint(o->val, cs.metro_level, "%");
-            o->bar = (int16_t)(cs.metro_level * 255 / 100);
-            break;
-        case 1: kfmt(o->name, 12, "SOUND"); kfmt(o->val, 14, CF_CLICKS[cs.click % CF_NCLICKS].name); break;
-        case 2:
-            kfmt(o->name, 12, "TEMPO");
-            kint(o->val, cs.bpm, " BPM");
-            o->dis = cf_sn.ext_clock;            /* (MIDI clock in: the clock's tempo) */
-            break;
-        default: {
-            char b[8];
-            kfmt(o->name, 12, "TIME SIG");
-            kint(b, cs.beats, 0);
-            str_cpy(o->val, b, 14);
-            str_cpy(o->val + str_len(o->val), cs.beats == 6 ? "/8" : "/4", 4);
-            break;
-        }
-        }
-        break;
+    case SCR_SEQ: metro_knob_info(k, o); break;
+    case SCR_SQ:
+    case SCR_SQED: sq_knob_info(k, o); break;
     case SCR_GLO:
         switch (cu.page[SCR_GLO]) {
         case 0: /* Display */
@@ -329,14 +324,19 @@ static void ui_knob_info(int k, cf_knob_t *o)
             }
             if (k == 2) { kfmt(o->name, 12, "BOOT SND"); kfmt(o->val, 14, cs.boot_sound ? "On" : "Off"); }
             break;
-        case 1: /* MIDI */
+        case 1: /* MIDI: out on or off, the clock in (the channels: the next page, four of them since the sequencer's
+                 * LAYER and DRUMS) */
             if (k == 0) { kfmt(o->name, 12, "MIDI OUT"); kfmt(o->val, 14, cs.midi_out ? "On" : "Off"); }
-            if (k == 1) { kfmt(o->name, 12, "CHORD CH"); kint(o->val, cs.ch_chord + 1, 0); }
-            if (k == 2) { kfmt(o->name, 12, "BASS CH"); kint(o->val, cs.ch_bass + 1, 0); }
-            if (k == 3) {                        /* MIDI clock in: its tempo, its start / stop */
-                kfmt(o->name, 12, "CLOCK IN");
-                kfmt(o->val, 14, !cs.clock_in ? "Off" : cf_sn.ext_clock ? "Locked" : "On");
+            if (k == 1) {                        /* MIDI clock: In (its tempo, its start / stop) or Out (the unit's) */
+                kfmt(o->name, 12, "CLOCK");
+                kfmt(o->val, 14, cs.clock_in == 2u ? "Out" : !cs.clock_in ? "Off" : cf_sn.ext_clock ? "In: lock" : "In");
             }
+            break;
+        case 2: /* Channels */
+            if (k == 0) { kfmt(o->name, 12, "CHORD CH"); kint(o->val, cs.ch_chord + 1, 0); }
+            if (k == 1) { kfmt(o->name, 12, "BASS CH"); kint(o->val, cs.ch_bass + 1, 0); }
+            if (k == 2) { kfmt(o->name, 12, "LAYER CH"); kint(o->val, cs.ch_layer + 1, 0); }
+            if (k == 3) { kfmt(o->name, 12, "DRUMS CH"); kint(o->val, cs.ch_drums + 1, 0); }
             break;
         default: /* Play */
             if (k == 0) {
@@ -445,6 +445,10 @@ static void ui_knob_turn(int k, int d)
         break;
     case SCR_SAVE: {
         uint32_t part = cu.page[SCR_SAVE] & 1u, n;
+        if (cu.page[SCR_SAVE] == 3u) {
+            sq_save_knob_turn(k, d);
+            break;
+        }
         if (cu.page[SCR_SAVE] == 2u) {
             if (k == 3)
                 cu.save_del = (uint8_t)(d > 0);
@@ -499,25 +503,9 @@ static void ui_knob_turn(int k, int d)
         }
         cf_send_config();
         break;
-    case SCR_SEQ:
-        if (k == 0)
-            cs.metro_level = (uint8_t)clampi(cs.metro_level + d * 5, 0, 100);
-        else if (k == 1) {
-            cs.click = (uint8_t)wrapi(cs.click + d, (int)CF_NCLICKS);
-            cf_click_sound = cs.click;
-        }
-        else if (k == 2 && !cf_sn.ext_clock)
-            cs.bpm = (uint16_t)clampi(cs.bpm + d, 30, 300);
-        else {
-            static const uint8_t SIG[] = {2, 3, 4, 5, 6, 7};
-            int i;
-            for (i = 0; i < 6 && SIG[i] != cs.beats; i++)
-                ;
-            cs.beats = SIG[clampi((i < 6 ? i : 2) + d, 0, 5)];
-        }
-        cf_send_metro();
-        cf_send_config();                        /* (the tempo: the arpeggiator's too) */
-        break;
+    case SCR_SEQ: metro_knob_turn(k, d); break;
+    case SCR_SQ:
+    case SCR_SQED: sq_knob_turn(k, d); break;
     case SCR_GLO:
         switch (cu.page[SCR_GLO]) {
         case 0:
@@ -535,12 +523,19 @@ static void ui_knob_turn(int k, int d)
         case 1:
             if (k == 0)
                 cs.midi_out = (uint8_t)(d > 0);
-            if (k == 1)
+            if (k == 1)                          /* Off, In, Out */
+                cs.clock_in = (uint8_t)clampi(cs.clock_in + (d > 0 ? 1 : -1), 0, 2);
+            cf_send_config();
+            break;
+        case 2:
+            if (k == 0)
                 cs.ch_chord = (uint8_t)clampi(cs.ch_chord + d, 0, 15);
-            if (k == 2)
+            if (k == 1)
                 cs.ch_bass = (uint8_t)clampi(cs.ch_bass + d, 0, 15);
+            if (k == 2)
+                cs.ch_layer = (uint8_t)clampi(cs.ch_layer + d, 0, 15);
             if (k == 3)
-                cs.clock_in = (uint8_t)(d > 0);
+                cs.ch_drums = (uint8_t)clampi(cs.ch_drums + d, 0, 15);
             cf_send_config();
             break;
         default:
@@ -591,13 +586,13 @@ static void ui_say(const char *a, const char *b)
 static uint32_t screen_pages(uint32_t scr)
 {
     if (scr == SCR_GLO)
-        return 3u;
+        return 4u;                               /* Display, MIDI, Channels, Play */
     if (scr == SCR_ENV)
         return 3u;                               /* chord + bass, chord, bass */
     if (scr == SCR_ARP)
         return 2u;                               /* Pattern, Feel */
     if (scr == SCR_SAVE)
-        return 3u;                               /* the chord's sound, the bass's, the loop */
+        return 4u;                               /* the chord's sound, the bass's, the loop, the sequencer's pattern */
     if (scr == SCR_EDIT)
         return cfe_npages(cu.edit_part, cu.edit_sec);
     return 1u;
@@ -614,6 +609,14 @@ static void cv_turned(int d)
 
 static void ui_select(int d)                     /* SELECT: the bass sound, or a screen's page */
 {
+    if (cu.scr == SCR_SQ) {                      /* SEQUENCER: the track, the song's place */
+        sq_pick(d);
+        return;
+    }
+    if (cu.scr == SCR_SQED) {                    /* a track: its step (DRUMS: its bar) */
+        sq_select(d);
+        return;
+    }
     if (cu.scr == SCR_ENV) {                     /* chord + bass (linked: the bass follows), chord, bass */
         cu.env_tgt = (uint8_t)wrapi(cu.env_tgt + d, 3);
         cv_turned(d);
@@ -636,6 +639,8 @@ static void ui_select(int d)                     /* SELECT: the bass sound, or a
     if (screen_pages(cu.scr) > 1u) {
         cu.page[cu.scr] = (uint8_t)wrapi(cu.page[cu.scr] + d, (int)screen_pages(cu.scr));
         cv_turned(d);
+        if (cu.scr == SCR_SAVE && cu.page[SCR_SAVE] == 3u)   /* the sequencer's pattern: from the one shown */
+            sq_save_open();
         if (cu.scr == SCR_SAVE && cu.page[SCR_SAVE] < 2u) {   /* the other part: its sound, its name */
             uint32_t part = cu.page[SCR_SAVE] & 1u;
             cu.save_del = 0;
@@ -655,8 +660,12 @@ static void ui_select(int d)                     /* SELECT: the bass sound, or a
     cs.snd[1] = (uint16_t)cf_snd_pos(CF_PART_BASS);
     cf_pop(POP_SOUND_BASS, 1200);
 }
-static void ui_presets(int d)                    /* PRESETS: the chord sound */
+static void ui_presets(int d)                    /* PRESETS: the chord sound (a sequencer's track open: its sound) */
 {
+    if (cu.scr == SCR_SQED && squ.trk != SQ_CHORDS) {
+        sq_presets(d);
+        return;
+    }
     cf_snd_step(CF_PART_CHORD, d);
     if (cs.env_link)                             /* linked: the bass takes the new sound's envelope */
         cf_env_follow();
@@ -667,6 +676,10 @@ static void ui_algo(int d)                       /* ALGORITHM: the chord algorit
 {
     if (cu.scr == SCR_FX) {
         cfx_move(d);
+        return;
+    }
+    if (cu.scr == SCR_SQ) {                      /* SEQUENCER: the pattern, then the song */
+        sq_algo(d);
         return;
     }
     {   /* ALGORITHM turns through the Lock variants first (the owner's order): Top Lock, Top, Side Lock, Side. The
@@ -689,12 +702,57 @@ static void ui_open(uint32_t scr)
     cu.scr = (uint8_t)(scr == was && scr != SCR_HOME ? SCR_HOME : scr);
     if (cu.scr == SCR_SEL && cf_is_off(&cs.chord, cu.sel_btn))
         cu.sel_btn = sel_first();
-    if ((was == SCR_SEQ) != (cu.scr == SCR_SEQ))
+    if ((was == SCR_SEQ || sq_screen(was)) != (cu.scr == SCR_SEQ || sq_screen(cu.scr)))
         cf_send_metro();
+    if (was == SCR_SQED || cu.scr == SCR_SQED)   /* (the LAYER open or left: where the keys play, cf_send_config) */
+        cf_send_config();
+    squ.help = squ.help_hold = 0;
 }
 
 static void ui_button(uint32_t b)
 {
+    if (sq_screen(cu.scr)) {                     /* the sequencer's own: EDIT / SEL open, SEL clears, SAVE back, GLO */
+        if (b == B_FX || b == B_ENV || b == B_LFO || b == B_ARP || (cu.scr == SCR_SQED && b == B_EDIT))
+            return;                              /* (no way out to another screen here but HOME and SEQ: the owner,
+                                                  * 2026-10-19; their lights are off) */
+        if (cu.scr == SCR_SQ && b == B_EDIT) {
+            if (sq_open())
+                ui_open(SCR_SQED);
+            return;
+        }
+        if (cu.scr == SCR_SQ && b == B_SCL) {      /* SEL takes one thing out of the frame, never many: on the song its
+                                                  * pattern (the pattern stays); a track, nothing */
+            if (squ.pat == SQ_SONGPG)
+                sq_song_remove();
+            return;
+        }
+        if (cu.scr == SCR_SQED && b == B_SCL) {   /* (a tap clears on its release; held, SELECT copies the bar:
+                                                  * sq_sel_poll) */
+            squ.sel_down = cu.now ? cu.now : 1u;
+            squ.cpy = 0;
+            sqh.busy = 0;                        /* (SEL begins an action of its own: undo takes back the erase
+                                                  * alone, not what was written just before) */
+            sq_undo_poll();
+            return;
+        }
+        if (cu.scr == SCR_SQED && b == B_SAVE) {
+            ui_open(SCR_SQ);
+            return;
+        }
+        if (b == B_GLO) {
+            squ.glo_down = cu.now ? cu.now : 1u;
+            return;
+        }
+        if (b == B_PLAY) {                       /* the pattern shown round, or the song from the place picked */
+            sq_play();
+            return;
+        }
+        if (b == B_REC) {                        /* a tap: a take; held 1 s: undo (cf_loop_poll) */
+            cu.rec_hold = cu.now ? cu.now : 1u;
+            cu.rec_fired = 0;
+            return;
+        }
+    }
     switch (b) {
     case B_HOME: ui_open(SCR_HOME); break;
     case B_SCL: ui_open(SCR_SEL); break;
@@ -704,7 +762,12 @@ static void ui_button(uint32_t b)
     case B_GLO: ui_open(SCR_GLO); break;
     case B_FX: ui_open(SCR_FX); break;
     case B_ARP: ui_open(SCR_ARP); break;         /* (its ON/OFF is K1 there, as an effect's: the owner's) */
-    case B_SEQ: ui_open(SCR_SEQ); break;
+    case B_SEQ:                                  /* METRONOME, again the SEQUENCER, again HOME */
+        if (cu.scr == SCR_SEQ)
+            ui_open(SCR_SQ);
+        else
+            ui_open(sq_screen(cu.scr) ? SCR_HOME : SCR_SEQ);
+        break;
     case B_SAVE:                                 /* on SAVE: held 1 s saves, a tap goes HOME (cf_save_poll) */
         if (cu.scr == SCR_SAVE) {
             cu.save_hold = cu.now ? cu.now : 1u;
@@ -722,6 +785,13 @@ static void ui_button(uint32_t b)
         break;
     case B_OCTDN:
     case B_OCTUP:
+        if (b == B_OCTUP && cu.scr == SCR_SQED &&
+            !((fm1_in.buttons >> panel.btn[B_OCTDN]) & 1u)) {   /* a track: held with SELECT turned it copies the
+                                                  * frame's bar; a tap is OCT+ on its release (sq_oct_poll) */
+            squ.oct_down = cu.now ? cu.now : 1u;
+            squ.ocpy = 0;
+            break;
+        }
         if ((fm1_in.buttons & ((1u << panel.btn[B_OCTDN]) | (1u << panel.btn[B_OCTUP]))) ==
             ((1u << panel.btn[B_OCTDN]) | (1u << panel.btn[B_OCTUP]))) {
             cs.chord.octave = 0;                 /* both: back to 0, and every note let go */
@@ -751,7 +821,10 @@ static void cf_save_name_init(void)
 static void cf_save_open(void)
 {
     uint32_t part = cu.scr == SCR_EDIT ? cu.edit_part : (!cu.edited[0] && cu.edited[1]) ? 1u : 0u;
-    cu.page[SCR_SAVE] = (uint8_t)(cu.scr == SCR_LOOP ? 2u : part);   /* (from the LOOPER: the loop) */
+    cu.page[SCR_SAVE] = (uint8_t)(cu.scr == SCR_LOOP ? 2u : cu.scr == SCR_SQ ? 3u : part);   /* (from the LOOPER:
+                                                  * the loop; from the SEQUENCER: its pattern) */
+    if (cu.scr == SCR_SQ)
+        sq_save_open();
     cu.save_new = cf_snd[part].kind == PK_INIT || !(cu.edited[part] || cf_snd[part].kind == PK_USER);
     cu.save_hold = 0;
     cu.save_del = 0;
@@ -863,10 +936,30 @@ static void cf_loop_poll(void)
             cu.play_fired = 1;
             ui_open(cu.scr == SCR_LOOP ? SCR_HOME : SCR_LOOP);
         } else if (!held) {
-            if (!cu.play_fired)
-                cf_post(CFE_LOOP, 1, 0, 0);
+            if (!cu.play_fired) {
+                if (cf_sn.sq_on)                 /* (the sequencer plays: PLAY stops it, wherever) */
+                    cf_post(CFE_SEQ, 0, 0, 0);
+                else
+                    cf_post(CFE_LOOP, 1, 0, 0);
+            }
             cu.play_hold = 0;
         }
+    }
+    if (cu.rec_hold && sq_screen(cu.scr)) {      /* the sequencer: a tap records, held 1 s undoes (as the looper's) */
+        int held = (fm1_in.buttons >> panel.btn[B_REC]) & 1u;
+        if (held && !cu.rec_fired && cu.now - cu.rec_hold >= 1000u) {
+            cu.rec_fired = 1;
+            sq_undo();
+            if (cu.scr == SCR_SQED && sq_empty(sq_cur()))
+                ui_open(SCR_SQ);                 /* (the pattern back to nothing: its tracks) */
+            else if (cu.scr == SCR_SQED)
+                sq_clamp();
+        } else if (!held) {
+            if (!cu.rec_fired)
+                sq_rec_tap();
+            cu.rec_hold = 0;
+        }
+        return;
     }
     if (cu.rec_hold) {
         int held = (fm1_in.buttons >> panel.btn[B_REC]) & 1u;
@@ -898,15 +991,18 @@ static void cf_save_poll(void)
         cu.save_hold = 0;
     } else if (held && cu.now - cu.save_hold >= 1000u) {
         cu.save_hold = 0;
-        if (cu.page[SCR_SAVE] == 2u)
+        if (cu.page[SCR_SAVE] == 3u)
+            sq_save_do();
+        else if (cu.page[SCR_SAVE] == 2u)
             cf_loop_save(cu.save_del);
         else if (cu.save_del)
             cf_save_delete();
         else
             cf_save_do();
-    } else if (!held) {                          /* a tap: back HOME, as every screen's own button */
+    } else if (!held) {                          /* a tap: back HOME, as every screen's own button (the pattern's
+                                                  * page: back to the SEQUENCER it came from) */
         cu.save_hold = 0;
-        ui_open(SCR_HOME);
+        ui_open(cu.page[SCR_SAVE] == 3u ? SCR_SQ : SCR_HOME);
     }
 }
 
@@ -915,6 +1011,8 @@ static void cf_save_poll(void)
 static void ui_note_key(int key, int down)
 {
     int idx;
+    if (sq_key(key, down))                       /* (DRUMS: the keys pick the drum and set the steps) */
+        return;
     if (cu.scr == SCR_EDIT && cf_key_is_upper(key)) {   /* EDIT: OP1..OP6 PIT GLO pick, MONO / POLY: chord / bass */
         int u = 0, k;
         for (k = 0; k < key; k++)
@@ -960,9 +1058,16 @@ static void cf_ui_input(void)
 {
     uint32_t rel = 0, pr = fm1_input_edges(&rel), i;
     int32_t d;
+    sq_undo_poll();                              /* (before the input: the state an edit starts from) */
     cf_ui_pump();
     cf_save_poll();
     cf_loop_poll();
+    sq_glo_poll();
+    sq_write_poll();
+    sq_rec_poll();
+    sq_sel_poll();
+    sq_oct_poll();
+    sq_save_poll();
     for (i = 0; i < 14u; i++)
         if ((pr >> i) & 1u) {
             uint32_t b = panel_btn_of(i);
@@ -986,6 +1091,8 @@ static void ui_keycap(int key, cf_keycap_t *o)
 {
     int idx, role = cf_key_role(cs.chord.algo, key, &idx), down = (cu.keys >> key) & 1u;
     const cf_chord_out_t *out = &cf_sn.out;
+    if (sq_keycap(key, o))
+        return;
     if (cu.scr == SCR_EDIT && cf_key_is_upper(key)) {
         int u = 0, k;
         for (k = 0; k < key; k++)
@@ -1067,33 +1174,138 @@ static void cf_led(uint8_t *m, uint32_t id, int on)
         m[q >> 3] |= (uint8_t)(1u << (q & 7u));
 }
 
+/* the sequencer's lights. The buttons say what works here: EDIT blinks on the tracks (open one), SAVE (back) and SEL
+ * (clear, when there is something to clear) are up in a track, REC goes dark (it does nothing here), PLAY is up when
+ * there is something to play. The keys: DRUMS as a drum machine's (the lower keys the drum's steps in the bar, a
+ * running light on the step that plays; the upper keys the drums, the one picked lit, those that strike in the bar
+ * dim, each flashing as it sounds); CHORDS / BASS show the keys a step was written with (the step under the cursor:
+ * blinking; playing: the chord that sounds). Returns 1 when the key is lit here (the keys' rules below skip it) */
+static int sq_key_led(uint32_t k, uint8_t *lit, uint8_t *mid, uint8_t *dim, uint8_t *faint, uint32_t blink)
+{
+    const sq_pat_t *p = sq_cur();
+    uint32_t id = 14u + k;
+    int idx, role = cf_key_role(cs.chord.algo, (int)k, &idx);
+    if (cu.scr == SCR_SQ && squ.pat == SQ_NPAT) {   /* the song: the patterns' keys (the frame's lit, the others with
+                                                  * steps dim, the empty ones faint); the lower keys dark */
+        int j, u = 0;
+        if (!cf_key_is_upper((int)k))
+            return 1;
+        for (j = 0; j < (int)k; j++)
+            u += cf_key_is_upper(j);
+        if (u < (int)SQ_NPAT)
+            cf_led((cu.keys >> k) & 1u || (sq_st.song.n && sq_st.song.pat[squ.slot] == u) ? lit :
+                   sq_empty(&sq_st.pat[u]) ? faint : dim, id, 1);
+        return 1;
+    }
+    if (cu.scr != SCR_SQED || (cu.keys >> k) & 1u)
+        return 0;
+    if (squ.trk == SQ_DRUMS) {
+        int j, i = 0, st = SQ_ST(p);
+        for (j = 0; j < (int)k; j++)
+            i += cf_key_is_upper(j) == cf_key_is_upper((int)k);
+        if (cf_key_is_upper((int)k)) {
+            if (i >= (int)SQ_NLANE)
+                return 1;
+            if ((int32_t)(cf_sn.now_ms - cf_sn.sq_lane_t[i]) < 110 && cf_sn.sq_lane_t[i])
+                cf_led(lit, id, 1);
+            else
+                cf_led(i == squ.lane ? lit : p->hit[i][squ.bar] ? dim : faint, id, 1);
+            return 1;
+        }
+        if (i >= st)
+            return 1;
+        if (cf_sn.sq_on && cf_sn.sq_pat == squ.pat && !cf_sn.sq_song && cf_sn.sq_bar == squ.bar && cf_sn.sq_bt &&
+            (int)(cf_sn.sq_t * (uint32_t)st / cf_sn.sq_bt) == i)
+            cf_led(lit, id, 1);                  /* (the running light) */
+        else if (p->hit[squ.lane][squ.bar] & sq_span(p, squ.bar, (uint32_t)i))
+            cf_led(mid, id, 1);
+        else if ((i * cs.beats) % st == 0)
+            cf_led(faint, id, 1);
+        return 1;
+    }
+    if (cu.keys || cf_sn.out.sounding)          /* (the hands play: their lights) */
+        return 0;
+    {   /* the chord that plays, else the step under the cursor (blinking): its keys alone, the other buttons faint
+         * (the chord the hands left on would read as part of it) */
+        uint32_t rk = squ.trk == SQ_LAYER ? cf_sn.sq_lkey : cf_sn.sq_ckey, bl = 0;
+        uint32_t bt = squ.trk == SQ_LAYER ? cf_sn.sq_lbtns : cf_sn.sq_cbtns;
+        if (rk == 0xFFu && !bt) {
+            int e = cf_sn.sq_on ? -1 : sq_at(p, squ.trk, squ.bar, squ.step);
+            if (e < 0)
+                return 0;
+            rk = p->ev[e].rootkey;
+            bt = p->ev[e].btns;
+            bl = 1;
+        }
+        if (k == rk)
+            cf_led(bl ? (blink ? mid : dim) : mid, id, 1);
+        else if (role == CF_ROLE_BUTTON)
+            cf_led((bt >> idx) & 1u ? (bl ? (blink ? lit : dim) : lit) : faint, id, 1);
+        return 1;
+    }
+}
+
 static void cf_leds(void)
 {
     uint8_t lit[FM1_NCOL] = {0}, mid[FM1_NCOL] = {0}, dim[FM1_NCOL] = {0}, faint[FM1_NCOL] = {0};
     static const uint8_t SCR_BTN[SCR_N] = {B_HOME, B_SCL, B_ENV, B_LFO, B_EDIT, B_GLO, B_FX, B_ARP, B_SEQ, B_SAVE,
-                                           B_PLAY};
+                                           B_PLAY, B_SEQ, B_SEQ};
     const cf_chord_out_t *out = &cf_sn.out;
-    uint32_t k, blink = (cu.now / 250u) & 1u;
-    /* buttons: the open screen lit, the others dim; PLAY with the beat */
+    uint32_t k, blink = (cu.now / 250u) & 1u, sq = sq_screen(cu.scr);
+    /* buttons: the open screen lit, the others dim; PLAY with the beat. The sequencer: only what works there is up
+     * (HOME, SEQ, GLO here; EDIT, SAVE, SEL, PLAY, REC below); the other screens' buttons do nothing there, dark */
     for (k = 0; k < SCR_N; k++)
-        cf_led(k == cu.scr ? lit : dim, panel.btn[SCR_BTN[k]], 1);
-    if (cf_sn.loop_cap == CFL_CAP_ARMED || cf_sn.loop_cap == CFL_CAP_OD_ARMED)   /* REC: armed lit, taking blinks */
-        cf_led(lit, panel.btn[B_REC], 1);
-    else if (cf_sn.loop_cap != CFL_CAP_NONE)
-        cf_led(blink ? lit : faint, panel.btn[B_REC], 1);
-    else
-        cf_led(dim, panel.btn[B_REC], 1);
-    if (cu.arp_on)                               /* the arpeggiator plays: ARP lit wherever you are */
+        if (!sq || SCR_BTN[k] == B_HOME || SCR_BTN[k] == B_SEQ || SCR_BTN[k] == B_GLO)
+            cf_led(k == cu.scr ? lit : dim, panel.btn[SCR_BTN[k]], 1);
+    if (sq) {                                    /* the sequencer: what works here (sq_key_led's note) */
+        const sq_pat_t *p = sq_cur();
+        int has = squ.pat == SQ_NPAT ? 1 : !sq_empty(p) && (p->nev || sq_drums(p));
+        if (cu.scr == SCR_SQ && squ.pat == SQ_NPAT) {   /* the song: EDIT and SEL work on the frame's pattern */
+            has = sq_st.song.n != 0;
+            cf_led(has ? mid : faint, panel.btn[B_EDIT], 1);
+            cf_led(dim, panel.btn[B_SAVE], 1);
+            cf_led(has ? mid : faint, panel.btn[B_SCL], 1);
+        } else if (cu.scr == SCR_SQ) {
+            cf_led(blink ? mid : dim, panel.btn[B_EDIT], 1);
+            cf_led(dim, panel.btn[B_SAVE], 1);
+        } else {
+            int clear = squ.trk != SQ_DRUMS && sq_at(p, squ.trk, squ.bar, squ.step) >= 0;   /* (DRUMS: SEL nothing) */
+            cf_led(mid, panel.btn[B_SAVE], 1);   /* (EDIT does nothing in a track: dark) */
+            if (squ.trk != SQ_DRUMS)
+                cf_led(clear ? mid : faint, panel.btn[B_SCL], 1);
+        }
+        if (cf_sn.sq_on)
+            cf_led((int32_t)(cf_sn.now_ms - cf_sn.beat_ms) < 120 ? lit : mid, panel.btn[B_PLAY], 1);
+        else
+            cf_led(has ? mid : faint, panel.btn[B_PLAY], 1);
+        if (cf_sn.sq_rec != 0xFFu)               /* REC: a take lit, its count-in blinking; on a track: ready (dim) */
+            cf_led(cf_sn.sq_cin ? (blink ? lit : faint) : lit, panel.btn[B_REC], 1);
+        else if (squ.pat < SQ_NPAT)
+            cf_led(dim, panel.btn[B_REC], 1);
+    } else {
+        if (cf_sn.loop_cap == CFL_CAP_ARMED || cf_sn.loop_cap == CFL_CAP_OD_ARMED)   /* REC: armed lit, taking blinks */
+            cf_led(lit, panel.btn[B_REC], 1);
+        else if (cf_sn.loop_cap != CFL_CAP_NONE)
+            cf_led(blink ? lit : faint, panel.btn[B_REC], 1);
+        else
+            cf_led(dim, panel.btn[B_REC], 1);
+        if (cf_sn.running)                       /* PLAY: with the beat while it runs; a loop stopped: mid */
+            cf_led((int32_t)(cf_sn.now_ms - cf_sn.beat_ms) < 120 ? lit : mid, panel.btn[B_PLAY], 1);
+        else
+            cf_led(cf_sn.loop_state == CFL_STOPPED ? mid : dim, panel.btn[B_PLAY], 1);
+        if (cf_sn.sq_on)                         /* the sequencer plays elsewhere: SEQ up, as ARP is */
+            cf_led(mid, panel.btn[B_SEQ], 1);
+    }
+    if (cu.arp_on && !sq)                        /* the arpeggiator plays: ARP lit wherever it opens (not on the
+                                                  * sequencer: it does nothing there) */
         cf_led(lit, panel.btn[B_ARP], 1);
-    if (cf_sn.running)                           /* PLAY: with the beat while it runs; a loop stopped: mid */
-        cf_led((int32_t)(cf_sn.now_ms - cf_sn.beat_ms) < 120 ? lit : mid, panel.btn[B_PLAY], 1);
-    else
-        cf_led(cf_sn.loop_state == CFL_STOPPED ? mid : dim, panel.btn[B_PLAY], 1);
     cf_led(cs.chord.octave < 0 ? (cs.chord.octave < -1 ? lit : mid) : faint, panel.btn[B_OCTDN], 1);
     cf_led(cs.chord.octave > 0 ? (cs.chord.octave > 1 ? lit : mid) : faint, panel.btn[B_OCTUP], 1);
     /* keys: held lit; the effective chord buttons lit, the others faint; the chord's root mid; the scale dim */
     for (k = 0; k < CF_NKEYS; k++) {
         int idx, role = cf_key_role(cs.chord.algo, (int)k, &idx), id = (int)(14u + k);
+        if (sq_key_led(k, lit, mid, dim, faint, blink))
+            continue;
         if ((cu.keys >> k) & 1u) {
             cf_led(lit, (uint32_t)id, 1);
             continue;
@@ -1208,6 +1420,9 @@ static void cf_ui_init(void)
             cfl.d.magic = 0;
         cfl_loaded();
         cu.loop_saved_gen = cfl.gen;
+        sq_load();                               /* the sequencer's patterns and song */
+    } else {
+        sq_defaults();
     }
     if (cfs_loaded) {                            /* the sounds the parts had before the power-off */
         cf_snd_load_index(CF_PART_CHORD, cs.snd[0]);
@@ -1222,6 +1437,16 @@ static void cf_ui_init(void)
     }
     cs.snd[0] = (uint16_t)cf_snd_pos(CF_PART_CHORD);
     cs.snd[1] = (uint16_t)cf_snd_pos(CF_PART_BASS);
+    if (cs.snd_layer != 0xFFFFu)                 /* the LAYER's sound; a new unit's: a soft lead, else the second sound */
+        cf_snd_load_index(CF_PART_LAYER, cs.snd_layer);
+#if FELUCCA_VA
+    else if (!cf_snd_find(CF_PART_LAYER, ENGI_VA, "SOFT LEAD"))
+#else
+    else
+#endif
+        cf_snd_load_index(CF_PART_LAYER, 2);
+    cs.snd_layer = (uint16_t)cf_snd_pos(CF_PART_LAYER);
+    cf_drums_init();
     cu.env_tgt = cs.env_link ? 0u : 1u;
     if (cs.env_link)
         cf_env_follow();
