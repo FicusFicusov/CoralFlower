@@ -193,7 +193,29 @@ static void draw_knobs(void)
         if (!o.name[0])
             continue;
         fb_text_c(&CF_FONT_UI, x + 30, Y_KNOBS + 2, o.name, o.dis ? FL_INK3 : (lit ? C_ACC(0) : FL_INK2), 1);
-        fb_text_c(&CF_FONT_UI, x + 30, Y_KNOBS + 15, o.val, o.dis ? FL_INK3 : FL_INK, 1);
+        {
+            /* a value of 8 letters or more ("WIDE STRINGS", "DEEP SUB", "16 steps") fills its cell edge to edge or
+             * runs into the next one (the owner, 2026-10-19): two lines, broken at a space or after a hyphen (every
+             * factory sound is two short words); with no break, or over a bar, its first 8 letters */
+            char a[14], c[14];
+            int i, cut = 0, w = fb_text_w(&CF_FONT_UI, o.val, 1);
+            uint8_t ink = o.dis ? FL_INK3 : FL_INK;
+            for (i = 1; i <= 8 && o.val[i]; i++)
+                if (o.val[i] == ' ' || o.val[i - 1] == '-')
+                    cut = i;
+            if (w > 7 * 7 && cut && o.bar < 0) {
+                const char *b = o.val + cut;
+                str_cpy(a, o.val, (uint32_t)cut + 1u);
+                while (*b == ' ')
+                    b++;
+                str_cpy(c, b, 9);
+                fb_text_c(&CF_FONT_UI, x + 30, Y_KNOBS + 12, a, ink, 1);
+                fb_text_c(&CF_FONT_UI, x + 30, Y_KNOBS + 22, c, ink, 1);
+            } else {
+                str_cpy(a, o.val, 9);
+                fb_text_c(&CF_FONT_UI, x + 30, Y_KNOBS + 15, a, ink, 1);
+            }
+        }
         if (o.bar >= 0) {
             int bw = 42 * o.bar / 255;
             fb_rect(x + 9, Y_KNOBS + 31, 42, 2, FL_BG3);
