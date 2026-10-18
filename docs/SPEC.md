@@ -36,12 +36,12 @@ The essential performance settings.
 
 | Knob | Parameter | Values |
 | --- | --- | --- |
-| K1 | **Quantize** | Off / On / Full — default **On** |
+| K1 | **Quantize** | Off / Basic / Full — default **Full** |
 | K2 | **Key** (tonic) | C … B; disabled (greyed) when Quantize is Off |
 | K3 | **Scale** | Major, Natural Minor, then Major Pentatonic, Minor Pentatonic, then Dorian, Mixolydian, Lydian, Phrygian, Locrian…, then less common scales |
 | K4 | **Glide** (ms) | Glide between chords and notes — "very important", must work across whole chords like Vital's poly glide |
 
-- **Quantize On** works like ChoralRoot's Key switch: roots snap to the scale.
+- **Quantize Basic** works like ChoralRoot's Key switch: roots snap to the scale.
 - **Quantize Full** also snaps the individual chord tones to the scale (diatonic chords).
 - Enharmonic spelling must follow the key: D# in E major, E♭ in B♭ major, etc.
 - OCT− / OCT+ shift octaves as usual (−3 … 3). Octave 0 sounds an octave under the keys' printed pitch (the owner,
@@ -52,13 +52,13 @@ The essential performance settings.
 *Algorithm 1 (chord buttons on the upper row):* the 16 lower keys play roots.
 - Quantize Off: chromatic, one semitone per key, the tonic on lower key 5
   (G# A A# B **C** C# D D# E F F# G G# A A# B).
-- Quantize On/Full: one scale degree per key, the tonic on lower key 5
+- Quantize Basic/Full: one scale degree per key, the tonic on lower key 5
   (C major: F G A B **C** D E F G A B C D E F G, labelled IV V VI VII **I** II III …).
 
 *Algorithm 2 (chord buttons on the left):* the remaining 8 upper and 12 lower keys play roots as a
 piano keyboard (lower: C D E F G A B C D E F G; upper: C# D# | F# G# A# | C# D# | F#).
 - Quantize Off: notes as printed.
-- Quantize On/Full: each key snaps to the nearest scale tone (C major: black keys snap to C D | F G A …;
+- Quantize Basic/Full: each key snaps to the nearest scale tone (C major: black keys snap to C D | F G A …;
   E major: white keys become C# D# E F# G# A B …).
 - Every root key shows its note name and its scale degree (Roman numeral).
 

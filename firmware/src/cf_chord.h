@@ -24,7 +24,7 @@
 #define CF_MAX_ROOTS 16
 
 enum { CF_ALG_TOP = 0, CF_ALG_TOP_LOCK, CF_ALG_SIDE, CF_ALG_SIDE_LOCK, CF_NALGS };
-enum { CF_Q_OFF = 0, CF_Q_ON, CF_Q_FULL };
+enum { CF_Q_OFF = 0, CF_Q_BASIC, CF_Q_FULL };
 enum { CF_ROLE_NONE = 0, CF_ROLE_ROOT, CF_ROLE_BUTTON };
 #define CF_TYPE_DEFAULT 0xFFu   /* a merged form with no type of its own: the scale's chord, or major */
 

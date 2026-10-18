@@ -9,7 +9,7 @@ are summarised at the end.
 | --- | --- | --- |
 | Base | Fork **ChoralRoot FM-1 v0.21** (GPL-3.0-only, itself a fork of Felucca) for the platform, sound engines and FX. | Its platform has the safest install path of all FM-1 firmwares (boot stub, safe mode, rescue), a working browser emulator and a measured audio budget. |
 | What we keep frozen | `hal/`, `crt0.S`, `app.ld`, `stub/`, `loader/`, `ota*.c`, `storage*.c`, `audio.c`, `lcd.c`, `usb*.c`, `midi_uart.c`, `main.c` boot order, `fm1pkg_make.py`. | Byte-identical stub, loader and package format are what keep installs from bricking units. |
-| What we replace | The whole app layer: ChoralRoot's UI (`cr_ui.c`, `cr_draw.c`, `cr_edit.c`, settings, shims) **and** its chord engine. | The owner's chord model (assignable chord forms, four input algorithms, Quantize Off/On/Full with 20+ scales, bass degree, chord glide) does not fit `cr_engine`'s fixed Orchid model. A smaller engine written for the spec is cleaner than bending a 1,600-line one. |
+| What we replace | The whole app layer: ChoralRoot's UI (`cr_ui.c`, `cr_draw.c`, `cr_edit.c`, settings, shims) **and** its chord engine. | The owner's chord model (assignable chord forms, four input algorithms, Quantize Off/Basic/Full with 20+ scales, bass degree, chord glide) does not fit `cr_engine`'s fixed Orchid model. A smaller engine written for the spec is cleaner than bending a 1,600-line one. |
 | Rendering | An **indexed 240×240 framebuffer** (57.6 KB, the same POOL room ChoralRoot's canvas used), a 64-colour palette, per-tile change detection, only changed tiles sent over SPI. | The panel's SPI link caps full-screen redraws at ~13 fps; the plant animates a region, the rest of the screen stays still and costs nothing. Palette indices make themes a table swap. |
 | Look | Pixel art throughout: the plant at 2× pixels, a pixel font for text, the "TLP" ramps, dark warm background. | One consistent style: the owner's references are a pixel-game palette and PlantStudio's raster plants. |
 | Fonts | Pixel fonts rendered without anti-aliasing (no Raqm needed): a UI face at 1×, the same at 2× for big values, a micro face for key caps. | Crisp at 240 px; the Mac's Pillow lacks Raqm, so ChoralRoot's AA font pipeline would differ between Mac and CI. |
@@ -25,7 +25,7 @@ are summarised at the end.
    pixel fonts; the browser emulator boots CoralFlower and shows the plant on HOME. *Exit: the emulator page runs,
    keys make sound through a minimal chord path.*
 2. **Chords.** Music theory module (scales, chord forms, names, spelling, numerals); the four chord algorithms with
-   combining and Lock; Quantize Off/On/Full, Key, Scale; inversion and bass degree; the bass part; chord glide.
+   combining and Lock; Quantize Off/Basic/Full, Key, Scale; inversion and bass degree; the bass part; chord glide.
    Host tests for all of it. *Exit: every rule of SPEC §1–2 has a passing test.*
 3. **Screens.** HOME, SEL, ENV, LFO (bass), FX, ARP, SEQ (metronome), GLO (grouped settings, colour themes), SAVE,
    EDIT (FM operator editor), PLAY/REC (looper); top bar with battery, the key-label strip, the knob row, popups,

@@ -110,7 +110,7 @@ void cf_chord_defaults(cf_chord_cfg_t *cfg)
     };
     int i;
     cfg->algo = CF_ALG_TOP_LOCK;                 /* (the first on the ALGORITHM knob: cf_ui.c) */
-    cfg->quantize = CF_Q_ON;
+    cfg->quantize = CF_Q_FULL;                   /* (the owner, 2026-10-18: Full by default, the chords in the scale) */
     cfg->tonic = 0;
     cfg->scale = CF_SC_MAJOR;
     cfg->octave = 0;
@@ -304,7 +304,7 @@ static int cfc_resolve(cf_chord_t *c)
         } else {
             mask = cf_form_mask(&f);
         }
-        if (g->quantize == CF_Q_FULL || (g->quantize == CF_Q_ON && f.type == CF_TYPE_DEFAULT && f.add))
+        if (g->quantize == CF_Q_FULL || (g->quantize == CF_Q_BASIC && f.type == CF_TYPE_DEFAULT && f.add))
             mask = cf_mask_snap(mask, o.root_pc, g->scale, g->tonic);
         base = o.root_note;
         inv = f.inv < 0 ? 0 : f.inv;

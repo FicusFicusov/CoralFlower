@@ -69,7 +69,7 @@ static void cu_spell_update(void)
 }
 
 /* --------------------------------------------------------------- knobs --- */
-static const char *const Q_NAME[3] = {"Off", "On", "Full"};
+static const char *const Q_NAME[3] = {"Off", "Basic", "Full"};
 static const char *const ALG_NAME[CF_NALGS] = {"Top", "Top Lock", "Side", "Side Lock"};
 
 static void kfmt(char *b, uint32_t n, const char *s) { str_cpy(b, s, n); }

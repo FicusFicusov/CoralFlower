@@ -72,7 +72,7 @@ int main(void)
     CHECK(cf_key_role(CF_ALG_SIDE, 8, &idx) == CF_ROLE_ROOT, "C#4 is a root in Side");
 
     /* Top, Quantize On, C major: no button = single notes, a scale step a key (the owner's rule, 2026-10-15) */
-    setup(CF_ALG_TOP, CF_Q_ON, 0, CF_SC_MAJOR);
+    setup(CF_ALG_TOP, CF_Q_BASIC, 0, CF_SC_MAJOR);
     down(7);
     CHECK(C.out.single, "no button: single notes");
     NOTES("C alone: the note C", 60);
@@ -92,7 +92,7 @@ int main(void)
     up(0);
 
     /* a type held: On keeps it, Full snaps it */
-    setup(CF_ALG_TOP, CF_Q_ON, 0, CF_SC_MAJOR);
+    setup(CF_ALG_TOP, CF_Q_BASIC, 0, CF_SC_MAJOR);
     down(3);
     down(9);
     NOTES("D major with M held (On)", 62, 66, 69);
@@ -111,7 +111,7 @@ int main(void)
     up(15);
 
     /* m7, and the merge of M + M6 + M9 + m7 -> C6/9 */
-    setup(CF_ALG_TOP, CF_Q_ON, 0, CF_SC_MAJOR);
+    setup(CF_ALG_TOP, CF_Q_BASIC, 0, CF_SC_MAJOR);
     down(22);
     down(7);
     NOTES("Cm7", 60, 63, 67, 70);
@@ -151,7 +151,7 @@ int main(void)
     up(1);
 
     /* Lock: a tap latches, the same tap unlatches; two at once latch together */
-    setup(CF_ALG_TOP_LOCK, CF_Q_ON, 0, CF_SC_MAJOR);
+    setup(CF_ALG_TOP_LOCK, CF_Q_BASIC, 0, CF_SC_MAJOR);
     down(15);
     up(15);
     down(7);
@@ -199,7 +199,7 @@ int main(void)
     up(1);
     /* keep in Top (not Lock): a button under a root that went down with one changes nothing; held when the next
      * root goes down, it plays */
-    setup(CF_ALG_TOP, CF_Q_ON, 0, CF_SC_MAJOR);
+    setup(CF_ALG_TOP, CF_Q_BASIC, 0, CF_SC_MAJOR);
     C.keep = 1;
     down(3);
     down(7);
@@ -218,7 +218,7 @@ int main(void)
     up(7);
     up(3);
     /* the exception: a root down with no button takes the buttons pressed after it at once (keep or not) */
-    setup(CF_ALG_TOP, CF_Q_ON, 0, CF_SC_MAJOR);
+    setup(CF_ALG_TOP, CF_Q_BASIC, 0, CF_SC_MAJOR);
     C.keep = 1;
     down(7);
     NOTES("Top, C alone: the note", 60);
@@ -236,7 +236,7 @@ int main(void)
     up(15);
     up(7);
     /* keep in Side: an extension button under a held root waits too */
-    setup(CF_ALG_SIDE, CF_Q_ON, 0, CF_SC_MAJOR);
+    setup(CF_ALG_SIDE, CF_Q_BASIC, 0, CF_SC_MAJOR);
     C.keep = 1;
     down(1);
     down(7 + 5);
@@ -248,7 +248,7 @@ int main(void)
     up(1);
 
     /* Side: the piano, snapped; quality and extension buttons */
-    setup(CF_ALG_SIDE, CF_Q_ON, 0, CF_SC_MAJOR);
+    setup(CF_ALG_SIDE, CF_Q_BASIC, 0, CF_SC_MAJOR);
     down(8);
     NOTES("C#4 snaps down to C", 60);
     up(8);
@@ -264,7 +264,7 @@ int main(void)
     up(9);
     up(6);
     up(3);
-    setup(CF_ALG_SIDE, CF_Q_ON, 4, CF_SC_MAJOR);
+    setup(CF_ALG_SIDE, CF_Q_BASIC, 4, CF_SC_MAJOR);
     down(7);
     CHECK(C.out.root_note == 61, "C4 in E major goes up to C# (got %d)", C.out.root_note);
     up(7);
@@ -295,7 +295,7 @@ int main(void)
     up(8);
 
     /* Auto inversion, bass degree, octave */
-    setup(CF_ALG_TOP, CF_Q_ON, 0, CF_SC_MAJOR);
+    setup(CF_ALG_TOP, CF_Q_BASIC, 0, CF_SC_MAJOR);
     G.top[1].inv = CF_INV_AUTO;
     G.top[1].bass = 1;
     cf_chord_config(&C, &G);
@@ -316,7 +316,7 @@ int main(void)
     up(7);
 
     /* a chord's held root falls back to the one held before (no button: both are single notes) */
-    setup(CF_ALG_TOP, CF_Q_ON, 0, CF_SC_MAJOR);
+    setup(CF_ALG_TOP, CF_Q_BASIC, 0, CF_SC_MAJOR);
     down(7);
     down(9);
     NOTES("no button, C and D held: both notes", 60, 62);
@@ -332,7 +332,7 @@ int main(void)
     up(3);
 
     /* Off in the first builds' place (button 0): single notes, several at once */
-    setup(CF_ALG_TOP, CF_Q_ON, 0, CF_SC_MAJOR);
+    setup(CF_ALG_TOP, CF_Q_BASIC, 0, CF_SC_MAJOR);
     down(1);
     down(7);
     down(11);
