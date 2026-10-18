@@ -537,7 +537,9 @@ static void trk_note_off(track_t *t, uint32_t note)
 /* CoralFlower's chord glide (cf_play.c): voices move between the notes of two chords instead of restarting.
  * trk_voice_of: the held voice that plays `note` (the newest), 0 when none.
  * trk_retune: that voice becomes note `to` without a new attack, its pitch gliding there over `ticks` control blocks
- * (0: at once). An engine with its own pitch path (FM6) is told through engine_t.glide.
+ * (0: at once). An engine with its own pitch path (FM6) glides it there itself (engine_t.glide), and the voice's
+ * pitch goes there at once: both gliding, an FM chord change started twice the interval away and was heard ~250 ms
+ * at a Glide of 150 (the owner, 2026-10-18).
  * trk_note_on_from: note `to` starts as usual, its pitch gliding from `from` over `ticks` blocks (a chord that grows:
  * the new voice comes out of a note of the old chord). */
 static void glide_ticks(voice_t *v, uint32_t ticks)
@@ -567,7 +569,7 @@ static void trk_retune(track_t *t, voice_t *v, uint32_t to, uint32_t ticks)
         v->pitch_cur = v->pitch16;
     v->note = (uint8_t)to;
     v->pitch16 = (int32_t)to * 16;
-    glide_ticks(v, ticks);
+    glide_ticks(v, e->glide ? 0u : ticks);
     if (e->glide)
         e->glide(t, v, 0xFFu, ticks);
 }
@@ -580,7 +582,7 @@ static void trk_note_on_from(track_t *t, uint32_t to, uint32_t vel, uint32_t fro
     for (i = 0; i < NVOICE; i++)
         if (t->v[i].active && t->v[i].gate && t->v[i].note == to && t->v[i].age > before) {
             t->v[i].pitch_cur = (int32_t)from * 16;
-            glide_ticks(&t->v[i], ticks);
+            glide_ticks(&t->v[i], e->glide ? 0u : ticks);
             if (e->glide)
                 e->glide(t, &t->v[i], from, ticks);
         }

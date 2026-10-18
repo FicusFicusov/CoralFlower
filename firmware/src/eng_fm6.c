@@ -801,8 +801,9 @@ static void fm6_legato(track_t *t, voice_t *v)
 }
 
 /* CoralFlower's chord glide (voice.c trk_retune / trk_note_on_from): the voice plays v->note now, its operators'
- * pitch glides there from note `from` (0xFF: from where they are) in `ticks` blocks. A sounding voice keeps the levels
- * and rates of the note it began with (as a legato change does); a fresh one has its own */
+ * pitch glides there from note `from` (0xFF: from where they are) in `ticks` control blocks (CTL samples: a Dexed
+ * block of FM6_N is two of them, so the step is taken over the Dexed blocks those make). A sounding voice keeps the
+ * levels and rates of the note it began with (as a legato change does); a fresh one has its own */
 static void fm6_glide(track_t *t, voice_t *v, uint32_t from, uint32_t ticks)
 {
     fm6_part_t *P = FM6P(t);
@@ -811,9 +812,11 @@ static void fm6_glide(track_t *t, voice_t *v, uint32_t from, uint32_t ticks)
     int16_t ol[6];
     int8_t rs[6];
     int32_t d = 0;
-    uint32_t k, fresh;
+    uint32_t k, fresh, blocks = (ticks * CTL + FM6_N / 2u) / FM6_N;
     if (!P)
         return;
+    if (ticks && !blocks)
+        blocks = 1;
     s = fm6_state(t, v);
     ed = fm6_ed(t);
     fresh = s->note == v->note;
@@ -839,7 +842,7 @@ static void fm6_glide(track_t *t, voice_t *v, uint32_t from, uint32_t ticks)
             d = dk < 0 ? -dk : dk;
         }
     }
-    s->grate = ticks && d ? (d / (int32_t)ticks > 0 ? d / (int32_t)ticks : 1) : 0;
+    s->grate = blocks && d ? (d / (int32_t)blocks > 0 ? d / (int32_t)blocks : 1) : 0;
 }
 
 /* the voice is over: released, and every output operator's envelope (and the feedback operator's) gone under
