@@ -495,9 +495,15 @@ static void draw_sq_tracks(void)
     sqv_update(p);
     char t[12];
     uint32_t r;
-    str_cpy(t, "Pattern ", sizeof t);
-    t[8] = (char)('A' + squ.pat);
-    t[9] = 0;
+    if (squ.ocpy) {                              /* (OCT+ held, ALGORITHM turned: the copy's way) */
+        str_cpy(t, "Copy A to A", sizeof t);
+        t[5] = (char)('A' + squ.ofrom % SQ_NPAT);
+        t[10] = (char)('A' + squ.pat % SQ_NPAT);
+    } else {
+        str_cpy(t, "Pattern ", sizeof t);
+        t[8] = (char)('A' + squ.pat);
+        t[9] = 0;
+    }
     draw_head(t);
     sq_pat_row(HEAD_LINE);
     for (r = 0; r < SQ_NTRK; r++) {             /* four rows, 20 px, 2 apart; a muted track's dark */
@@ -505,8 +511,13 @@ static void draw_sq_tracks(void)
         int has = !sq_empty(p) && (r == SQ_DRUMS ? sq_drums(p) : sq_count(p, r) > 0);
         sq_ink_t k = r == SQ_DRUMS ? sq_lane_ink(0) : sq_root_ink(r == SQ_BASS ? 7u : r == SQ_LAYER ? 4u : 0u);
         fb_rbox(6, y, 228, 20, 3, sel ? cf_panel(2) : FL_BG1);
+        if (sel && squ.sel_down && !squ.cpy && sq_track_has(p, r)) {   /* SEL held: the row fills as the seconds go
+                                                  * (then it clears) */
+            uint32_t t = cu.now - squ.sel_down;
+            fb_rect(7, y + 1, (int)(t >= SQ_CLEAR_MS ? 226u : t * 226u / SQ_CLEAR_MS), 18, FL_C(FL_R_FIRE, 3));
+        }
         if (sel)
-            fb_rframe(6, y, 228, 20, C_ACC(1));
+            fb_rframe(6, y, 228, 20, squ.sel_down && !squ.cpy && sq_track_has(p, r) ? FL_C(FL_R_FIRE, 1) : C_ACC(1));
         sq_track_icon(13, ym - 5, r, k);
         fb_text(&CF_FONT_UI, 30, ym - 6, SQ_TRK_NAME[r], mute ? FL_INK3 : sel ? FL_INK : FL_INK2, 1);
         if (sel)                                 /* (what opens it, on the row itself: the top bar has no room) */
@@ -526,6 +537,21 @@ static void draw_sq_tracks(void)
             fb_rect(92 + (cf_sn.sq_bar - p->start) * bw + (int)(cf_sn.sq_t * (uint32_t)(bw - 2) / cf_sn.sq_bt), ym - 5, 1, 11,
                     FL_C(FL_R_SAND, 0));
         }
+    }
+    if (squ.sel_down && !squ.cpy && squ.pat < SQ_NPAT && sq_track_has(p, squ.trk)) {
+        /* SEL held on a track: what will happen, the seconds left to it, how to keep it (the owner, 2026-10-19: three
+         * seconds, a countdown, "чтобы пользователь понимал что произойдёт") */
+        uint32_t tm = cu.now - squ.sel_down, left = tm >= SQ_CLEAR_MS ? 0u : (SQ_CLEAR_MS - tm + 999u) / 1000u;
+        uint8_t warn = FL_C(FL_R_FIRE, 1);
+        char a[20], d[2];
+        str_cpy(a, "Clear ", sizeof a);
+        str_cpy(a + 6, SQ_TRK_NAME[squ.trk % SQ_NTRK], sizeof a - 6u);
+        draw_panel(20, Y_VIEW + 38, 200, 100);
+        fb_text_c(&CF_FONT_UI, 120, Y_VIEW + 44, a, warn, 1);
+        d[0] = (char)('0' + left);
+        d[1] = 0;
+        fb_text_c(&CF_FONT_UI, 120, Y_VIEW + 60, d, warn, 3);
+        draw_chip_text_c(Y_VIEW + 116, "let go of [SEL]: keep it", FL_INK2);
     }
     {
         static const char *const H[2] = {"GLO", "help"};
@@ -696,7 +722,8 @@ static void draw_sq_help(void)
     /* (what the knobs do their cells say: the owner, 2026-10-19, "K1-4 are not needed here") */
     /* (PLAY and REC need no line: the owner, 2026-10-19; REC held undoes any last change, not only a take) */
     static const char *const TR[] = {"[SELECT] track", "[ALGO] pattern A..H, song", "[EDIT] open the track",
-                                     "[SAVE] copy, clear", "hold [REC]: undo last change",
+                                     "hold [OCT+], turn [ALGO]:", "   copy the pattern there",
+                                     "hold [SEL]: clear the track", "hold [REC]: undo last change",
                                      "[SEQ] home  [GLO] close", 0};
     static const char *const SO[] = {"upper keys A..H: add after the frame", "[SELECT] move the frame",
                                      "[SEL] remove it  [EDIT] open it", "[PLAY] play from the frame",

@@ -511,12 +511,34 @@ static void sq_materialize(sq_pat_t *p, uint32_t trk, uint32_t b)
         sq_copy_track_bar(p, trk, p->start + (x - p->start) % n, x);
     sq_touch();
 }
-static void sq_oct_poll(void)                    /* every frame: OCT+ let go in a track */
+/* a pattern copied onto another letter (OCT+ held, ALGORITHM turned on the SEQUENCER, OCT+ let go): what the letter
+ * had goes (REC held: back); the copy is shown */
+static void sq_copy_pattern(uint32_t from, uint32_t to)
+{
+    char m[24];
+    from %= SQ_NPAT;
+    to %= SQ_NPAT;
+    if (from == to)
+        return;
+    str_cpy(m, "Pattern   ", sizeof m);
+    m[8] = (char)('A' + from);
+    if (sq_empty(&sq_st.pat[from])) {
+        str_cpy(m + 9, " is empty", 10);
+        cf_message(m);
+        return;
+    }
+    sq_touch_pat(to);
+    sq_st.pat[to] = sq_st.pat[from];
+    str_cpy(m + 9, " copied to  ", 13);
+    m[str_len(m) - 1u] = (char)('A' + to);
+    cf_message(m);
+}
+static void sq_oct_poll(void)                    /* every frame: OCT+ let go in a track or on the SEQUENCER */
 {
     char m[24];
     if (!squ.oct_down)
         return;
-    if ((fm1_in.buttons >> panel.btn[B_OCTUP]) & 1u && cu.scr == SCR_SQED)
+    if ((fm1_in.buttons >> panel.btn[B_OCTUP]) & 1u && (cu.scr == SCR_SQED || cu.scr == SCR_SQ))
         return;
     squ.oct_down = 0;
     if (!squ.ocpy) {                             /* a tap: OCT+, as anywhere */
@@ -526,6 +548,10 @@ static void sq_oct_poll(void)                    /* every frame: OCT+ let go in 
         return;
     }
     squ.ocpy = 0;
+    if (cu.scr == SCR_SQ) {
+        sq_copy_pattern(squ.ofrom, squ.pat);
+        return;
+    }
     if (cu.scr != SCR_SQED || squ.ofrom == squ.bar)
         return;
     sqh.busy = 0;                                /* (an action of its own) */
@@ -540,11 +566,27 @@ static void sq_oct_poll(void)                    /* every frame: OCT+ let go in 
     cf_message(m);
 }
 static void sq_clear(void);
+static void sq_erase_track(uint32_t t);
+#define SQ_CLEAR_MS 3000u                        /* SEL held on the SEQUENCER: the track in the frame clears (3 s
+                                                  * and counted down on the screen: the owner, 2026-10-19) */
+/* the track in the frame has something to clear */
+static int sq_track_has(const sq_pat_t *p, uint32_t t)
+{
+    return !sq_empty(p) && (t == SQ_DRUMS ? sq_drums(p) : sq_count(p, t) > 0);
+}
 static void sq_sel_poll(void)                    /* every frame: SEL let go in a track */
 {
     char m[24];
     if (!squ.sel_down)
         return;
+    if ((fm1_in.buttons >> panel.btn[B_SCL]) & 1u && cu.scr == SCR_SQ) {   /* held a second: the track goes */
+        if (!squ.cpy && cu.now - squ.sel_down >= SQ_CLEAR_MS && sq_track_has(sq_cur(), squ.trk)) {
+            squ.cpy = 1;
+            sq_erase_track(squ.trk);
+            cf_message("Cleared. Hold REC: undo");
+        }
+        return;
+    }
     if ((fm1_in.buttons >> panel.btn[B_SCL]) & 1u && cu.scr == SCR_SQED)
         return;
     squ.sel_down = 0;
@@ -1175,6 +1217,15 @@ static void sq_knob_turn(int k, int d)
 /* ALGORITHM on SEQUENCER: the pattern, then the song */
 static void sq_algo(int d)
 {
+    if (squ.oct_down && squ.pat < SQ_NPAT) {     /* OCT+ held: where the pattern goes (sq_oct_poll copies it) */
+        if (!squ.ocpy) {
+            squ.ocpy = 1;
+            squ.ofrom = squ.pat;
+        }
+        squ.pat = (uint8_t)clampi(squ.pat + d, 0, SQ_NPAT - 1);
+        cv_turned(d);
+        return;
+    }
     squ.pat = (uint8_t)clampi(squ.pat + d, 0, SQ_SONGPG);
     cv_turned(d);
     if (cf_sn.sq_on && !cf_sn.sq_song && cf_sn.sq_rec == 0xFFu && squ.pat < SQ_NPAT)
@@ -1182,12 +1233,37 @@ static void sq_algo(int d)
                                                   * the song's page leaves it playing) */
 }
 /* SELECT on SEQUENCER: the track (the song: the place) */
+/* a track of the pattern shown cleared whole (SEL held 1 s on the SEQUENCER: sq_sel_poll; a sweep of SEL held and
+ * SELECT turned, as in a track, made no sense over four rows: the first detent took two tracks, the owner,
+ * 2026-10-19) */
+static void sq_erase_track(uint32_t t)
+{
+    sq_pat_t *p = sq_cur();
+    uint32_t i, l, b;
+    if (sq_empty(p))
+        return;
+    if (t == SQ_DRUMS) {
+        for (l = 0; l < SQ_NLANE; l++)
+            for (b = 0; b < SQ_BARS; b++)
+                p->hit[l][b] = 0;
+    } else {
+        for (i = 0; i < p->nev;)
+            if (p->ev[i].trk == t)
+                sq_del(p, i);
+            else
+                i++;
+    }
+    sq_touch();
+}
 static void sq_pick(int d)
 {
-    if (squ.pat == SQ_SONGPG)
+    if (squ.pat == SQ_SONGPG) {
         squ.slot = (uint8_t)(sq_st.song.n ? clampi(squ.slot + d, 0, sq_st.song.n - 1) : 0);
-    else
-        squ.trk = (uint8_t)clampi(squ.trk + d, 0, SQ_NTRK - 1);
+        return;
+    }
+    if (squ.sel_down && !squ.cpy)                /* (the frame moved while SEL is held: no track cleared) */
+        squ.sel_down = 0;
+    squ.trk = (uint8_t)clampi(squ.trk + d, 0, SQ_NTRK - 1);
 }
 
 /* the drums' key caps: the upper row names the drums, the lower row is the bar's steps; the song's: the upper row the

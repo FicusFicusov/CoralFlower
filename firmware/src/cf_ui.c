@@ -798,7 +798,8 @@ static void ui_button(uint32_t b)
         return;
     }
     if (sq_screen(cu.scr)) {                     /* the sequencer's own: EDIT / SEL open, SEL clears, SAVE back, GLO */
-        if (b == B_FX || b == B_ENV || b == B_LFO || b == B_ARP || (cu.scr == SCR_SQED && b == B_EDIT))
+        if (b == B_FX || b == B_ENV || b == B_LFO || b == B_ARP || (cu.scr == SCR_SQED && b == B_EDIT) ||
+            (cu.scr == SCR_SQ && b == B_SAVE))   /* (SAVE: nothing on the SEQUENCER; a pattern's copy is OCT+'s) */
             return;                              /* (no way out to another screen here but HOME and SEQ: the owner,
                                                   * 2026-10-19; their lights are off) */
         if (cu.scr == SCR_SQ && b == B_EDIT) {
@@ -807,9 +808,16 @@ static void ui_button(uint32_t b)
             return;
         }
         if (cu.scr == SCR_SQ && b == B_SCL) {      /* SEL takes one thing out of the frame, never many: on the song its
-                                                  * pattern (the pattern stays); a track, nothing */
-            if (squ.pat == SQ_SONGPG)
+                                                  * pattern (the pattern stays); a track: nothing at a tap, held 1 s it
+                                                  * is cleared (sq_sel_poll) */
+            if (squ.pat == SQ_SONGPG) {
                 sq_song_remove();
+            } else {
+                squ.sel_down = cu.now ? cu.now : 1u;
+                squ.cpy = 0;
+                sqh.busy = 0;                    /* (an action of its own: one undo) */
+                sq_undo_poll();
+            }
             return;
         }
         if (cu.scr == SCR_SQED && b == B_SCL) {   /* (a tap clears on its release; held, SELECT copies the bar:
@@ -871,9 +879,10 @@ static void ui_button(uint32_t b)
         break;
     case B_OCTDN:
     case B_OCTUP:
-        if (b == B_OCTUP && cu.scr == SCR_SQED &&
-            !((fm1_in.buttons >> panel.btn[B_OCTDN]) & 1u)) {   /* a track: held with SELECT turned it copies the
-                                                  * frame's bar; a tap is OCT+ on its release (sq_oct_poll) */
+        if (b == B_OCTUP && (cu.scr == SCR_SQED || (cu.scr == SCR_SQ && squ.pat < SQ_NPAT)) &&
+            !((fm1_in.buttons >> panel.btn[B_OCTDN]) & 1u)) {   /* held with SELECT turned (a track) it copies the
+                                                  * frame's bar, with ALGORITHM turned (SEQUENCER) the pattern; a tap is
+                                                  * OCT+ on its release (sq_oct_poll) */
             squ.oct_down = cu.now ? cu.now : 1u;
             squ.ocpy = 0;
             break;
@@ -1350,11 +1359,11 @@ static void cf_leds(void)
         if (cu.scr == SCR_SQ && squ.pat == SQ_NPAT) {   /* the song: EDIT and SEL work on the frame's pattern */
             has = sq_st.song.n != 0;
             cf_led(has ? mid : faint, panel.btn[B_EDIT], 1);
-            cf_led(dim, panel.btn[B_SAVE], 1);
             cf_led(has ? mid : faint, panel.btn[B_SCL], 1);
-        } else if (cu.scr == SCR_SQ) {
+        } else if (cu.scr == SCR_SQ) {           /* (SEL held clears the track: up when it has something) */
             cf_led(blink ? mid : dim, panel.btn[B_EDIT], 1);
-            cf_led(dim, panel.btn[B_SAVE], 1);
+            if (sq_track_has(p, squ.trk))
+                cf_led(dim, panel.btn[B_SCL], 1);
         } else {
             int clear = squ.trk != SQ_DRUMS && sq_at(p, squ.trk, sq_src_bar(p, squ.trk, squ.bar), squ.step) >= 0;
             /* (DRUMS: SEL nothing) */
