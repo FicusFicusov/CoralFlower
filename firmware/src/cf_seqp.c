@@ -9,7 +9,8 @@
  * sound), DRUMS on part 3 (the DRUM engine, a General MIDI note a lane). A muted track (sq_song_t.mute) is skipped.
  * A note the keys or the loop also hold is theirs to let go (cfp_holds, cfl_holds), and theirs do not cut the
  * sequencer's (cf_play.c cfp_off asks sqp_holds).
- * PLAY on another pattern than the one playing: it comes in when this one ends (sqp.next).
+ * Another pattern picked while one plays comes in at the next bar line (sqp.next; it waited for the pattern's end, and
+ * did not seem to switch at all: the owner, 2026-10-19).
  * REC: a take into one track. From a stop, a bar of count-in (the click loud, as the looper's), then the pattern
  * from its first bar; while it plays, at once. What the keys play then (the chord model's changes; on DRUMS the drum
  * keys) goes into a queue with where it fell in the bar (sqp_rq); the UI takes it from there and writes the steps
@@ -279,10 +280,10 @@ static void sqp_next_bar(void)
     uint32_t i;
     sqp.t = 0;                                   /* (what sounds lasts on over the bar line: its own count) */
     sqp.nu = sqp.nh = sqp.sbok = 0;
-    if (++sqp.bar < p->start + p->bars && sqp.bar >= p->start)
+    if (++sqp.bar < p->start + p->bars && sqp.bar >= p->start && sqp.next == 0xFFu)
         return;                                  /* (the window moved under it: back to its top) */
     sqp.bar = p->start;
-    if (sqp.next != 0xFFu) {                     /* PLAY on another pattern: it comes in now */
+    if (sqp.next != 0xFFu) {                     /* another pattern picked (the song: PLAY on it): it comes in now */
         if (sqp.next >= SQ_NPAT && sq_st.song.n) {
             sqp.song = 1;
             sqp.slot = (uint8_t)((sqp.next - SQ_NPAT) % sq_st.song.n);
@@ -450,6 +451,8 @@ static void sqp_queue(uint32_t pat, uint32_t slot)
         return;
     }
     sqp.next = (uint8_t)(pat >= SQ_NPAT ? SQ_NPAT + slot % SQ_SONG : pat);
+    if (pat < SQ_NPAT && !sqp.song && pat == sqp.pat)
+        sqp.next = 0xFF;                         /* (back to the one playing: it plays on) */
 }
 /* REC: a take into track trk of pattern pat. Playing that pattern: at once; else from its top after a bar of
  * count-in */

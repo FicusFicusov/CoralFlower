@@ -784,20 +784,10 @@ static void sq_rec_poll(void)
 static void sq_play(void)
 {
     int song = cu.scr == SCR_SQ && squ.pat == SQ_SONGPG;
-    if (cf_sn.sq_on) {                           /* what plays is what is shown: it stops; else what is shown comes
-                                                  * in when what plays ends (the bar of a live set never breaks) */
-        char m[24];
-        if (cf_sn.sq_rec != 0xFFu || (song ? cf_sn.sq_song : !cf_sn.sq_song && cf_sn.sq_pat == squ.pat) ||
-            (song && !sq_st.song.n)) {
-            cf_post(CFE_SEQ, 0, 0, 0);
-            return;
-        }
-        cf_post(CFE_SEQ, 3, song ? SQ_NPAT : squ.pat, squ.slot);
-        str_cpy(m, song ? "Song" : "Pattern  ", sizeof m);
-        if (!song)
-            m[8] = (char)('A' + squ.pat);
-        str_cpy(m + str_len(m), " comes next", 12);
-        cf_message(m);
+    if (cf_sn.sq_on) {                           /* playing: PLAY stops, whatever is shown (it queued another pattern
+                                                  * and seemed not to stop: the owner, 2026-10-19; the pattern shown
+                                                  * takes over by itself: sq_algo) */
+        cf_post(CFE_SEQ, 0, 0, 0);
         return;
     }
     if (cf_sn.running) {                         /* (the beat alone runs: PLAY stops it) */
@@ -1187,6 +1177,9 @@ static void sq_algo(int d)
 {
     squ.pat = (uint8_t)clampi(squ.pat + d, 0, SQ_SONGPG);
     cv_turned(d);
+    if (cf_sn.sq_on && !cf_sn.sq_song && cf_sn.sq_rec == 0xFFu && squ.pat < SQ_NPAT)
+        cf_post(CFE_SEQ, 3, squ.pat, 0);         /* (a pattern plays: the one shown takes over at the next bar line;
+                                                  * the song's page leaves it playing) */
 }
 /* SELECT on SEQUENCER: the track (the song: the place) */
 static void sq_pick(int d)
