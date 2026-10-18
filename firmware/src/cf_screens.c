@@ -247,7 +247,7 @@ static void draw_sel(void)
 /* ENV: the envelope's shape, drawn over the plant */
 static void draw_env(void)
 {
-    static const char *const TGT[3] = {"Chord + bass", "Chord", "Bass"};
+    static const char *const TGT[4] = {"Chord + bass", "Chord", "Bass", "Layer"};
     int a = cf_env_get(env_part(), 0), d = cf_env_get(env_part(), 1), sl = cf_env_get(env_part(), 2);
     int r = cf_env_get(env_part(), 3), x0 = 16, yb = Y_VIEW + H_VIEW - 14, yt = Y_VIEW + 50;
     int xa = x0 + 8 + a * 44 / 99, xd = xa + 8 + d * 44 / 99, xs = xd + 40, xr = xs + 8 + r * 50 / 99;
@@ -255,8 +255,8 @@ static void draw_env(void)
     flora_render(&flo, &fl_cv);
     draw_plant(Y_VIEW);
     fb_veil(0, Y_VIEW, FB_W, H_VIEW, FL_BG);   /* (the plant faint: the picture leads) */
-    draw_head(TGT[cu.env_tgt % 3u]);
-    draw_pager((int)(cu.env_tgt % 3u), 3, 1, 0);
+    draw_head(TGT[cu.env_tgt % 4u]);
+    draw_pager((int)(cu.env_tgt % 4u), 4, 1, 0);
     fb_hline(x0, yb, 210, FL_BG3);
     fb_line(x0, yb, xa, yt, C_ACC(1));
     fb_line(xa, yt, xd, ys, C_ACC(1));
@@ -266,7 +266,7 @@ static void draw_env(void)
     fb_rect(xd - 1, ys - 1, 3, 3, C_ACC(0));
     fb_rect(xs - 1, ys - 1, 3, 3, C_ACC(0));
     {
-        static const char *const H[2] = {"SELECT", "chord / bass"};
+        static const char *const H[2] = {"SELECT", "sound"};   /* (chord + bass, chord, bass, the LAYER) */
         draw_hints(H, 1);
     }
 }
@@ -384,26 +384,15 @@ static void draw_generic(void)
         break;
     }
     case SCR_SAVE: {                             /* the name being given, its letter under edit; Chord / Bass / Loop */
-        static const char *const PG[4] = {"Chord", "Bass", "Loop", "Pattern"};
+        static const char *const PG[4] = {"Chord", "Bass", "Layer", "Loop"};
         static const char *const H[4] = {"SELECT", "part", "SAVE", "hold"};
-        uint32_t part = cu.page[SCR_SAVE] & 1u;
+        uint32_t part = cf_save_part();
         char pre[13];
-        if (cu.page[SCR_SAVE] == 3u) {           /* the sequencer's pattern: copied or cleared */
-            char t[12];
-            str_cpy(t, "Pattern ", sizeof t);
-            t[8] = (char)('A' + sq_save_src);
-            t[9] = 0;
-            draw_head(t);
-            draw_pager(3, 4, 1, PG[3]);
-            draw_view(view_save_pattern);
-            draw_hints(H, 2);
-            break;
-        }
-        if (cu.page[SCR_SAVE] == 2u) {           /* the loop */
+        if (cu.page[SCR_SAVE] == CF_SAVE_LOOP) {   /* the loop */
             char b[24];
             cv_loop_note(b);
             draw_head(cf_sn.loop_len ? "Loop" : "No loop");
-            draw_pager(2, 4, 1, PG[2]);
+            draw_pager(3, 4, 1, PG[3]);
             if (cf_sn.loop_len && cf_sn.loop_gen != cu.loop_saved_gen)
                 fb_text_r(&CF_FONT_UI, 234, HEAD_LINE, "not saved", C_ACC(1), 1);
             else if (b[0])

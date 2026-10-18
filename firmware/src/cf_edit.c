@@ -137,11 +137,11 @@ static uint32_t cfe_fm6_blocks(const uint8_t *op, int seg)
 }
 static uint32_t cfe_blocks_ms10(uint32_t n) { return n * (FM6_N * 100u) / 441u; }
 
-static struct { uint8_t key[FP_OP + 1u]; uint32_t t[4]; uint8_t ok; } cfe_tc[2];
+static struct { uint8_t key[FP_OP + 1u]; uint32_t t[4]; uint8_t ok; } cfe_tc[3];   /* chord, bass, layer */
 static uint32_t cfe_fm6_val(uint32_t part, int k)
 {
     const uint8_t *v = fm6_patch[part], *op = cfe_fm6_main(v);
-    if (part > 1u)
+    if (part > 2u)
         return 0;
     if (!cfe_tc[part].ok || memcmp(cfe_tc[part].key, op, FP_OP) || cfe_tc[part].key[FP_OP] != v[FP_ALG]) {
         memcpy(cfe_tc[part].key, op, FP_OP);

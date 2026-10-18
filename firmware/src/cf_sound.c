@@ -394,21 +394,26 @@ static uint32_t cf_snd_save_index(uint32_t part, int as_new)
  * a flash error */
 static int cf_snd_delete(uint32_t part)
 {
-    uint32_t k = cf_snd[part].slot, i = cf_snd_pos(part), j = cf_snd_pos(part ^ 1u), n;
-    int other = cf_snd[part ^ 1u].kind == PK_USER && cf_snd[part ^ 1u].slot == k;
+    uint32_t k = cf_snd[part].slot, pos[3], n, q;
+    uint8_t other[3];
     if (cr_safe)
         return -3;
-    if (cf_snd[part].kind != PK_USER || !up_used(k))
+    if (part > 2u || cf_snd[part].kind != PK_USER || !up_used(k))
         return -1;
+    for (q = 0; q < 3u; q++) {                       /* (the other parts that play the same user sound: chord, bass,
+                                                  * the LAYER) */
+        pos[q] = cf_snd_pos(q);
+        other[q] = (uint8_t)(q != part && cf_snd[q].kind == PK_USER && cf_snd[q].slot == k);
+    }
     if (up_put(k, 0))
         return 2;
     trk[part].user = 0;
-    n = cf_snd_count(part);                          /* (the lists again: up_gen moved) */
-    cf_snd_load_index(part, i < n ? i : n - 1u);
-    if (other) {                                     /* (the other part had it too) */
-        n = cf_snd_count(part ^ 1u);
-        cf_snd_load_index(part ^ 1u, j < n ? j : n - 1u);
-    }
+    for (q = 0; q < 3u; q++)
+        if (q == part || other[q]) {
+            trk[q].user = 0;
+            n = cf_snd_count(q);                     /* (the lists again: up_gen moved) */
+            cf_snd_load_index(q, pos[q] < n ? pos[q] : n - 1u);
+        }
     cf_snd_resync();
     return 0;
 }
@@ -416,5 +421,5 @@ static int cf_snd_delete(uint32_t part)
 static int cf_snd_delete_restores(uint32_t part)
 {
     uint32_t f = cf_snd[part].kind == PK_USER ? cb_bound(cf_snd[part].slot) : PF_NONE;
-    return f != PF_NONE && cf_fac_part(cf_snd[part].engine, f) == (int)part;
+    return f != PF_NONE && cf_fac_part(cf_snd[part].engine, f) == (int)(part == CF_PART_LAYER ? CF_PART_CHORD : part);
 }

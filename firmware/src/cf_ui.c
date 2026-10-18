@@ -122,7 +122,14 @@ static void kpc(char *b, int pc)
 static void cv_turned(int d);
 #include "cf_sequi.c"                            /* (the SEQUENCER screens' controls) */
 
-static uint32_t env_part(void) { return cu.env_tgt == 2u ? CF_PART_BASS : CF_PART_CHORD; }
+static uint32_t env_part(void)
+{
+    return cu.env_tgt == 2u ? CF_PART_BASS : cu.env_tgt == 3u ? CF_PART_LAYER : CF_PART_CHORD;
+}
+/* SAVE's pages: the chord's sound, the bass's, the LAYER's (the sequencer's third sound: the owner, 2026-10-19), the
+ * loop */
+#define CF_SAVE_LOOP 3u
+static uint32_t cf_save_part(void) { return cu.page[SCR_SAVE] < CF_SAVE_LOOP ? cu.page[SCR_SAVE] : 0u; }
 
 /* the first chord button SEL can edit: the first that is not Off (Side has no Off) */
 static uint8_t sel_first(void)
@@ -247,12 +254,8 @@ static void ui_knob_info(int k, cf_knob_t *o)
         }
         break;
     case SCR_SAVE: {
-        uint32_t part = cu.page[SCR_SAVE] & 1u;
-        if (cu.page[SCR_SAVE] == 3u) {           /* the sequencer's pattern: K1 where to (as SAVE AS), K4 ACTION */
-            sq_save_knob_info(k, o);
-            break;
-        }
-        if (cu.page[SCR_SAVE] == 2u) {           /* the loop: only ACTION */
+        uint32_t part = cf_save_part();
+        if (cu.page[SCR_SAVE] == CF_SAVE_LOOP) {           /* the loop: only ACTION */
             if (k == 3) {
                 kfmt(o->name, 12, "ACTION");
                 kfmt(o->val, 14, cu.save_del ? "Delete" : "Save");
@@ -420,6 +423,11 @@ static void ui_knob_turn(int k, int d)
         break;
     }
     case SCR_ENV:
+        if (cu.env_tgt == 3u) {                  /* the LAYER's own */
+            cf_env_step(CF_PART_LAYER, k, d);
+            cf_edited(2u);
+            break;
+        }
         if (cu.env_tgt != 2u)
             cf_env_step(CF_PART_CHORD, k, d);
         if (cu.env_tgt == 2u)
@@ -460,12 +468,8 @@ static void ui_knob_turn(int k, int d)
         cf_send_config();
         break;
     case SCR_SAVE: {
-        uint32_t part = cu.page[SCR_SAVE] & 1u, n;
-        if (cu.page[SCR_SAVE] == 3u) {
-            sq_save_knob_turn(k, d);
-            break;
-        }
-        if (cu.page[SCR_SAVE] == 2u) {
+        uint32_t part = cf_save_part(), n;
+        if (cu.page[SCR_SAVE] == CF_SAVE_LOOP) {
             if (k == 3)
                 cu.save_del = (uint8_t)(d > 0);
             break;
@@ -615,7 +619,8 @@ static uint32_t screen_pages(uint32_t scr)
     if (scr == SCR_ARP)
         return 2u;                               /* Pattern, Feel */
     if (scr == SCR_SAVE)
-        return 4u;                               /* the chord's sound, the bass's, the loop, the sequencer's pattern */
+        return 4u;                               /* the chord's sound, the bass's, the LAYER's, the loop (a pattern's
+                                                  * copy: OCT+ held on the SEQUENCER, cf_sequi.c) */
     if (scr == SCR_EDIT)
         return cfe_npages(cu.edit_part, cu.edit_sec);
     return 1u;
@@ -640,12 +645,15 @@ static void ui_select(int d)                     /* SELECT: the bass sound, or a
         sq_select(d);
         return;
     }
-    if (cu.scr == SCR_ENV) {                     /* chord + bass (linked: the bass follows), chord, bass */
-        cu.env_tgt = (uint8_t)wrapi(cu.env_tgt + d, 3);
+    if (cu.scr == SCR_ENV) {                     /* chord + bass (linked: the bass follows), chord, bass, the LAYER */
+        cu.env_tgt = (uint8_t)wrapi(cu.env_tgt + d, 4);
         cv_turned(d);
-        cs.env_link = (uint8_t)(cu.env_tgt == 0u);
-        if (cs.env_link)
-            cf_env_follow(), cf_edited(1u);
+        if (cu.env_tgt < 3u) {                   /* (the LAYER's page leaves the chord and bass linked or not) */
+            cs.env_link = (uint8_t)(cu.env_tgt == 0u);
+            if (cs.env_link)
+                cf_env_follow(), cf_edited(1u);
+        }
+        cf_send_config();                        /* (the keys play the LAYER on its page) */
         return;
     }
     if (cu.scr == SCR_EDIT) {
@@ -662,10 +670,10 @@ static void ui_select(int d)                     /* SELECT: the bass sound, or a
     if (screen_pages(cu.scr) > 1u) {
         cu.page[cu.scr] = (uint8_t)wrapi(cu.page[cu.scr] + d, (int)screen_pages(cu.scr));
         cv_turned(d);
-        if (cu.scr == SCR_SAVE && cu.page[SCR_SAVE] == 3u)   /* the sequencer's pattern: from the one shown */
-            sq_save_open();
-        if (cu.scr == SCR_SAVE && cu.page[SCR_SAVE] < 2u) {   /* the other part: its sound, its name */
-            uint32_t part = cu.page[SCR_SAVE] & 1u;
+        if (cu.scr == SCR_SAVE)
+            cf_send_config();                    /* (the LAYER's page: the keys play its sound) */
+        if (cu.scr == SCR_SAVE && cu.page[SCR_SAVE] < CF_SAVE_LOOP) {   /* the other part: its sound, its name */
+            uint32_t part = cf_save_part();
             cu.save_del = 0;
             cu.save_new = cf_snd[part].kind == PK_INIT || !(cu.edited[part] || cf_snd[part].kind == PK_USER);
             cf_save_name_init();
@@ -719,15 +727,39 @@ static void ui_algo(int d)                       /* ALGORITHM: the chord algorit
 }
 
 /* --------------------------------------------------------------- buttons --- */
+/* the sound of the sequencer's track left last (the chord's, the bass's, the LAYER's; 0xFF: none yet): EDIT, ENV and
+ * SAVE open on it (the owner, 2026-10-19: what was edited before HOME is what the editors take) */
+static uint8_t cu_ctx = 0xFF, cu_env_prev;
+static void ui_ctx_from_track(uint32_t trk)
+{
+    static const uint8_t PART[SQ_NTRK] = {CF_PART_CHORD, CF_PART_BASS, CF_PART_LAYER, 0xFF};
+    uint8_t p = PART[trk % SQ_NTRK];
+    if (p == 0xFFu)
+        return;                                  /* (DRUMS: the editors stay as they were) */
+    cu_ctx = p;
+    cu.edit_part = p;
+    cu.page[SCR_EDIT] = 0;
+    if (p == CF_PART_LAYER && cu.env_tgt != 3u) {   /* (ENV: the LAYER's page; back to where it was after) */
+        cu_env_prev = cu.env_tgt;
+        cu.env_tgt = 3;
+    } else if (p != CF_PART_LAYER && cu.env_tgt == 3u) {
+        cu.env_tgt = cu_env_prev < 3u ? cu_env_prev : (cs.env_link ? 0u : 1u);
+    }
+}
+
 static void ui_open(uint32_t scr)
 {
     uint32_t was = cu.scr;
+    if (sq_screen(was) && !sq_screen(scr) && scr != SCR_SEQ)
+        ui_ctx_from_track(squ.trk);
     cu.scr = (uint8_t)(scr == was && scr != SCR_HOME ? SCR_HOME : scr);
     if (cu.scr == SCR_SEL && cf_is_off(&cs.chord, cu.sel_btn))
         cu.sel_btn = sel_first();
     if ((was == SCR_SEQ || sq_screen(was)) != (cu.scr == SCR_SEQ || sq_screen(cu.scr)))
         cf_send_metro();
-    if (was == SCR_SQED || cu.scr == SCR_SQED)   /* (the LAYER open or left: where the keys play, cf_send_config) */
+    if (was == SCR_SQED || cu.scr == SCR_SQED || was == SCR_EDIT || cu.scr == SCR_EDIT || was == SCR_ENV ||
+        cu.scr == SCR_ENV || was == SCR_SAVE || cu.scr == SCR_SAVE)   /* (the LAYER open or left: where the keys play,
+                                                  * cf_send_config) */
         cf_send_config();
     squ.help = squ.help_hold = 0;
 }
@@ -906,7 +938,7 @@ static void ui_button(uint32_t b)
  * K1 over itself or as new (a sound not edited: as new), K2 the letter, K3 what it is; SAVE held 1 s saves */
 static void cf_save_name_init(void)
 {
-    uint32_t part = cu.page[SCR_SAVE] & 1u, n;
+    uint32_t part = cf_save_part(), n;
     str_cpy(cu.save_name, cf_snd[part].name, sizeof cu.save_name);
     n = str_len(cu.save_name);
     if (cu.save_new && n + 2u <= 12u)            /* a new one: its name with a 2, to tell them apart */
@@ -915,11 +947,9 @@ static void cf_save_name_init(void)
 }
 static void cf_save_open(void)
 {
-    uint32_t part = cu.scr == SCR_EDIT ? cu.edit_part : (!cu.edited[0] && cu.edited[1]) ? 1u : 0u;
-    cu.page[SCR_SAVE] = (uint8_t)(cu.scr == SCR_LOOP ? 2u : cu.scr == SCR_SQ ? 3u : part);   /* (from the LOOPER:
-                                                  * the loop; from the SEQUENCER: its pattern) */
-    if (cu.scr == SCR_SQ)
-        sq_save_open();
+    uint32_t part = cu.scr == SCR_EDIT ? cu.edit_part : cu.scr == SCR_ENV ? env_part() : cu_ctx < 3u ? cu_ctx :
+                    (!cu.edited[0] && cu.edited[1]) ? 1u : (!cu.edited[0] && cu.edited[2]) ? 2u : 0u;
+    cu.page[SCR_SAVE] = (uint8_t)(cu.scr == SCR_LOOP ? CF_SAVE_LOOP : part);   /* (from the LOOPER: the loop) */
     cu.save_new = cf_snd[part].kind == PK_INIT || !(cu.edited[part] || cf_snd[part].kind == PK_USER);
     cu.save_hold = 0;
     cu.save_del = 0;
@@ -969,7 +999,7 @@ static void cf_loop_save(int del)
 }
 static void cf_save_delete(void)
 {
-    uint32_t part = cu.page[SCR_SAVE] & 1u;
+    uint32_t part = cf_save_part();
     char b[24], nm[13];
     int res;
     str_cpy(nm, cf_snd[part].name, sizeof nm);
@@ -980,6 +1010,7 @@ static void cf_save_delete(void)
     }
     cs.snd[0] = (uint16_t)cf_snd_pos(0);
     cs.snd[1] = (uint16_t)cf_snd_pos(1);
+    cs.snd_layer = (uint16_t)cf_snd_pos(CF_PART_LAYER);
     cu.edited[part] = 0;
     cu.save_del = 0;
     str_cpy(b, "Deleted ", sizeof b);
@@ -989,7 +1020,7 @@ static void cf_save_delete(void)
 }
 static void cf_save_do(void)
 {
-    uint32_t part = cu.page[SCR_SAVE] & 1u, i, n;
+    uint32_t part = cf_save_part(), i, n;
     char name[13], b[24], num[4];
     int res;
     str_cpy(name, cu.save_name, sizeof name);
@@ -1005,6 +1036,7 @@ static void cf_save_do(void)
     }
     cs.snd[0] = (uint16_t)cf_snd_pos(0);         /* (the row moved: the settings follow) */
     cs.snd[1] = (uint16_t)cf_snd_pos(1);
+    cs.snd_layer = (uint16_t)cf_snd_pos(CF_PART_LAYER);
     cu.edited[part] = 0;
     snd_num(cf_snd_pos(part), num);
     str_cpy(b, "Saved ", sizeof b);
@@ -1086,18 +1118,15 @@ static void cf_save_poll(void)
         cu.save_hold = 0;
     } else if (held && cu.now - cu.save_hold >= 1000u) {
         cu.save_hold = 0;
-        if (cu.page[SCR_SAVE] == 3u)
-            sq_save_do();
-        else if (cu.page[SCR_SAVE] == 2u)
+        if (cu.page[SCR_SAVE] == CF_SAVE_LOOP)
             cf_loop_save(cu.save_del);
         else if (cu.save_del)
             cf_save_delete();
         else
             cf_save_do();
-    } else if (!held) {                          /* a tap: back HOME, as every screen's own button (the pattern's
-                                                  * page: back to the SEQUENCER it came from) */
+    } else if (!held) {                          /* a tap: back HOME, as every screen's own button */
         cu.save_hold = 0;
-        ui_open(cu.page[SCR_SAVE] == 3u ? SCR_SQ : SCR_HOME);
+        ui_open(SCR_HOME);
     }
 }
 
@@ -1116,9 +1145,10 @@ static void ui_note_key(int key, int down)
             if (u < CFE_NSEC) {
                 cu.edit_sec = (uint8_t)u;
                 cu.page[SCR_EDIT] = (uint8_t)clampi(cu.page[SCR_EDIT], 0, (int)cfe_npages(cu.edit_part, (uint32_t)u) - 1);
-            } else if (u == 8 || u == 9) {
+            } else if (u >= 8 && u <= 10) {      /* the chord's sound, the bass's, the LAYER's */
                 cu.edit_part = (uint8_t)(u - 8);
                 cu.page[SCR_EDIT] = 0;
+                cf_send_config();                /* (the keys play the sound edited: the LAYER's too) */
             }
         }
         return;
@@ -1196,8 +1226,8 @@ static void ui_keycap(int key, cf_keycap_t *o)
         if (u < CFE_NSEC) {
             str_cpy(o->top, cfe_key_name(cu.edit_part, (uint32_t)u), 8);
             o->style = u == cu.edit_sec ? KC_ON : KC_BTN;
-        } else if (u == 8 || u == 9) {
-            str_cpy(o->top, u == 8 ? "CHD" : "BAS", 8);
+        } else if (u >= 8 && u <= 10) {
+            str_cpy(o->top, u == 8 ? "CHD" : u == 9 ? "BAS" : "LAY", 8);
             o->style = u - 8 == cu.edit_part ? KC_SOUNDING : KC_BTN;
         } else {
             o->style = KC_OFF;
@@ -1413,7 +1443,7 @@ static void cf_leds(void)
                 u += cf_key_is_upper(j);
             if (u == cu.edit_sec || (u >= 8 && u - 8 == cu.edit_part))
                 cf_led(lit, (uint32_t)id, 1);
-            else if (u < 10)
+            else if (u < 11)
                 cf_led(blink ? dim : faint, (uint32_t)id, 1);
             continue;
         }
@@ -1495,7 +1525,7 @@ static void cf_feed_plant(uint32_t dt)
 static int cf_editing_part(void) { return cu.scr == SCR_EDIT ? (int)cu.edit_part : -1; }
 static void cf_edited(uint32_t part)
 {
-    if (part < 2u)
+    if (part < 3u)
         cu.edited[part] = 1;
 }
 

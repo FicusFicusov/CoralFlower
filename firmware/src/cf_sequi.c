@@ -199,10 +199,14 @@ static void sq_save_poll(void)                   /* every frame */
 }
 
 /* where the keys' chords sound: the LAYER's part while the LAYER is open, else the chord part */
-static uint8_t sq_live_part(void)
+static uint32_t env_part(void);
+static uint32_t cf_save_part(void);
+static uint8_t sq_live_part(void)                /* (and while the LAYER's sound is edited: EDIT, ENV, SAVE) */
 {
-    return (uint8_t)((cu.scr == SCR_SQED && squ.trk == SQ_LAYER) || cf_sn.sq_rec == SQ_LAYER ? CF_PART_LAYER :
-                     CF_PART_CHORD);
+    return (uint8_t)((cu.scr == SCR_SQED && squ.trk == SQ_LAYER) || cf_sn.sq_rec == SQ_LAYER ||
+                     (cu.scr == SCR_EDIT && cu.edit_part == CF_PART_LAYER) ||
+                     (cu.scr == SCR_ENV && env_part() == CF_PART_LAYER) ||
+                     (cu.scr == SCR_SAVE && cu.page[SCR_SAVE] == CF_PART_LAYER) ? CF_PART_LAYER : CF_PART_CHORD);
 }
 static int sq_screen(uint32_t s) { return s == SCR_SQ || s == SCR_SQED; }
 static sq_pat_t *sq_cur(void) { return &sq_st.pat[squ.pat < SQ_NPAT ? squ.pat : 0]; }
@@ -861,71 +865,6 @@ static void sq_level_set(uint32_t t, int v)
     else
         cs.level_chord = x;
     cf_send_config();
-}
-
-/* SAVE > Pattern (SAVE on the SEQUENCER): the pattern shown (the song: the frame's) copied to another letter, or
- * cleared; K1 TO the letter (an empty one first), K4 ACTION, SAVE held 1 s does it (one undo: REC held) */
-static uint8_t sq_save_src, sq_save_to;
-static void sq_save_open(void)
-{
-    uint32_t i;
-    sq_save_src = (uint8_t)(squ.pat < SQ_NPAT ? squ.pat : sq_st.song.n ? sq_st.song.pat[squ.slot] % SQ_NPAT : 0u);
-    sq_save_to = (uint8_t)((sq_save_src + 1u) % SQ_NPAT);
-    for (i = 1; i < SQ_NPAT; i++)                /* (the next empty letter, if there is one) */
-        if (sq_empty(&sq_st.pat[(sq_save_src + i) % SQ_NPAT])) {
-            sq_save_to = (uint8_t)((sq_save_src + i) % SQ_NPAT);
-            break;
-        }
-    cu.save_del = 0;
-}
-static void sq_save_knob_info(int k, cf_knob_t *o)
-{
-    if (k == 0) {
-        kfmt(o->name, 12, "TO");
-        o->val[0] = (char)('A' + sq_save_to);
-        o->val[1] = 0;
-        o->dis = cu.save_del;
-    } else if (k == 3) {
-        kfmt(o->name, 12, "ACTION");
-        kfmt(o->val, 14, cu.save_del ? "Clear" : "Copy");
-    }
-}
-static void sq_save_knob_turn(int k, int d)
-{
-    if (k == 0 && !cu.save_del) {
-        int t = sq_save_to;
-        do                                       /* (never onto itself) */
-            t = wrapi(t + (d > 0 ? 1 : -1), SQ_NPAT);
-        while (t == sq_save_src);
-        sq_save_to = (uint8_t)t;
-    } else if (k == 3) {
-        cu.save_del = (uint8_t)(d > 0);
-    }
-}
-static void sq_save_do(void)
-{
-    char m[24];
-    if (sq_empty(&sq_st.pat[sq_save_src])) {
-        cf_message("Empty pattern");
-        return;
-    }
-    if (cu.save_del) {
-        sq_touch_pat(sq_save_src);
-        sq_st.pat[sq_save_src].bars = 0;         /* (empty: its steps go with it on the next write) */
-        sq_st.pat[sq_save_src].nev = 0;
-        str_cpy(m, "Pattern   cleared", sizeof m);
-        m[8] = (char)('A' + sq_save_src);
-        squ.pat = sq_save_src;
-    } else {
-        sq_touch_pat(sq_save_to);
-        sq_st.pat[sq_save_to] = sq_st.pat[sq_save_src];
-        str_cpy(m, "  copied to  ", sizeof m);
-        m[0] = (char)('A' + sq_save_src);
-        m[12] = (char)('A' + sq_save_to);
-        squ.pat = sq_save_to;                    /* (the copy shown: the next thing is to change it) */
-    }
-    cf_message(m);
-    ui_open(SCR_SQ);
 }
 
 /* PRESETS with a track open: that track's sound (BASS the bass's, LAYER its own, DRUMS the kit), as PRESETS turns

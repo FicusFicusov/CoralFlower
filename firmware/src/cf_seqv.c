@@ -673,48 +673,6 @@ static void draw_sq_song(void)
 }
 
 /* ------------------------------------------------------- SAVE > Pattern --- */
-/* the pattern's block (as the song draws it), an arrow to the letter it goes to (a block already there: said that it
- * goes), or the block emptied; the hold's bar as the loop's page has it */
-static void view_save_pattern(int x0)
-{
-    const sq_pat_t *s = &sq_st.pat[sq_save_src], *t = &sq_st.pat[sq_save_to];
-    int y = VIEW_Y + 8, del = cu.save_del, xb = x0 + 8 + sq_block_w(sq_save_src) + 14, i;
-    uint8_t warn = FL_C(FL_R_FIRE, 1);
-    const char *note;
-    sq_block(x0 + 8, y, sq_save_src, 0);
-    if (del) {                                   /* the steps going: struck through */
-        for (i = 0; i < sq_block_w(sq_save_src); i += 2)
-            fb_pset(x0 + 8 + i, y + 10 - i / 4 % 2, warn);
-        fb_hline(x0 + 6, y + 10, sq_block_w(sq_save_src) + 4, warn);
-        note = sq_empty(s) ? "nothing to clear" : "its steps go, all tracks";
-    } else {
-        fb_hline(xb - 10, y + 10, 7, FL_INK2);   /* the arrow */
-        fb_pset(xb - 4, y + 9, FL_INK2);
-        fb_pset(xb - 4, y + 11, FL_INK2);
-        fb_pset(xb - 5, y + 8, FL_INK2);
-        fb_pset(xb - 5, y + 12, FL_INK2);
-        if (sq_empty(t)) {
-            char l[2];
-            sq_plus(xb, y);
-            l[0] = (char)('A' + sq_save_to);
-            l[1] = 0;
-            fb_text(&CF_FONT_UI, xb + 20, y + 3, l, FL_INK2, 1);
-        } else {
-            sq_block(xb, y, sq_save_to, 0);
-        }
-        note = sq_empty(s) ? "nothing to copy" : sq_empty(t) ? "into an empty pattern" : "what is there goes";
-    }
-    fb_text_halo(&CF_FONT_UI, x0 + 8, VIEW_Y + 38, note, !del && !sq_empty(t) && !sq_empty(s) ? warn :
-                 del && !sq_empty(s) ? warn : FL_INK3, FL_BG, 1);
-    if (cu.save_hold) {
-        uint32_t ms = cu.now - cu.save_hold;
-        fb_rect(x0 + 8, VIEW_Y + 60, 200, 6, FL_BG1);
-        fb_rect(x0 + 8, VIEW_Y + 60, (int)(ms >= 1000u ? 200u : ms * 200u / 1000u), 6, del ? warn : C_ACC(0));
-    } else {
-        draw_chip_text(x0 + 8, VIEW_Y + 58, del ? "hold [SAVE] to clear it" : "hold [SAVE] to copy it",
-                       del ? warn : FL_INK2);
-    }
-}
 
 /* ------------------------------------------------------------ the help --- */
 static void draw_sq_help(void)

@@ -119,7 +119,7 @@ typedef struct {
     uint8_t sel_btn;             /* SEL: the chord button being edited */
     uint8_t edit_sec;            /* EDIT: the section (OP1..OP6, PIT, GLO) */
     uint8_t edit_part;           /* EDIT: the sound edited, 0 chord 1 bass */
-    uint8_t env_tgt;             /* ENV: 0 chord + bass, 1 chord, 2 bass */
+    uint8_t env_tgt;             /* ENV: 0 chord + bass, 1 chord, 2 bass, 3 the sequencer's LAYER */
     uint8_t fx_pos;              /* FX: the selected place in the chain */
     uint8_t arp_on;              /* the arpeggiator plays (the ARP button; off at power-on, as the stock FM-1's) */
     uint8_t save_new;            /* SAVE: as a new sound (else over itself) */
@@ -143,7 +143,7 @@ typedef struct {
     uint32_t frames;
     uint32_t idle_ms;            /* since the last touch */
     uint8_t upd_left, upd_stub;  /* the update gesture's countdown (cf_shim.c cr_update_poll) */
-    uint8_t edited[2];           /* a part's sound changed since it was loaded (SAVE keeps it) */
+    uint8_t edited[3];           /* a part's sound changed since it was loaded (SAVE keeps it): chord, bass, layer */
 } cf_ui_t;
 enum { POP_NONE, POP_SOUND_CHORD, POP_SOUND_BASS, POP_ALGO, POP_OCTAVE, POP_MSG, POP_SOUND_LAYER };
 static cf_ui_t cu;

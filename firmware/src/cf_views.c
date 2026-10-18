@@ -1273,7 +1273,7 @@ static void cv_save_row(int x0, int y, uint32_t part, uint32_t idx, uint32_t sho
 }
 static void view_save(int x0)
 {
-    uint32_t part = cu.page[SCR_SAVE] & 1u, idx = cf_snd_save_index(part, cu.save_new), n = cf_snd_count(part), k, nfree = 0;
+    uint32_t part = cf_save_part(), idx = cf_snd_save_index(part, cu.save_new), n = cf_snd_count(part), k, nfree = 0;
     int replace = !cu.save_new && cf_snd[part].kind != PK_INIT, del = cu.save_del;
     uint8_t warn = FL_C(FL_R_FIRE, 1);
     char b[32];

@@ -285,7 +285,8 @@ static int cb_store(const track_t *t, uint32_t part, uint32_t k, const char *nam
     up_set_name(&r, k, name);
     for (i = 0; i < P_COUNT; i++) {
         int16_t v = t->p[i];
-        if (i == P_VOICE && part && v != V_MONO && v != V_LEGATO)
+        if (i == P_VOICE && part == 1u && v != V_MONO && v != V_LEGATO)   /* (the bass part: mono; CoralFlower's
+                                                                         * part 2, the LAYER, keeps its voice) */
             v = V_MONO;
         up_set_value(&r, i, (int16_t)clamp(v, -64, 127));
     }
