@@ -151,14 +151,15 @@ static int cf_settings_write(void)
     return 1;
 }
 
-/* something sounds: a voice of either part, the metronome's clock, the transport, anything at the effects' output
+/* something sounds: a voice of any part (the chords, the bass, the sequencer's LAYER and DRUMS: a crash's tail
+ * was cut when only the first two counted), the metronome's clock, the transport, anything at the effects' output
  * (a reverb's or a delay's tail: the owner heard holes in it where a save stopped the audio) */
 static int cfs_sounding(void)
 {
     uint32_t p, i;
     if (cf_sn.metro_on || cf_sn.running || cfx_quiet < FS / CTL)
         return 1;
-    for (p = 0; p < 2u; p++)
+    for (p = 0; p < NTRK; p++)
         for (i = 0; i < NVOICE; i++)
             if (trk[p].v[i].active)
                 return 1;
