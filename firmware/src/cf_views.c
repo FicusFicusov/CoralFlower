@@ -319,6 +319,54 @@ static uint8_t cv_play_mark(int n)               /* (draw_keyline's marks: the s
         sc = cf_scale_step(cs.chord.scale, i) % 12 == pc;
     return sc ? FL_INK3 : 0;
 }
+/* GLOBAL > Reset: what goes (the sounds, the patterns, the loop, the settings), four pictures; under them the step
+ * the reset is at (cf_ui.c cfr): how to begin, the hold's bar, the last question with its seconds, the erase */
+static void view_reset(int x0)
+{
+    static const char *const IC[4][7] = {
+        {"...##..", "...#.#.", "...#...", "...#...", ".###...", "####...", ".##...."},   /* a note: the sounds */
+        {"..#.#..", ".#####.", "..###..", "...#...", ".#.#...", "..##...", "...#..."},   /* a flower: the patterns */
+        {"..###..", ".#...#.", "#.....#", "#...###", "#....#.", ".#.....", "..###.."},   /* round: the loop */
+        {"..#.#..", ".#####.", "##...##", ".#...#.", "##...##", ".#####.", "..#.#.."},   /* a gear: the settings */
+    };
+    static const char *const NM[4] = {"sounds", "patterns", "loop", "settings"};
+    uint8_t warn = FL_C(FL_R_FIRE, 1), ink = cfr.arm || cfr.fin || cfr.go ? warn : FL_INK2;
+    int i, j, k;
+    for (k = 0; k < 4; k++) {
+        int cx = x0 + 28 + k * 54, y = VIEW_Y - 4;   /* (54 apart: "patterns" and "settings" fit) */
+        for (j = 0; j < 7; j++)
+            for (i = 0; i < 7; i++)
+                if (IC[k][j][i] == '#')
+                    fb_rect(cx - 7 + i * 2, y + j * 2, 2, 2, ink);
+        fb_text_c(&CF_FONT_UI, cx, y + 18, NM[k], FL_INK3, 1);
+    }
+    if (cfr.go) {
+        fb_text_c(&CF_FONT_UI, x0 + 108, VIEW_Y + 42, "Resetting...", warn, 2);
+    } else if (cfr.fin) {                         /* the last question, and the seconds left to answer it */
+        char b[4];
+        uint32_t left = cu.now - cfr.fin_ms >= CF_RESET_ASK_MS ? 0u : (CF_RESET_ASK_MS - (cu.now - cfr.fin_ms) + 999u) / 1000u;
+        draw_chip_text_c(VIEW_Y + 40, "Sure? Press [SAVE] again", warn);
+        kint(b, (int)left, 0);
+        fb_text_c(&CF_FONT_UI, x0 + 108, VIEW_Y + 58, b, warn, 1);
+    } else if (cfr.hold) {                        /* held: the seconds counted down (as a track's clearing), the bar
+                                                  * fills in 3 s */
+        uint32_t t = cu.now - cfr.hold, left = t >= CF_RESET_HOLD_MS ? 0u : (CF_RESET_HOLD_MS - t + 999u) / 1000u;
+        char b[2];
+        draw_chip_text_c(VIEW_Y + 32, "keep holding [SAVE]", warn);
+        b[0] = (char)('0' + left);
+        b[1] = 0;
+        fb_text_halo(&CF_FONT_UI, x0 + 108 - fb_text_w(&CF_FONT_UI, b, 2) / 2, VIEW_Y + 44, b, warn, FL_BG, 2);
+        fb_rect(x0 + 8, VIEW_Y + 74, 200, 6, FL_BG1);
+        fb_rect(x0 + 8, VIEW_Y + 74, (int)(t >= CF_RESET_HOLD_MS ? 200u : t * 200u / CF_RESET_HOLD_MS), 6, warn);
+    } else if (cfr.arm) {
+        draw_chip_text_c(VIEW_Y + 40, "hold [SAVE] 3 seconds", warn);
+        draw_chip_text_c(VIEW_Y + 56, "erases all you made", FL_INK3);
+    } else {
+        draw_chip_text_c(VIEW_Y + 40, "turn ACTION to Reset", FL_INK2);
+        draw_chip_text_c(VIEW_Y + 56, "back up first: the site", FL_INK3);
+    }
+}
+
 static void view_play(int x0)
 {
     static const int8_t A[3] = {0, 4, 7}, B[3] = {0, 5, 9};   /* C E G -> C F A: the C is shared */

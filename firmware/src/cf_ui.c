@@ -78,6 +78,15 @@ static void cu_spell_update(void)
         cf_key_spell(cs.chord.tonic, cs.chord.scale, &cu_spell);
 }
 
+/* GLOBAL > Reset's steps (cf_reset_poll below) */
+static void cf_factory_erase(void);
+static struct {
+    uint8_t arm, fin, go;        /* K4 at Reset; the hold done (the last question); erasing */
+    uint32_t hold, fin_ms, go_ms;   /* SAVE went down; the question came; the erase was asked */
+} cfr;
+#define CF_RESET_HOLD_MS 3000u
+#define CF_RESET_ASK_MS 6000u
+
 /* --------------------------------------------------------------- knobs --- */
 static const char *const Q_NAME[3] = {"Off", "Basic", "Full"};
 static const char *const ALG_NAME[CF_NALGS] = {"Top", "Top Lock", "Side", "Side Lock"};
@@ -339,6 +348,12 @@ static void ui_knob_info(int k, cf_knob_t *o)
             if (k == 2) { kfmt(o->name, 12, "LAYER CH"); kint(o->val, cs.ch_layer + 1, 0); }
             if (k == 3) { kfmt(o->name, 12, "DRUMS CH"); kint(o->val, cs.ch_drums + 1, 0); }
             break;
+        case 4: /* Reset: K4 the first step */
+            if (k == 3) {
+                kfmt(o->name, 12, "ACTION");
+                kfmt(o->val, 14, cfr.arm ? "Reset" : "Keep");
+            }
+            break;
         default: /* Play */
             if (k == 0) {
                 kfmt(o->name, 12, "VELOCITY");
@@ -539,6 +554,13 @@ static void ui_knob_turn(int k, int d)
                 cs.ch_drums = (uint8_t)clampi(cs.ch_drums + d, 0, 15);
             cf_send_config();
             break;
+        case 4:                                  /* Reset: K4 arms it (the steps after: SAVE) */
+            if (k == 3 && !cfr.go) {
+                cfr.arm = (uint8_t)(d > 0);
+                cfr.fin = 0;
+                cfr.hold = 0;
+            }
+            break;
         default:
             if (k == 0)
                 cs.vel = (uint8_t)clampi(cs.vel + d * 4, 1, 127);
@@ -587,7 +609,7 @@ static void ui_say(const char *a, const char *b)
 static uint32_t screen_pages(uint32_t scr)
 {
     if (scr == SCR_GLO)
-        return 4u;                               /* Display, MIDI, Channels, Play */
+        return 5u;                               /* Display, MIDI, Channels, Play, Reset */
     if (scr == SCR_ENV)
         return 3u;                               /* chord + bass, chord, bass */
     if (scr == SCR_ARP)
@@ -710,8 +732,71 @@ static void ui_open(uint32_t scr)
     squ.help = squ.help_hold = 0;
 }
 
+/* GLOBAL > Reset: everything the user made goes (cf_backup.c cf_factory_erase), after three steps, each its own
+ * gesture (the owner, 2026-10-19: "полный резет, с подтверждениями несколькими"): K4 to Reset; SAVE held 3 s; SAVE
+ * once more within 6 s. Leaving the page, letting SAVE go early or the 6 s passing undoes them */
+static int cf_reset_page(void) { return cu.scr == SCR_GLO && cu.page[SCR_GLO] == 4u; }
+static void cf_reset_poll(void)                  /* every frame */
+{
+    uint32_t now = cu.now;
+    if (cfr.go) {                                /* (a frame or two of "Resetting" on the screen first) */
+        if (now - cfr.go_ms > 250u && cfr.go == 1u) {
+            cfr.go = 2;
+            cf_factory_erase();                  /* (the unit restarts; the emulator says what to do) */
+            cf_message("Reset done: restart");
+        }
+        return;
+    }
+    if (!cf_reset_page()) {
+        cfr.arm = cfr.fin = 0;
+        cfr.hold = 0;
+        return;
+    }
+    if (cfr.hold) {
+        if (!((fm1_in.buttons >> panel.btn[B_SAVE]) & 1u)) {
+            cfr.hold = 0;                        /* (let go early: nothing) */
+            cf_message("Hold SAVE 3 seconds");
+        } else if (now - cfr.hold >= CF_RESET_HOLD_MS) {
+            cfr.hold = 0;
+            cfr.fin = 1;
+            cfr.fin_ms = now;
+        }
+    }
+    if (cfr.fin && now - cfr.fin_ms > CF_RESET_ASK_MS) {
+        cfr.fin = cfr.arm = 0;
+        cf_message("Reset cancelled");
+    }
+}
+/* SAVE on the Reset page: the next step, or how to begin */
+static void cf_reset_save(void)
+{
+    if (cfr.go)
+        return;
+    if (cfr.fin) {
+        cfr.fin = 0;
+        cfr.go = 1;
+        cfr.go_ms = cu.now;
+        cf_post(CFE_SEQ, 0, 0, 0);               /* (the sequencer stops) */
+    } else if (cfr.arm) {
+        cfr.hold = cu.now ? cu.now : 1u;
+    } else {
+        cf_message("Turn ACTION to Reset");
+    }
+}
+
 static void ui_button(uint32_t b)
 {
+    if (cfr.go)                                  /* (erasing: no button any more) */
+        return;
+    if (cf_reset_page() && b == B_SAVE) {
+        cf_reset_save();
+        return;
+    }
+    if (cfr.fin && b != B_SAVE) {                /* (the last question: any other button says no) */
+        cfr.fin = cfr.arm = 0;
+        cf_message("Reset cancelled");
+        return;
+    }
     if (sq_screen(cu.scr)) {                     /* the sequencer's own: EDIT / SEL open, SEL clears, SAVE back, GLO */
         if (b == B_FX || b == B_ENV || b == B_LFO || b == B_ARP || (cu.scr == SCR_SQED && b == B_EDIT))
             return;                              /* (no way out to another screen here but HOME and SEQ: the owner,
@@ -1062,6 +1147,7 @@ static void cf_ui_input(void)
     sq_undo_poll();                              /* (before the input: the state an edit starts from) */
     cf_ui_pump();
     cf_save_poll();
+    cf_reset_poll();
     cf_loop_poll();
     sq_glo_poll();
     sq_write_poll();

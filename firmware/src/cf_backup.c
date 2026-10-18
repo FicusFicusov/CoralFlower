@@ -142,6 +142,28 @@ static uint32_t crb_obj(uint32_t id)                 /* storage.c's object of an
     return id == 8u ? (uint32_t)OBJ_FM6BANK : id == CRB_VA ? (uint32_t)OBJ_VASTORE
          : id >= CRB_FM6S ? (uint32_t)OBJ_FM6STORE0 + id - CRB_FM6S : (uint32_t)OBJ_UPRESET0 + id - 6u;
 }
+
+/* GLOBAL > Reset (cf_ui.c cf_reset_poll): everything the user made goes, both copies of every object: the sounds (6 .. 11
+ * as a backup has them: the FM bank back to the factory one), the settings, the loop, the sequencer's patterns and
+ * song. The firmware, the boot stub and the panel stay. Then the unit starts again on the defaults (the emulator, which
+ * cannot: the caller says so). Each erase holds the audio and the lights ~45 ms; the watchdog is fed between them */
+static void cf_factory_erase(void)
+{
+    uint32_t i, c;
+    cfs_restore_lock = 1;                            /* (nothing saved from RAM over it any more) */
+    sq_dirty = 0;
+    for (i = 0; i < CRB_N + 6u; i++)
+        for (c = 0; c < 2u; c++) {
+            fm1_wdt_feed();
+            (void)st_erase(st_sector(i < CRB_N ? crb_obj(CRB_IDS[i]) : (uint32_t)OBJ_CFSEQ0 + i - CRB_N, c));
+        }
+#if FELUCCA_OTA && !defined(CF_EMU)
+    bootguard.pending = 0;                           /* (a wanted restart, not a crash) */
+    usb_detach();
+    fm1_delay_ms(30);
+    fm1_reboot();
+#endif
+}
 static int crb_fm6_old(const uint8_t *raw, uint32_t len)
 {
     uint32_t magic = raw[0] | (uint32_t)raw[1] << 8 | (uint32_t)raw[2] << 16 | (uint32_t)raw[3] << 24;

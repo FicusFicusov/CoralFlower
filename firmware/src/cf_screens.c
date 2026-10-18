@@ -324,18 +324,18 @@ static void draw_edit(void)
 
 static void draw_generic(void)
 {
-    static const char *const PG_GLO[4] = {"Display", "MIDI", "Channels", "Play"};
+    static const char *const PG_GLO[5] = {"Display", "MIDI", "Channels", "Play", "Reset"};
     flora_render(&flo, &fl_cv);
     draw_plant(Y_VIEW);
     fb_veil(0, Y_VIEW, FB_W, H_VIEW, FL_BG);   /* (the plant faint: the picture leads) */
     switch (cu.scr) {
     case SCR_GLO: {
         static const char *const H[2] = {"SELECT", "page"};
-        static void (*const V[4])(int) = {view_display, view_midi, view_midi, view_play};   /* (MIDI and Channels:
-                                                                                               * one picture) */
-        uint32_t p = cu.page[SCR_GLO] % 4u;
+        static void (*const V[5])(int) = {view_display, view_midi, view_midi, view_play, view_reset};   /* (MIDI and
+                                                                                               * Channels: one picture) */
+        uint32_t p = cu.page[SCR_GLO] % 5u;
         draw_head(PG_GLO[p]);
-        draw_pager((int)p, 4, 1, 0);
+        draw_pager((int)p, 5, 1, 0);
         draw_view(V[p]);
         draw_hints(H, 1);
         break;

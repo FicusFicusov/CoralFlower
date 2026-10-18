@@ -179,7 +179,7 @@ static void sq_save_poll(void)                   /* every frame */
 {
     uint32_t k, now = cu.now;
     int err = 0;
-    if (!sq_dirty || cr_safe || !cu.booted || now - sq_changed_ms < CF_SET_QUIET_MS || cf_sn.sq_on ||
+    if (!sq_dirty || cr_safe || cfs_restore_lock || !cu.booted || now - sq_changed_ms < CF_SET_QUIET_MS || cf_sn.sq_on ||
         now - cfs_sound_ms < CF_SET_SILENT_MS || (sq_retry_ms && (int32_t)(now - sq_retry_ms) < 0))
         return;
     sq_st.magic = SQ_MAGIC;
