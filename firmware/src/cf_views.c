@@ -565,7 +565,7 @@ static void view_va_osc(int x0, uint32_t k, uint32_t pg)
             if (k == 3u && cv_va(7u, 3))
                 str_cpy(b + str_len(b), "  ring", 7);
         } else if (coarse) {
-            char t[8];
+            char t[16];                          /* ("24 st up" and its end: 9; t[8] ran over at 10 and up) */
             kint(t, coarse, coarse > 0 ? " st up" : " st");
             str_cpy(b + str_len(b), "  ", 3);
             str_cpy(b + str_len(b), t[0] == '-' ? t + 1 : t, 9);
