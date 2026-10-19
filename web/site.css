@@ -64,11 +64,24 @@
   --glow-fade: rgb(150 33 121 / 0.08);         /* the glow's soft edge (a gradient, not a blur filter) */
   color-scheme: dark;
 }
-/* the stage: the black of the FM-1's screen, for the sections built around a picture */
+/* the stage: the black of the FM-1's screen, for the sections built around a picture (every role set, so a stage
+ * inside the cream reads as dark too) */
 .scope-stage {
   --color-bg: var(--c-night-950);
   --color-surface: var(--c-night-900);
+  --color-raised: var(--c-night-800);
+  --color-border: var(--c-night-700);
+  --color-border-strong: var(--c-ash-600);
+  --color-text: var(--c-cream-100);            /* 17.4:1 */
   --color-text-muted: var(--c-ash-300);        /* 7.31:1 */
+  --color-accent: var(--c-rose-500);
+  --color-accent-hover: var(--c-fire-400);
+  --color-on-accent: var(--c-night-900);
+  --color-link: var(--c-sea-400);
+  --color-focus: var(--c-fire-400);
+  --color-brand-a: var(--c-rose-500);
+  --color-brand-b: var(--c-lime-400);
+  color-scheme: dark;
   color: var(--color-text);
   background: var(--color-bg);
 }
@@ -480,6 +493,25 @@ dialog.donate .x:hover { color: var(--color-on-accent); background: var(--color-
   .hero { padding-top: var(--space-2xl); }
   .hero__grid { grid-template-columns: minmax(0, 6fr) minmax(0, 5fr); gap: var(--space-2xl); }
   .hero__visual { order: 0; }
+}
+
+/* the newest feature: a dark stage inside the cream features, its words beside its screen playing (on a phone the
+ * screen first, as in the hero); its one action is the page's second primary, a screen away from the first */
+.feature-new { display: grid; gap: var(--space-l); align-items: center; grid-template-columns: minmax(0, 1fr); margin-bottom: var(--space-m); padding: var(--space-l) var(--space-m); border-radius: var(--radius-l); overflow: clip; box-shadow: var(--shadow-paper); }
+.feature-new__visual { order: -1; width: 100%; max-width: 32rem; }   /* (its GIF at most 480 px: 2 x the screen, crisp) */
+.feature-new__text { display: grid; gap: var(--space-s); justify-items: start; }
+.feature-new__tag { font: var(--fs-xs) / var(--lh-display) var(--font-display); letter-spacing: var(--ls-caps); text-transform: uppercase; color: var(--color-brand-b); }
+.feature-new__title { font: var(--fs-2xl) / var(--lh-heading) var(--font-display); letter-spacing: var(--ls-display); }
+.feature-new__lead { max-width: 38ch; font-size: var(--fs-lg); color: var(--color-text-muted); }
+.feature-new__go { margin-top: var(--space-xs); }
+@media (max-width: 39.99rem) {                   /* (a phone: the screen as wide as the frames around it allow) */
+  .feature-new { gap: var(--space-m); padding: var(--space-s) var(--space-s) var(--space-m); }
+  .feature-new .device__bezel { padding: var(--space-xs); }
+  .feature-new__go { padding-inline: var(--space-s); }   /* (its label on one line down to a 340 px phone) */
+}
+@media (min-width: 60rem) {
+  .feature-new { grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: var(--space-2xl); padding: var(--space-xl) var(--space-xl) var(--space-xl) var(--space-l); }
+  .feature-new__visual { order: 0; justify-self: end; }
 }
 
 /* garden: the text beside two screens */
