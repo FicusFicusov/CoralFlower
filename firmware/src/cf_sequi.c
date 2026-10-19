@@ -181,7 +181,8 @@ static int sq_from_v5(uint32_t len)
         sq_st.check != cfs_fnv(&sq_st.song, osz - __builtin_offsetof(sq_store_t, song)) || sq_st.song.n > SQ_SONG)
         return 0;
     for (i = SQ_NPAT; i-- > 0;) {
-        memmove(b + i * sizeof(sq_pat_t), b + i * SQ_PAT5, SQ_PAT5);
+        for (j = SQ_PAT5; j-- > 0;)              /* (the bytes moved up, from the top: no memmove on the device) */
+            b[i * sizeof(sq_pat_t) + j] = b[i * SQ_PAT5 + j];
         for (j = SQ_PAT5; j < sizeof(sq_pat_t); j++)
             b[i * sizeof(sq_pat_t) + j] = 0;
         for (l = 0; l < SQ_NLANE; l++)
