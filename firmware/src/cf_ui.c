@@ -1323,13 +1323,12 @@ static void cf_led(uint8_t *m, uint32_t id, int on)
  * (clear, when there is something to clear) are up in a track, REC goes dark (it does nothing here), PLAY is up when
  * there is something to play. The keys: DRUMS as a drum machine's (the lower keys the drum's steps in the bar, a
  * running light on the step that plays; the upper keys the drums, the one picked lit, those that strike in the bar
- * dim, each flashing as it sounds); CHORDS / BASS show the keys a step was written with (the step under the cursor:
- * blinking; playing: the chord that sounds). Returns 1 when the key is lit here (the keys' rules below skip it) */
-static int sq_key_led(uint32_t k, uint8_t *lit, uint8_t *mid, uint8_t *dim, uint8_t *faint, uint32_t blink)
+ * dim, each flashing as it sounds); CHORDS / BASS / LAYER light as on HOME (below). Returns 1 when the key is lit
+ * here (the keys' rules below skip it) */
+static int sq_key_led(uint32_t k, uint8_t *lit, uint8_t *mid, uint8_t *dim, uint8_t *faint)
 {
     const sq_pat_t *p = sq_cur();
     uint32_t id = 14u + k;
-    int idx, role = cf_key_role(cs.chord.algo, (int)k, &idx);
     if (cu.scr == SCR_SQ && squ.pat == SQ_NPAT) {   /* the song: the patterns' keys (the frame's lit, the others with
                                                   * steps dim, the empty ones faint); the lower keys dark */
         int j, u = 0;
@@ -1369,26 +1368,11 @@ static int sq_key_led(uint32_t k, uint8_t *lit, uint8_t *mid, uint8_t *dim, uint
             cf_led(faint, id, 1);
         return 1;
     }
-    if (cu.keys || cf_sn.out.sounding)          /* (the hands play: their lights) */
-        return 0;
-    {   /* the chord that plays, else the step under the cursor (blinking): its keys alone, the other buttons faint
-         * (the chord the hands left on would read as part of it) */
-        uint32_t rk = squ.trk == SQ_LAYER ? cf_sn.sq_lkey : cf_sn.sq_ckey, bl = 0;
-        uint32_t bt = squ.trk == SQ_LAYER ? cf_sn.sq_lbtns : cf_sn.sq_cbtns;
-        if (rk == 0xFFu && !bt) {
-            int e = cf_sn.sq_on ? -1 : sq_at(p, squ.trk, squ.bar, squ.step);
-            if (e < 0)
-                return 0;
-            rk = p->ev[e].rootkey;
-            bt = p->ev[e].btns;
-            bl = 1;
-        }
-        if (k == rk)
-            cf_led(bl ? (blink ? mid : dim) : mid, id, 1);
-        else if (role == CF_ROLE_BUTTON)
-            cf_led((bt >> idx) & 1u ? (bl ? (blink ? lit : dim) : lit) : faint, id, 1);
-        return 1;
-    }
+    /* CHORDS / BASS / LAYER: the keys light as on HOME, as the screen's caps do: what they play and write (held, the
+     * buttons latched in Lock, the scale). They showed the step under the frame (blinking) or the chord playing while
+     * the caps showed the keys' own: a latched m9 on the screen, the step's sus2 sus4 on the keys (the owner,
+     * 2026-10-19, a video; "как на HOME"). The step's chord is its name over the grid and its flower */
+    return 0;
 }
 
 static void cf_leds(void)
@@ -1453,7 +1437,7 @@ static void cf_leds(void)
     /* keys: held lit; the effective chord buttons lit, the others faint; the chord's root mid; the scale dim */
     for (k = 0; k < CF_NKEYS; k++) {
         int idx, role = cf_key_role(cs.chord.algo, (int)k, &idx), id = (int)(14u + k);
-        if (sq_key_led(k, lit, mid, dim, faint, blink))
+        if (sq_key_led(k, lit, mid, dim, faint))
             continue;
         if ((cu.keys >> k) & 1u) {
             cf_led(lit, (uint32_t)id, 1);
