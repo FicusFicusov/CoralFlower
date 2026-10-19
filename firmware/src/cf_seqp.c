@@ -47,14 +47,19 @@ static struct {
     uint32_t cin;                /* count-in ticks left */
     uint32_t rserial;            /* the chord model's serial last seen in a take */
     uint8_t ropen;               /* a chord of the take still sounds (its off not sent yet) */
+    uint32_t rheld;              /* .. the ticks it has sounded (its length: kind 2's dur) */
+    uint8_t dsk[SQ_NLANE], dskb[SQ_NLANE], dskp[SQ_NLANE];   /* a drum struck in a take just before the step it is
+                                  * written on: that step (+ 1), its bar and pattern, not struck again there */
 } sqp = {.next = 0xFF, .rec = 0xFF};
 
-/* the take's queue, ISR -> UI: a chord began (kind 1, its notes), it ended (2), a drum struck (3, lane in n) */
+/* the take's queue, ISR -> UI: a chord began (kind 1, its notes, rkey the root key that made it: 0xFF several roots
+ * at once), it ended (2, dur: the ticks it sounded), a drum struck (3, lane in n, h the step it falls on: the nearest
+ * as SWING plays them, the bar's step count: the next bar's first) */
 #define SQR_N 32u
 typedef struct {
-    uint8_t kind, pat, bar, n, note[6], root, nb, bass[2], single;
+    uint8_t kind, pat, bar, n, note[6], root, nb, bass[2], single, rkey, h;
     uint16_t mask, btns;
-    uint32_t t;
+    uint32_t t, dur;
 } sqr_ev_t;
 static sqr_ev_t sqp_rq[SQR_N];
 static volatile uint32_t sqp_rw;                 /* (the UI's read index: cf_sequi.c squ.rr) */
@@ -165,6 +170,10 @@ static void sqp_fire(const sq_pat_t *p, uint32_t tk, uint32_t u)
         uint32_t l, any = 0, h = u;
         for (l = 0; l < SQ_NLANE; l++)
             if ((p->hit[l][b] >> h) & 1u) {
+                if (sqp.dsk[l] == h + 1u && sqp.dskb[l] == sqp.bar && sqp.dskp[l] == sqp.pat) {
+                    sqp.dsk[l] = 0;              /* (struck by hand a moment ago, in the take: once is enough) */
+                    continue;
+                }
                 sqp_lane_kit(l, p->dkit[l]);     /* (its kit) */
                 trk_note_on(&trk[CF_PART_DRUM], SQ_LANE_NOTE[l], 100);
                 cfp_midi(0x90u, cfp_ch(CF_PART_DRUM), SQ_LANE_NOTE[l], 100);
@@ -205,9 +214,10 @@ static void sqp_fire(const sq_pat_t *p, uint32_t tk, uint32_t u)
             return;
         }
         if (tk == SQ_LAYER) {                    /* (its own part, no bass) */
-            if (trk[2].p[P_VOICE] != V_POLY && trk[2].p[P_VOICE] != V_UNISON) {
-                /* a mono or legato sound: the new note first, then the old one let go, so its own glide slides
-                 * between them (cf_edit.c's Glide page: a melody that slides in the sequencer too) */
+            if (trk[2].p[P_VOICE] == V_LEGATO) {
+                /* a legato sound: the new note first, then the old one let go, so its own glide slides between
+                 * them (cf_edit.c's Glide page: a melody that slides in the sequencer too). MONO strikes every note
+                 * and slides anyway (voice.c); first it held a repeated note as one */
                 uint8_t old[6], no = sqp.ln, k;
                 for (j = 0; j < no; j++)
                     old[j] = sqp.lnote[j];
@@ -248,7 +258,8 @@ static void sqp_fire(const sq_pat_t *p, uint32_t tk, uint32_t u)
         sqp.left[0] = off;
         sqp.ckey = e->rootkey;
         sqp.cbtns = e->btns;
-        if (!sq_count(p, SQ_BASS) && e->nb)      /* no bass steps: the chord's own bass */
+        if (!sq_own(p, SQ_BASS) && e->nb && !((sq_st.song.mute >> SQ_BASS) & 1u))   /* no bass steps: the chord's
+                                                  * own bass (BASS muted: none; it sounded for a tick) */
             sqp_bass_on(e->bass, e->nb, off);
         return;
     }
@@ -263,14 +274,14 @@ static void sqp_now(void)
         sqp_chord_off();
     if (sqp.nb && !sqp.left[1])
         sqp_bass_off();
-    if (sqp.ln && !sqp.left[2] && (trk[2].p[P_VOICE] == V_POLY || trk[2].p[P_VOICE] == V_UNISON))
-        sqp_layer_off();                         /* (a mono or legato LAYER: at the end of this tick, after what
-                                                  * begins in it, so a note that meets the next slides into it) */
+    if (sqp.ln && !sqp.left[2] && trk[2].p[P_VOICE] != V_LEGATO)
+        sqp_layer_off();                         /* (a legato LAYER: at the end of this tick, after what begins in
+                                                  * it, so a note that meets the next slides into it) */
     {   /* a track muted while it sounds: it goes now */
         uint32_t mu = sq_st.song.mute;
         if ((mu >> SQ_CHORDS) & 1u && sqp.n)
             sqp_chord_off();
-        if (((mu >> SQ_BASS) & 1u || ((mu >> SQ_CHORDS) & 1u && !sq_count(p, SQ_BASS))) && sqp.nb)
+        if (((mu >> SQ_BASS) & 1u || ((mu >> SQ_CHORDS) & 1u && !sq_own(p, SQ_BASS))) && sqp.nb)
             sqp_bass_off();
         if ((mu >> SQ_LAYER) & 1u && sqp.ln)
             sqp_layer_off();
@@ -354,12 +365,17 @@ static void sqp_rec_watch(void)
     e.t = sqp.cin ? 0u : sqp.t;
     if (sqp.ropen) {
         e.kind = 2;
+        e.dur = sqp.rheld;
         sqp_rpush(&e);
         sqp.ropen = 0;
     }
     if (!o->sounding || !o->n)
         return;
     e.kind = 1;
+    e.rkey = (uint8_t)(o->single && o->n > 1u ? 0xFFu : cfc.nroots ? cfc.root_key[cfc.nroots - 1u] : 0xFFu);
+    sqp.rheld = 0;                               /* (the root key the chord model built it on: the last one down; a
+                                                  * take read the lowest held when the UI got there, and a legato
+                                                  * change wrote the chord before) */
     e.n = (uint8_t)(o->n > 6u ? 6u : o->n);
     for (i = 0; i < e.n; i++)
         e.note[i] = o->note[o->n - e.n + i];
@@ -376,6 +392,8 @@ static void sqp_rec_watch(void)
 static void sqp_tick1(void)
 {
     uint32_t i;
+    if (sqp.ropen)
+        sqp.rheld++;
     sqp_drum_offs();
     for (i = 0; i < 3u; i++)                     /* (what sounds: a tick less to last) */
         if (sqp.left[i])
@@ -411,6 +429,7 @@ static void sqp_stop(void)
         e.pat = sqp.pat;
         e.bar = sqp.bar;
         e.t = sqp.t;
+        e.dur = sqp.rheld;
         sqp_rpush(&e);
     }
     sqp.ropen = 0;
@@ -428,6 +447,13 @@ static void sqp_begin(uint32_t pat, uint32_t slot, int cin)
     sqp.song = pat >= SQ_NPAT;
     sqp.slot = (uint8_t)(sqp.song && sq_st.song.n ? slot % sq_st.song.n : 0u);
     sqp.pat = (uint8_t)(sqp.song ? sq_st.song.pat[sqp.slot] % SQ_NPAT : pat);
+    for (i = 0; sqp.song && i < sq_st.song.n && sq_empty(&sq_st.pat[sqp.pat]); i++) {   /* (an empty one passed over,
+                                                  * as the song goes on: it played a silent bar first) */
+        sqp.slot = (uint8_t)((sqp.slot + 1u) % sq_st.song.n);
+        sqp.pat = sq_st.song.pat[sqp.slot] % SQ_NPAT;
+    }
+    for (i = 0; i < SQ_NLANE; i++)
+        sqp.dsk[i] = 0;
     sqp.bar = sq_st.pat[sqp.pat].start;
     sqp.t = 0;
     sqp.acc = 0;
@@ -495,6 +521,7 @@ static void sqp_rec_stop(void)                   /* REC again: the take ends, th
         e.pat = sqp.pat;
         e.bar = sqp.bar;
         e.t = sqp.t;
+        e.dur = sqp.rheld;
         sqp_rpush(&e);
         sqp.ropen = 0;
     }
@@ -509,12 +536,27 @@ static void sqp_audition(uint32_t lane, uint32_t kit)   /* kit: the drum's */
     sqp.lane_t[lane % SQ_NLANE] = cf_now_ms;
     if (sqp.rec == SQ_DRUMS && sqp.on && sqp.cin < SQ_PPQN / 4u) {   /* (the take: where it fell; in the count-in's last
                                                                        * sixteenth, the first step) */
+        const sq_pat_t *p = &sq_st.pat[sqp.pat % SQ_NPAT];
         sqr_ev_t e;
+        uint32_t sd = sq_dsteps(), h, bd = 0xFFFFFFFFu, l = lane % SQ_NLANE;
         e.kind = 3;
-        e.n = (uint8_t)(lane % SQ_NLANE);
+        e.n = (uint8_t)l;
         e.pat = sqp.pat;
         e.bar = sqp.bar;
         e.t = sqp.cin ? 0u : sqp.t;
+        e.h = 0;
+        for (h = 0; h <= sd; h++) {              /* (the nearest step as it plays: SWING's late ones late) */
+            uint32_t th = h < sd ? sqp_drum_tick(p, h) : sqp_bar_ticks(), d = th > e.t ? th - e.t : e.t - th;
+            if (d < bd) {
+                bd = d;
+                e.h = (uint8_t)h;
+            }
+        }
+        if (e.h >= sqp.nh) {                     /* (a step still to come: it is not struck again there) */
+            sqp.dsk[l] = (uint8_t)(e.h < sd ? e.h + 1u : 1u);
+            sqp.dskb[l] = (uint8_t)(e.h < sd ? sqp.bar : sqp.bar + 1u < p->start + sq_len(p) ? sqp.bar + 1u : p->start);
+            sqp.dskp[l] = sqp.pat;
+        }
         sqp_rpush(&e);
         cfp_midi(0x90u, cfp_ch(CF_PART_DRUM), SQ_LANE_NOTE[lane % SQ_NLANE], 100);
         sqp.doff |= (uint16_t)(1u << (lane % SQ_NLANE));

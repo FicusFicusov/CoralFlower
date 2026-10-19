@@ -764,6 +764,14 @@ static void ui_open(uint32_t scr)
                                                   * cf_send_config) */
         cf_send_config();
     squ.help = squ.help_hold = 0;
+    if (cu.scr != was) {                         /* a hold begun on one screen does nothing on the next: OCT+ held in a
+                                                  * track and let go on the SEQUENCER copied a pattern, SEL held cleared
+                                                  * a track there at once, REC let go on HOME started the looper (a
+                                                  * review, 2026-10-19) */
+        squ.oct_down = squ.sel_down = 0;
+        squ.ocpy = squ.cpy = 0;
+        cu.rec_hold = 0;
+    }
 }
 
 /* GLOBAL > Reset: everything the user made goes (cf_backup.c cf_factory_erase), after three steps, each its own
@@ -924,6 +932,9 @@ static void ui_button(uint32_t b)
         if ((fm1_in.buttons & ((1u << panel.btn[B_OCTDN]) | (1u << panel.btn[B_OCTUP]))) ==
             ((1u << panel.btn[B_OCTDN]) | (1u << panel.btn[B_OCTUP]))) {
             cs.chord.octave = 0;                 /* both: back to 0, and every note let go */
+            squ.oct_down = 0;                    /* (the OCT+ waiting for its release on the sequencer's screens: not
+                                                  * after this; it left the octave at +1) */
+            squ.ocpy = 0;
             cf_post(CFE_PANIC, 0, 0, 0);
         } else {
             cs.chord.octave = (int8_t)clampi(cs.chord.octave + (b == B_OCTUP ? 1 : -1), -3, 3);
@@ -1343,7 +1354,7 @@ static int sq_key_led(uint32_t k, uint8_t *lit, uint8_t *mid, uint8_t *dim, uint
         }
         if (i >= st)
             return 1;
-        if (cf_sn.sq_on && cf_sn.sq_pat == squ.pat && !cf_sn.sq_song && sq_plays(p, cf_sn.sq_bar) &&
+        if (cf_sn.sq_on && cf_sn.sq_pat == squ.pat && sq_plays(p, cf_sn.sq_bar) &&   /* (the song's too) */
             sq_trk_bar(p, SQ_DRUMS, cf_sn.sq_bar) == squ.bar && cf_sn.sq_bt &&
             (int)(cf_sn.sq_t * (uint32_t)st / cf_sn.sq_bt) == i)
             cf_led(lit, id, 1);                  /* (the running light) */

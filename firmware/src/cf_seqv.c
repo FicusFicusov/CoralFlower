@@ -194,7 +194,7 @@ static void sq_bar_notes(const sq_pat_t *p, uint32_t trk, int rb, int on)
     for (e = 0; e < p->nev; e++) {               /* (the steps something grows on or runs over: no grass there) */
         const sq_ev_t *v = &p->ev[e];
         uint32_t s0, s1;
-        if (v->trk != trk)
+        if (v->trk != trk || !sq_ev_on(v))
             continue;
         s0 = sq_ev_start(p, v);
         s1 = sq_ev_end(p, v);
@@ -213,7 +213,7 @@ static void sq_bar_notes(const sq_pat_t *p, uint32_t trk, int rb, int on)
         int x0, w0, cx[SQ_MAXST], n = 0;
         uint32_t s0, s1;
         sq_ink_t k;
-        if (v->trk != trk)
+        if (v->trk != trk || !sq_ev_on(v))       /* (a step past this metre's bar: asleep, unseen) */
             continue;
         s0 = sq_ev_start(p, v);
         s1 = sq_ev_end(p, v);
@@ -444,8 +444,10 @@ static void sq_track_strip(const sq_pat_t *p, uint32_t trk, int x0, int ym, int 
             uint32_t e;
             for (e = 0; e < p->nev; e++) {
                 const sq_ev_t *v = &p->ev[e];
-                if (v->trk == trk && v->bar == b) {
+                if (v->trk == trk && v->bar == b && sq_ev_on(v)) {
                     int x = bx + v->pos * bw / (int)SQ_U, xw = v->len * bw / (int)SQ_U - 1;
+                    if (x + xw > x0 + w)         /* (a step lasting past the track's end: to the strip's end) */
+                        xw = x0 + w - x;
                     fb_rect(x, ym - 2, xw > 1 ? xw : 1, 4, FL_C(sq_root_ink(sqv_root(e)).ramp, 1));
                 }
             }

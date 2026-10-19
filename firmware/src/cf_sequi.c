@@ -64,17 +64,33 @@ typedef char sq_fits_flash[sizeof(sq_store_t) <= SQ_CHUNK * SQ_NCHUNK ? 1 : -1];
  * a chord written and its length set), or a whole take (REC). pre is the state at the start of each frame's input
  * while no action is under way; the first edit of an action keeps it as the undo */
 static struct {
-    uint8_t busy, has, pat, prepat, redo;
+    uint8_t busy, has, pat, prepat, redo, pend;  /* pend: an action under way, its undo kept only if it changed
+                                                  * something (a SEL on an empty step, a knob at its end took the
+                                                  * last undo away: a review, 2026-10-19) */
     uint32_t last;
     sq_pat_t pre, undo;
     sq_song_t spre, sundo;
 } sqh;
 static uint8_t squ_rec_on(void) { return cf_sn.sq_rec != 0xFFu || squ.ropen; }   /* (a take under way) */
+static void sq_commit(void)                      /* an action ended: the state before it is the undo, if it changed */
+{
+    if (!sqh.pend)
+        return;
+    sqh.pend = 0;
+    if (!memcmp(&sq_st.pat[sqh.prepat], &sqh.pre, sizeof sqh.pre) && !memcmp(&sq_st.song, &sqh.spre, sizeof sqh.spre))
+        return;
+    sqh.undo = sqh.pre;
+    sqh.sundo = sqh.spre;
+    sqh.pat = sqh.prepat;
+    sqh.has = 1;
+    sqh.redo = 0;
+}
 static void sq_undo_poll(void)                   /* every frame, before the input */
 {
     if (sqh.busy && !squ_rec_on() && !squ.sel_down && cu.now - sqh.last > 700u)
         sqh.busy = 0;
     if (!sqh.busy) {
+        sq_commit();
         sqh.prepat = (uint8_t)(squ.pat < SQ_NPAT ? squ.pat : 0u);
         sqh.pre = sq_st.pat[sqh.prepat];
         sqh.spre = sq_st.song;
@@ -82,12 +98,9 @@ static void sq_undo_poll(void)                   /* every frame, before the inpu
 }
 static void sq_touch(void)
 {
-    if (!sqh.busy) {                             /* a new action: what was before it is the undo */
-        sqh.undo = sqh.pre;
-        sqh.sundo = sqh.spre;
-        sqh.pat = sqh.prepat;
-        sqh.has = 1;
-        sqh.redo = 0;
+    if (!sqh.busy) {                             /* a new action: what was before it becomes the undo when it ends,
+                                                  * if it changed something (sq_commit) */
+        sqh.pend = 1;
         sqh.busy = 1;
     }
     sqh.last = cu.now;
@@ -98,6 +111,7 @@ static void sq_touch(void)
  * starts from */
 static void sq_fresh_kept(sq_pat_t *p)
 {
+    sq_commit();
     sq_fresh(p, cs.beats);
     sqh.busy = 0;
     sqh.prepat = (uint8_t)(p - sq_st.pat);
@@ -109,6 +123,8 @@ static void sq_fresh_kept(sq_pat_t *p)
 /* an action on another pattern than the one shown (SAVE > Pattern: a copy, a clearing): its state before */
 static void sq_touch_pat(uint32_t pat)
 {
+    sq_commit();
+    sqh.pend = 0;
     sqh.undo = sq_st.pat[pat % SQ_NPAT];
     sqh.sundo = sq_st.song;
     sqh.pat = (uint8_t)(pat % SQ_NPAT);
@@ -123,6 +139,7 @@ static void sq_undo(void)                        /* REC held */
 {
     sq_pat_t t;
     sq_song_t g;
+    sq_commit();                                 /* (the action under way first: it is what goes back) */
     if (!sqh.has) {
         cf_message("Nothing to undo");
         return;
@@ -258,12 +275,19 @@ static void sq_drum_kit_turn(sq_pat_t *p, int d)
         cf_post(CFE_SEQ, 2, l, p->dkit[l]);
 }
 
+/* the bar d bars from b in the open track's own bars, round (the frame walks only the bars the track plays: below
+ * them it went into rows that do not play and can hardly be seen, and seemed to jump up and down at random; the
+ * owner, 2026-10-19: "то вверх перемещает то влево вправо — кринж") */
+static uint32_t sq_own_bar(const sq_pat_t *p, int b, int d)
+{
+    int lo = p->start, n = (int)sq_tbars(p, squ.trk);
+    return (uint32_t)(lo + wrapi(b - lo + d, n));
+}
 static void sq_clamp(void)
 {
     sq_pat_t *p = sq_cur();
-    if (squ.bar >= SQ_BARS)                      /* (the frame goes over every bar: the ones outside the window are
-                                                  * written ahead) */
-        squ.bar = SQ_BARS - 1u;
+    if (!sq_trk_plays(p, squ.trk, squ.bar))      /* (the frame stays in the track's own bars) */
+        squ.bar = (uint8_t)(squ.bar < p->start ? p->start : p->start + sq_tbars(p, squ.trk) - 1u);
     if (squ.step >= SQ_ST(p))
         squ.step = (uint8_t)(SQ_ST(p) - 1u);
 }
@@ -301,7 +325,7 @@ static void sq_select(int d)
             squ.ocpy = 1;
             squ.ofrom = squ.bar;
         }
-        squ.bar = (uint8_t)wrapi(squ.bar + d, SQ_BARS);
+        squ.bar = (uint8_t)sq_own_bar(p, squ.bar, d);
         sq_clamp();
         return;
     }
@@ -315,14 +339,14 @@ static void sq_select(int d)
         }
         for (k = 0; k < n; k++) {
             if (squ.trk == SQ_DRUMS) {
-                squ.bar = (uint8_t)wrapi(squ.bar + (d > 0 ? 1 : -1), SQ_BARS);
+                squ.bar = (uint8_t)sq_own_bar(p, squ.bar, d > 0 ? 1 : -1);
             } else {
                 int s = squ.step + (d > 0 ? 1 : -1);
-                if (s >= SQ_ST(p)) {
-                    squ.bar = (uint8_t)((squ.bar + 1u) % SQ_BARS);
+                if (s >= (int)SQ_ST(p)) {   /* (int: -1 compared unsigned read as past the end: down a bar) */
+                    squ.bar = (uint8_t)sq_own_bar(p, squ.bar, 1);
                     s = 0;
                 } else if (s < 0) {
-                    squ.bar = (uint8_t)((squ.bar + SQ_BARS - 1u) % SQ_BARS);
+                    squ.bar = (uint8_t)sq_own_bar(p, squ.bar, -1);
                     s = SQ_ST(p) - 1;
                 }
                 squ.step = (uint8_t)s;
@@ -333,17 +357,17 @@ static void sq_select(int d)
         return;
     }
     if (squ.trk == SQ_DRUMS) {
-        squ.bar = (uint8_t)wrapi(squ.bar + d, SQ_BARS);
+        squ.bar = (uint8_t)sq_own_bar(p, squ.bar, d);
         sq_clamp();
         return;
     }
     while (d) {
         int s = squ.step + (d > 0 ? 1 : -1);
-        if (s >= SQ_ST(p)) {
-            squ.bar = (uint8_t)((squ.bar + 1u) % SQ_BARS);
+        if (s >= (int)SQ_ST(p)) {   /* (int: -1 compared unsigned read as past the end: down a bar) */
+            squ.bar = (uint8_t)sq_own_bar(p, squ.bar, 1);
             s = 0;
         } else if (s < 0) {
-            squ.bar = (uint8_t)((squ.bar + SQ_BARS - 1u) % SQ_BARS);
+            squ.bar = (uint8_t)sq_own_bar(p, squ.bar, -1);
             s = SQ_ST(p) - 1;
         }
         squ.step = (uint8_t)s;
@@ -394,12 +418,11 @@ static void sq_write_poll(void)
                 e.bass[0] = cf_sn.bass[0];
                 e.bass[1] = cf_sn.bass[1];
             }
-            e.rootkey = 0xFF;                    /* (the keys that made it: the lowest root key down, the buttons) */
-            for (i = 0; i < CF_NKEYS && e.rootkey == 0xFF; i++) {
-                int idx;
-                if (((cu.keys >> i) & 1u) && cf_key_role(cs.chord.algo, (int)i, &idx) == CF_ROLE_ROOT)
-                    e.rootkey = (uint8_t)i;
-            }
+            fm1_irq_off();                       /* (the keys that made it: the root key the chord model built it on,
+                                                  * the last one down; several single notes at once: none, they play
+                                                  * as written. The lowest held made a legato change the chord before) */
+            e.rootkey = (uint8_t)(o->single && o->n > 1u ? 0xFFu : cfc.nroots ? cfc.root_key[cfc.nroots - 1u] : 0xFFu);
+            fm1_irq_on();
             e.btns = (uint16_t)o->buttons;
             e.algo_oct = (uint8_t)((cs.chord.algo & 3u) | (uint32_t)(cs.chord.octave + 3) << 2);
             p->tonic = cs.chord.tonic;           /* (the key it is written in: a fixed pattern names it) */
@@ -538,12 +561,14 @@ static void sq_oct_poll(void)                    /* every frame: OCT+ let go in 
         sq_copy_pattern(squ.ofrom, squ.pat);
         return;
     }
-    if (cu.scr != SCR_SQED || squ.ofrom == squ.bar)
+    if (cu.scr != SCR_SQED || squ.ofrom == squ.bar || !sq_trk_plays(sq_cur(), squ.trk, squ.ofrom) ||
+        !sq_trk_plays(sq_cur(), squ.trk, squ.bar))   /* (both of the track's own bars: K3 or K4 turned meanwhile) */
         return;
     sqh.busy = 0;                                /* (an action of its own) */
     sq_undo_poll();
     sq_touch();
     sq_copy_track_bar(sq_cur(), squ.trk, squ.ofrom, squ.bar);
+    sq_clamp();                                  /* (the bar's steps came with it: the frame on one of them) */
     str_cpy(m, "Bar ", sizeof m);
     kint(m + str_len(m), squ.ofrom + 1, 0);
     str_cpy(m + str_len(m), " copied to ", 12);
@@ -565,7 +590,7 @@ static void sq_sel_poll(void)                    /* every frame: SEL let go in a
     if (!squ.sel_down)
         return;
     if ((fm1_in.buttons >> panel.btn[B_SCL]) & 1u && cu.scr == SCR_SQ) {   /* held a second: the track goes */
-        if (!squ.cpy && cu.now - squ.sel_down >= SQ_CLEAR_MS && sq_track_has(sq_cur(), squ.trk)) {
+        if (!squ.cpy && squ.pat < SQ_NPAT && cu.now - squ.sel_down >= SQ_CLEAR_MS && sq_track_has(sq_cur(), squ.trk)) {
             squ.cpy = 1;
             sq_erase_track(squ.trk);
             cf_message("Cleared. Hold REC: undo");
@@ -727,13 +752,12 @@ static void sq_rec_poll(void)
             for (i = 0; i < (int)p->nev; i++)
                 if (p->ev[i].trk == trk && p->ev[i].bar == squ.rbar && p->ev[i].pos == squ.rpos)
                     break;
-            if (i < (int)p->nev) {               /* (to where it was let go, over bar lines too; past the window's
-                                                  * end round to its top) */
-                uint32_t s0 = sq_ev_start(p, &p->ev[i]), su = SQ_U / sq_steps(p, trk, squ.rbar), len;
-                int32_t d = (int32_t)(bar * SQ_U + e.t * SQ_U / bt) - (int32_t)s0;
-                if (d <= 0)
-                    d += (int32_t)(sq_tbars(p, trk) * SQ_U);
-                len = ((uint32_t)d + su / 2u) / su * su;
+            if (i < (int)p->nev) {               /* (as long as it sounded, in whole steps of its bar, one at least:
+                                                  * the time it was held, the ISR's count; worked out from where it
+                                                  * ended, a chord let go before the step it was rounded up to came
+                                                  * out a whole track long) */
+                uint32_t su = SQ_U / sq_steps(p, trk, squ.rbar), d = e.dur * SQ_U / bt, len;
+                len = (d + su / 2u) / su * su;
                 if (len > sq_room(p, &p->ev[i]))
                     len = sq_room(p, &p->ev[i]);
                 p->ev[i].len = (uint16_t)(len ? len : su);
@@ -741,6 +765,8 @@ static void sq_rec_poll(void)
             }
             continue;
         }
+        if (e.kind == 3)
+            step = e.h;                          /* (the drums: the step the ISR found, SWING's late ones late) */
         if (step >= st) {                        /* (late in the bar: the next bar's first step) */
             step = 0;
             bar = bar + 1u < (uint32_t)p->start + sq_tbars(p, trk) ? bar + 1u : p->start;
@@ -783,12 +809,9 @@ static void sq_rec_poll(void)
                 v.bass[1] = e.bass[1];
             }
             v.btns = e.btns;
-            v.rootkey = 0xFF;                    /* (the root key down now: the take's chord's, near enough) */
-            for (k = 0; k < CF_NKEYS && v.rootkey == 0xFF; k++) {
-                int idx;
-                if (((cu.keys >> k) & 1u) && cf_key_role(cs.chord.algo, (int)k, &idx) == CF_ROLE_ROOT)
-                    v.rootkey = (uint8_t)k;
-            }
+            v.rootkey = e.rkey;                  /* (the key the chord was built on, the ISR's: the lowest held when
+                                                  * the UI got there wrote a legato change as the chord before) */
+            (void)k;
             v.algo_oct = (uint8_t)((cs.chord.algo & 3u) | (uint32_t)(cs.chord.octave + 3) << 2);
 #ifdef CF_TRACE
             fprintf(stderr, "take: %c bar %u step %u of %u (t %u)\n", 'A' + e.pat % SQ_NPAT, (unsigned)bar + 1u,
@@ -1100,7 +1123,7 @@ static void sq_knob_turn(int k, int d)
     } else if (k == 1 && squ.trk == SQ_DRUMS) {  /* SWING, 5 % a detent */
         p->swing = (uint8_t)clampi(p->swing + d * 5, 0, 100);
     } else if (k == 1) {
-        int i, st = SQ_ST(p), k = p->steps[squ.trk][squ.bar];   /* (steps a beat: 1 2 3 4 6 8) */
+        int i, st = SQ_ST(p), k = (int)sq_kbeat(p, squ.trk, squ.bar);   /* (steps a beat as it plays: 1 2 3 4 6 8) */
         for (i = 0; i < SQ_NKS && SQ_KS[i] != k; i++)
             ;
         i = clampi((i < SQ_NKS ? i : 1) + d, 0, SQ_NKS - 1);
@@ -1112,9 +1135,9 @@ static void sq_knob_turn(int k, int d)
         sq_set_bars(p, squ.trk, (uint32_t)clampi((int)sq_tbars(p, squ.trk) + d, 1, SQ_BARS));
     } else {                                     /* K4: the window up and down a bar (the frame goes with it while it
                                                   * is in the window: the bar being worked on stays in sight) */
-        int was = p->start, st = SQ_ST(p);
+        int was = p->start, st = SQ_ST(p), in = sq_trk_plays(p, squ.trk, squ.bar);   /* (in the window before) */
         sq_set_start(p, p->start + d);
-        if (sq_trk_plays(p, squ.trk, (uint32_t)squ.bar - (uint32_t)(p->start - was)) && p->start != was) {
+        if (in && p->start != was) {
             squ.bar = (uint8_t)(squ.bar + (p->start - was));
             squ.step = (uint8_t)(squ.step * SQ_ST(p) / st);
         }
@@ -1134,6 +1157,8 @@ static void sq_algo(int d)
         cv_turned(d);
         return;
     }
+    if (squ.sel_down && !squ.cpy)                /* (another pattern while SEL is held: no track cleared, as SELECT) */
+        squ.sel_down = 0;
     squ.pat = (uint8_t)clampi(squ.pat + d, 0, SQ_SONGPG);
     cv_turned(d);
     if (cf_sn.sq_on && !cf_sn.sq_song && cf_sn.sq_rec == 0xFFu && squ.pat < SQ_NPAT)

@@ -110,10 +110,21 @@ static const uint8_t SQ_KS[] = {1, 2, 3, 4, 6, 8};
 #define SQ_NKS ((int)(sizeof SQ_KS))
 /* the drums' steps a bar: 16ths (the 16 lower keys hold 4 beats of them), 8ths in a longer bar */
 static uint32_t sq_dsteps(void) { return sq_beats * 4u <= 16u ? sq_beats * 4u : sq_beats * 2u; }
+/* track trk's steps a beat in bar b as it plays: its own, or the most a bar can hold in this metre (32nds written in
+ * 4/4 are 40 steps in 5/4: 16th triplets then; the count is kept for a metre that holds it again) */
+static uint32_t sq_kbeat(const sq_pat_t *p, uint32_t trk, uint32_t b)
+{
+    uint32_t k = p->steps[trk % SQ_NTRK][b % SQ_BARS];
+    int i;
+    for (i = SQ_NKS - 1; k * sq_beats > SQ_MAXST && i >= 0; i--)
+        if (SQ_KS[i] < k)
+            k = SQ_KS[i];
+    return k ? k : 1u;
+}
 /* track trk's steps in bar b */
 static uint32_t sq_steps(const sq_pat_t *p, uint32_t trk, uint32_t b)
 {
-    return trk == SQ_DRUMS ? sq_dsteps() : (uint32_t)p->steps[trk][b % SQ_BARS] * sq_beats;
+    return trk == SQ_DRUMS ? sq_dsteps() : sq_kbeat(p, trk, b) * sq_beats;
 }
 
 static int sq_empty(const sq_pat_t *p) { return !p->bars; }
@@ -187,6 +198,9 @@ static int sq_resolve(cf_chord_t *c, const sq_ev_t *e, const cf_chord_cfg_t *g, 
 
 static uint32_t sq_ev_start(const sq_pat_t *p, const sq_ev_t *e);
 static uint32_t sq_ev_end(const sq_pat_t *p, const sq_ev_t *e);
+/* an event that begins inside its bar in this metre (one written further on in a longer bar sleeps, silent and
+ * unseen, kept for that metre again: a TIME SIG of fewer beats showed it in the bar below and never played it) */
+static int sq_ev_on(const sq_ev_t *e) { return e->pos < SQ_U; }
 /* the event of track `trk` on step `s` of bar `b` of its grid: the first that begins in it, else the one that lasts
  * over it (from a step before, a bar above too), -1 none */
 static int sq_at(const sq_pat_t *p, uint32_t trk, uint32_t b, uint32_t s)
@@ -196,7 +210,7 @@ static int sq_at(const sq_pat_t *p, uint32_t trk, uint32_t b, uint32_t s)
     for (i = 0; i < p->nev; i++) {
         const sq_ev_t *e = &p->ev[i];
         uint32_t es;
-        if (e->trk != trk)
+        if (e->trk != trk || !sq_ev_on(e))
             continue;
         es = sq_ev_start(p, e);
         if (es >= s0 && es < s1 && es < first) {
@@ -250,7 +264,7 @@ static int sq_put(sq_pat_t *p, const sq_ev_t *e)
     for (i = 0; i < p->nev;) {
         sq_ev_t *o = &p->ev[i];
         uint32_t os, oe;
-        if (o->trk != e->trk) {
+        if (o->trk != e->trk || !sq_ev_on(o)) {
             i++;
             continue;
         }
@@ -278,7 +292,7 @@ static uint32_t sq_room(const sq_pat_t *p, const sq_ev_t *e)
     for (i = 0; i < p->nev; i++) {
         const sq_ev_t *o = &p->ev[i];
         uint32_t os;
-        if (o == e || o->trk != e->trk)
+        if (o == e || o->trk != e->trk || !sq_ev_on(o))
             continue;
         os = sq_ev_start(p, o);
         if (os > s && os < end)
@@ -314,6 +328,22 @@ static uint32_t sq_trk_bar(const sq_pat_t *p, uint32_t trk, uint32_t b)
     return b < p->start ? b : p->start + (b - p->start) % sq_tbars(p, trk);
 }
 
+/* track trk has something in the bars it plays (what is outside them, kept, does not count) */
+static int sq_own(const sq_pat_t *p, uint32_t trk)
+{
+    uint32_t i, b, b0 = p->start, b1 = p->start + sq_tbars(p, trk);
+    if (trk == SQ_DRUMS) {
+        for (i = 0; i < SQ_NLANE; i++)
+            for (b = b0; b < b1; b++)
+                if (p->hit[i][b])
+                    return 1;
+        return 0;
+    }
+    for (i = 0; i < p->nev; i++)
+        if (p->ev[i].trk == trk && sq_ev_on(&p->ev[i]) && p->ev[i].bar >= b0 && p->ev[i].bar < b1)
+            return 1;
+    return 0;
+}
 /* the bars the pattern plays before it begins again: its longest track's with something in it (an empty track does
  * not make it longer); nothing in it: its longest track's */
 static uint32_t sq_len(const sq_pat_t *p)
@@ -323,7 +353,7 @@ static uint32_t sq_len(const sq_pat_t *p)
         uint32_t k = sq_tbars(p, t);
         if (k > all)
             all = k;
-        if (k > n && (t == SQ_DRUMS ? sq_drums(p) : sq_count(p, t) > 0))
+        if (k > n && sq_own(p, t))
             n = k;
     }
     return n ? n : all;
