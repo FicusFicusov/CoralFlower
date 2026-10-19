@@ -6,7 +6,8 @@
 #   OUT/play/            the emulator page (tools/emu/web/index.html) with its build (build/emu-web: build_web.sh first)
 #   OUT/install/         the old installer address, forwarding to /#install
 # OUT/firmware/ (the released packages and releases.json) is not touched: pages.yml fills it from the releases, and a
-# local copy keeps what is there. A new site.css is a new address (?v=hash): a browser cannot keep an old one.
+# local copy keeps what is there. A new site.css is a new address (?v=hash): a browser cannot keep an old one. The
+# installer's modules too: an old one kept beside a new page broke the page (an export it did not have yet, 0.3.1).
 set -e
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 OUT=${1:?usage: sh tools/make_site.sh OUT}
@@ -26,6 +27,10 @@ STAMP=$(cat web/site.css | shasum | cut -c1-10)
 # (sed -i.bak, then the .bak removed: the one form both BSD sed on macOS and GNU sed on the CI runner take)
 sed -i.bak "s|href=\"site.css\"|href=\"site.css?v=$STAMP\"|" "$OUT/index.html"
 sed -i.bak "s|href=\"../site.css\"|href=\"../site.css?v=$STAMP\"|" "$OUT/play/index.html"
+for m in fm1pkg.js fm1ota.js fm1backup.js; do
+    MS=$(cat "web/$m" | shasum | cut -c1-10)
+    sed -i.bak "s|from \"./$m\"|from \"./$m?v=$MS\"|" "$OUT/index.html"
+done
 rm -f "$OUT/index.html.bak" "$OUT/play/index.html.bak"
 touch "$OUT/.nojekyll"
 echo "site: $OUT"
