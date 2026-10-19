@@ -452,6 +452,30 @@ static void view_bass(int x0)
     }
 }
 
+/* EDIT > Glide (every sound's last page): one note sliding to the next, the slide as wide as the time it takes, and
+ * what the VOICE does */
+static void view_glide(int x0)
+{
+    static const char *const CAP[4] = {"glides into each new note", "one note: it always glides",
+                                       "glides when notes overlap", "every voice on one note"};
+    const int16_t *p = trk[cu.edit_part].p;
+    int g = clamp(p[P_GLIDE], 0, 127), w = g ? 4 + (int)(cfe_glide_ms(g) / 12u) : 0, yl = VIEW_Y + 46, yh = VIEW_Y + 14;
+    int xa, xb;
+    if (w > 130)
+        w = 130;
+    xa = x0 + 40;
+    xb = xa + (w ? w : 1);
+    fb_rect(x0 + 10, yl, xa - x0 - 10, 3, FL_INK2);   /* the note before */
+    if (w)
+        fb_line(xa, yl + 1, xb, yh + 1, C_ACC(0));
+    fb_rect(xb, yh, x0 + 206 - xb, 3, C_ACC(1));      /* the note it goes to */
+    if (!w)
+        fb_rect(xa, yh, 2, yl - yh + 3, C_ACC(2));    /* (no glide: a jump) */
+    fb_text_halo(&CF_FONT_UI, x0 + 10, VIEW_Y + 58,
+                 g || p[P_VOICE] == V_UNISON ? CAP[clamp(p[P_VOICE], 0, 3)] : "GLIDE off: notes jump", FL_INK3,
+                 FL_BG, 1);
+}
+
 #if FELUCCA_VA
 /* ------------------------------------------------------- SOUND, the VA --- */
 /* a value of the VA sound edited: deep page `page`, column col (cf_edit.c's) */
@@ -728,6 +752,10 @@ static void view_va_mod(int x0, uint32_t k)
 static void view_va(int x0)
 {
     uint32_t sec = cu.edit_sec, pg = cu.page[SCR_EDIT];
+    if (cfe_glide_pg(cu.edit_part, sec, pg)) {
+        view_glide(x0);
+        return;
+    }
     if (sec < 4u)
         view_va_osc(x0, sec, pg);
     else if (sec == 4u)
@@ -1049,6 +1077,10 @@ static void view_fm(int x0)
 {
     uint32_t sec = cu.edit_sec, pg = cu.page[SCR_EDIT], alg = (uint32_t)cv_fg(FP_ALG) & 31u;
     int r[4], l[4], i;
+    if (cfe_glide_pg(cu.edit_part, sec, pg)) {
+        view_glide(x0);
+        return;
+    }
     if (sec < 6u) {
         for (i = 0; i < 4; i++)
             r[i] = cv_fo(sec, FP_R1 + (uint32_t)i), l[i] = cv_fo(sec, FP_L1 + (uint32_t)i);

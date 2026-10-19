@@ -320,7 +320,7 @@ void emu_fw_dump(void)
         }
         printf("\n");
     }
-    for (i = 0; i < 2u; i++) {
+    for (i = 0; i < 3u; i++) {                   /* (the chords, the bass, CoralFlower's LAYER) */
         uint32_t n = 0, k;
         for (k = 0; k < NVOICE; k++)
             n += trk[i].v[k].active;
@@ -330,6 +330,12 @@ void emu_fw_dump(void)
         for (k = 0; k < NVOICE; k++)
             if (trk[i].v[k].active && trk[i].v[k].gate)
                 printf(" %u", (unsigned)trk[i].v[k].note);
+        printf("\n");
+        printf("  part %u voice %d glide %d pitch:", (unsigned)i, trk[i].p[P_VOICE], trk[i].p[P_GLIDE]);
+        /* (VOICE, GLIDE; the sounding voices' pitch now, 1/16 semitone: a glide shows) */
+        for (k = 0; k < NVOICE; k++)
+            if (trk[i].v[k].active)
+                printf(" %d", (int)trk[i].v[k].pitch_cur);
         printf("\n");
     }
     printf("  plant: %s, segments %u, tiles sent %u\n", flo.species ? "coral" : "plant", (unsigned)flo.nseg,

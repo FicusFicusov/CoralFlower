@@ -78,6 +78,8 @@ static int cf_ent_part(uint32_t e, uint32_t pos)
         return 2;
     if (en.kind == PK_USER) {
         int32_t v = up_value(up_rec(en.slot), P_VOICE);
+        if (up_rec(en.slot)->note[14] == CB_LAYER_MARK)   /* (a LAYER's sound: a chord sound, whatever its voice) */
+            return 0;
         return v == V_MONO || v == V_LEGATO;
     }
     return cf_fac_part(e, en.fk);
@@ -145,10 +147,13 @@ static uint32_t cf_snd_index(uint32_t part, uint32_t e, uint32_t pos)
 
 static void cf_part_voice(track_t *t, uint32_t part)
 {
-    /* both parts are polyphonic: the bass part for the octaver's second note (cf_play.c keeps the bass monophonic:
-     * a new bass note cuts the old one's release tail) */
+    /* the chords and the bass are polyphonic, without a glide of their own: the bass part for the octaver's second
+     * note (cf_play.c keeps the bass monophonic: a new bass note cuts the old one's release tail), HOME's GLIDE
+     * glides both. The LAYER keeps the sound's voice and glide (cf_edit.c's Glide page, saved with the sound) */
+    if (part == CF_PART_LAYER)
+        return;
     t->p[P_VOICE] = V_POLY;
-    (void)part;
+    t->p[P_GLIDE] = 0;
 }
 
 /* engine e's factory preset pi into part (the sound only, not the part's own parameters) */

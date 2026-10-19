@@ -140,6 +140,9 @@ static int8_t cb_trim(uint32_t e, uint32_t k)     /* factory preset k of engine 
  * keeps lane hits in those bytes: never bound (no DRUM in ChoralRoot). up_valid is unchanged: older firmware reads
  * a bound record as an ordinary one, whose last step holds a note of 38 (0xA6 & 127) it never plays here. */
 #define CB_BIND_MARK 0xA6u
+/* CoralFlower: a sound saved from the LAYER (part 2) has note[14] = CB_LAYER_MARK. It keeps its voice (a mono or
+ * legato melody, its glide) and is still a chord sound: the lists go by the voice otherwise (cf_sound.c cf_ent_part) */
+#define CB_LAYER_MARK 0xA7u
 #define PF_NONE 0xFFu
 enum { PK_INIT, PK_FACTORY, PK_USER };
 typedef struct { uint8_t kind, fk, slot; } pool_ent_t;   /* fk: the factory preset index (PK_FACTORY; PK_USER: the
@@ -291,6 +294,8 @@ static int cb_store(const track_t *t, uint32_t part, uint32_t k, const char *nam
         up_set_value(&r, i, (int16_t)clamp(v, -64, 127));
     }
     r.note[15] = CB_BIND_MARK;                    /* the binding (docs/PRESETS.md "Storage") */
+    if (part == 2u)
+        r.note[14] = CB_LAYER_MARK;
     r.flags[15] = (uint8_t)bind;
     return up_put(k, &r);
 }

@@ -205,11 +205,32 @@ static void sqp_fire(const sq_pat_t *p, uint32_t tk, uint32_t u)
             return;
         }
         if (tk == SQ_LAYER) {                    /* (its own part, no bass) */
-            sqp_layer_off();
-            for (j = 0; j < e->n; j++) {
-                sqp.lnote[j] = e->note[j];
-                if (!cfp_holds(2, e->note[j]))
-                    cfp_on(2, e->note[j], cfp_cfg.vel);
+            if (trk[2].p[P_VOICE] != V_POLY && trk[2].p[P_VOICE] != V_UNISON) {
+                /* a mono or legato sound: the new note first, then the old one let go, so its own glide slides
+                 * between them (cf_edit.c's Glide page: a melody that slides in the sequencer too) */
+                uint8_t old[6], no = sqp.ln, k;
+                for (j = 0; j < no; j++)
+                    old[j] = sqp.lnote[j];
+                sqp.ln = 0;
+                for (j = 0; j < e->n; j++) {
+                    sqp.lnote[j] = e->note[j];
+                    if (!cfp_holds(2, e->note[j]))
+                        cfp_on(2, e->note[j], cfp_cfg.vel);
+                }
+                sqp.ln = e->n;
+                for (j = 0; j < no; j++) {
+                    for (k = 0; k < e->n && e->note[k] != old[j]; k++)
+                        ;
+                    if (k == e->n)
+                        sqp_off(2, old[j]);
+                }
+            } else {
+                sqp_layer_off();
+                for (j = 0; j < e->n; j++) {
+                    sqp.lnote[j] = e->note[j];
+                    if (!cfp_holds(2, e->note[j]))
+                        cfp_on(2, e->note[j], cfp_cfg.vel);
+                }
             }
             sqp.ln = e->n;
             sqp.left[2] = off;
@@ -242,8 +263,9 @@ static void sqp_now(void)
         sqp_chord_off();
     if (sqp.nb && !sqp.left[1])
         sqp_bass_off();
-    if (sqp.ln && !sqp.left[2])
-        sqp_layer_off();
+    if (sqp.ln && !sqp.left[2] && (trk[2].p[P_VOICE] == V_POLY || trk[2].p[P_VOICE] == V_UNISON))
+        sqp_layer_off();                         /* (a mono or legato LAYER: at the end of this tick, after what
+                                                  * begins in it, so a note that meets the next slides into it) */
     {   /* a track muted while it sounds: it goes now */
         uint32_t mu = sq_st.song.mute;
         if ((mu >> SQ_CHORDS) & 1u && sqp.n)
@@ -253,8 +275,11 @@ static void sqp_now(void)
         if ((mu >> SQ_LAYER) & 1u && sqp.ln)
             sqp_layer_off();
     }
-    if (sq_empty(p))
+    if (sq_empty(p)) {
+        if (sqp.ln && !sqp.left[2])
+            sqp_layer_off();
         return;
+    }
     if (!sqp.sbok) {                             /* (a bar begins: what each track plays in it) */
         for (tk = 0; tk < SQ_NTRK; tk++)
             sqp.sb[tk] = (uint8_t)sq_src_bar(p, tk, sqp.bar);
@@ -271,6 +296,8 @@ static void sqp_now(void)
             sqp_fire(p, SQ_DRUMS, sqp.nh);
         sqp.nh++;
     }
+    if (sqp.ln && !sqp.left[2])                  /* (a mono or legato LAYER whose note ended and none began) */
+        sqp_layer_off();
 }
 
 /* the next bar: the pattern's next, or the song's next pattern (an empty one passed over) */

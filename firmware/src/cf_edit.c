@@ -323,13 +323,68 @@ static const char *const CFE_SEC_KEY[CFE_NSEC] = {"OP1", "OP2", "OP3", "OP4", "O
 static const uint8_t CFE_VA_SEC[CFE_NSEC][2] = {{0, 2}, {2, 2}, {4, 2}, {6, 2}, {8, 2}, {10, 8}, {18, 6}, {24, 8}};
 static const char *const CFE_VA_KEY[CFE_NSEC] = {"OS1", "OS2", "OS3", "OS4", "FLT", "ENV", "LFO", "MOD"};
 
+/* the LAYER's sound has one page more, its last (the last section's, after the engine's own): Glide, the sound's
+ * voice. VOICE poly / mono / legato / unison, GLIDE its own glide (portamento: voice.c, TIME mode), PRIORITY the note
+ * mono keeps; saved with the sound (the owner, 2026-10-19: a glide of the LAYER's own). The chords and the bass have
+ * none: the keys' player plays them polyphonic (cf_sound.c cf_part_voice) and glides them with HOME's GLIDE */
 static uint32_t cfe_npages(uint32_t part, uint32_t sec)
 {
+    uint32_t g = part == CF_PART_LAYER && sec == CFE_NSEC - 1u;
     if (cfe_fm6(part))
-        return sec < 6u ? 6u : sec == 6u ? 2u : 3u;
+        return (sec < 6u ? 6u : sec == 6u ? 2u : 3u) + g;   /* (GLO: Voice, LFO, LFO 2, the LAYER's Glide) */
     if (cfe_va(part))
-        return CFE_VA_SEC[sec % CFE_NSEC][1];
+        return CFE_VA_SEC[sec % CFE_NSEC][1] + g;          /* (MOD's pages, the LAYER's Glide) */
     return 1u;
+}
+static int cfe_glide_pg(uint32_t part, uint32_t sec, uint32_t pg)
+{
+    return part == CF_PART_LAYER && (cfe_fm6(part) || cfe_va(part)) && sec == CFE_NSEC - 1u &&
+           pg + 1u == cfe_npages(part, sec);
+}
+static uint32_t cfe_glide_ms(int g)              /* voice.c glide_set's TIME: 1 + g^2 / 8 control blocks */
+{
+    return (1u + (uint32_t)(g * g) / 8u) * CTL * 1000u / FS;
+}
+static int cfe_glide_info(uint32_t part, uint32_t col, char *name, char *val, int16_t *bar)
+{
+    static const char *const VC[4] = {"Poly", "Mono", "Legato", "Unison"};
+    static const char *const PR[3] = {"Last", "Low", "High"};
+    const int16_t *p = trk[part].p;
+    if (col == 0) {
+        str_cpy(name, "VOICE", 12);
+        str_cpy(val, VC[clamp(p[P_VOICE], 0, 3)], 12);
+    } else if (col == 1) {
+        str_cpy(name, "GLIDE", 12);
+        if (p[P_GLIDE] > 0)
+            kint(val, (int)cfe_glide_ms(p[P_GLIDE]), "ms");
+        else
+            str_cpy(val, "Off", 12);
+        *bar = (int16_t)(clamp(p[P_GLIDE], 0, 127) * 255 / 127);
+    } else if (col == 2) {
+        str_cpy(name, "PRIORITY", 12);
+        str_cpy(val, PR[clamp(p[P_PRIO], 0, 2)], 12);
+    } else {
+        return 0;
+    }
+    return 1;
+}
+static void cfe_glide_turn(uint32_t part, uint32_t col, int d)
+{
+    int16_t *p = trk[part].p;
+    fm1_irq_off();
+    if (col == 0) {
+        int16_t v = (int16_t)clamp(p[P_VOICE] + d, V_POLY, V_UNISON);
+        if (v != p[P_VOICE])
+            panic_req |= (uint8_t)(1u << part);  /* (another voice: what sounds goes, none left held) */
+        p[P_VOICE] = v;
+    } else if (col == 1) {                       /* (finer at the short end) */
+        int g = p[P_GLIDE], st = g < 16 ? 1 : g < 48 ? 2 : 4;
+        p[P_GLIDE] = (int16_t)clamp(g + d * st, 0, 127);
+        p[P_GLMODE] = 1;                         /* (TIME: the same time for any interval, as the value says) */
+    } else if (col == 2) {
+        p[P_PRIO] = (int16_t)clamp(p[P_PRIO] + d, 0, 2);
+    }
+    fm1_irq_on();
 }
 static const char *cfe_key_name(uint32_t part, uint32_t sec)
 {
@@ -360,6 +415,8 @@ static int32_t cfe_dstep(const param_desc_t *d, int32_t v0, int32_t s)
 static int cfe_info(uint32_t part, uint32_t sec, uint32_t pg, uint32_t col, char *name, char *val, int16_t *bar)
 {
     *bar = -1;
+    if (cfe_glide_pg(part, sec, pg))
+        return cfe_glide_info(part, col, name, val, bar);
     if (cfe_fm6(part)) {
         const cfe_col_t *c = &cfe_fm6_page(sec, pg)->col[col];
         int32_t v;
@@ -422,6 +479,10 @@ static int cfe_info(uint32_t part, uint32_t sec, uint32_t pg, uint32_t col, char
 
 static void cfe_turn(uint32_t part, uint32_t sec, uint32_t pg, uint32_t col, int d)
 {
+    if (cfe_glide_pg(part, sec, pg)) {
+        cfe_glide_turn(part, col, d);
+        return;
+    }
     if (cfe_fm6(part)) {
         const cfe_col_t *c = &cfe_fm6_page(sec, pg)->col[col];
         uint8_t v[FP_SIZE + 1u];
@@ -457,6 +518,8 @@ static void cfe_turn(uint32_t part, uint32_t sec, uint32_t pg, uint32_t col, int
 
 static const char *cfe_page_title(uint32_t part, uint32_t sec, uint32_t pg)
 {
+    if (cfe_glide_pg(part, sec, pg))
+        return "Glide";
     if (cfe_fm6(part))
         return cfe_fm6_page(sec, pg)->title;
     if (cfe_deep(part)) {
