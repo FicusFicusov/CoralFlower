@@ -85,6 +85,8 @@ static struct {
     uint32_t serial;                                 /* the chord model's serial they follow */
     uint8_t onset;                                   /* bumped at every chord onset (the screen's plant) */
     uint32_t root_ms;                                /* when a root key last went down (cf_now_ms) */
+    uint8_t slast;                                   /* single notes: the last one struck (a new one slides from it with a
+                                                     * Glide time; 0: none, or a chord sounded since) */
 } cfp;
 
 static uint32_t cfp_ticks(void)                      /* Glide in control blocks (CTL samples) */
@@ -182,7 +184,16 @@ static void cfp_change(uint32_t part, uint8_t *old, uint8_t *pn, const uint8_t *
     uint32_t vel = cfp_cfg.vel, ticks = cfp_ticks();
     if (part && m)                                   /* the tails of bass notes let go before */
         cfp_bass_mono();
-    if (!m || mode == 0 || mode == 3 || mode == 4) {   /* silence, or a fresh strike: everything restarts */
+    if (mode == 6) {                                 /* single notes, a Glide time: the held ones stay where they are, a
+                                                      * new one slides from the last note struck */
+        for (i = 0; i < n; i++)
+            if (!has(nw, m, old[i]))
+                cfp_off(part, old[i]);
+        cfp_fade_released(part);                     /* (the notes let go fade: a tail at the old pitch hid the slide) */
+        for (i = 0; i < m; i++)
+            if (!has(old, n, nw[i]))
+                cfp_on_from(part, nw[i], vel, cfp.slast, ticks);
+    } else if (!m || mode == 0 || mode == 3 || mode == 4) {   /* silence, or a fresh strike: everything restarts */
         uint8_t *prev = part ? cfp.lastb : cfp.last, was[CF_MAX_NOTES];
         int np = part ? cfp.nlb : cfp.nl;
         if (mode == 4) {                             /* RETRIG Chord: the whole chord strikes, out of the one sounding */
@@ -368,8 +379,13 @@ static void cfp_sync(int how)
      * 2026-10-15: the whole chord, not just the tones that change), each sliding from the last chord's at the Glide time */
     int strike = cfp_cfg.retrig == CF_RT_CHORD && !cfp_same(cfp.note, cfp.n, o->note, m);
     int notes = cfp_cfg.retrig == CF_RT_STRIKE ? 5 : 2;   /* RETRIG Notes: with a Glide time, the changed notes strike */
-    int mode = strike && cfp.n && m && !o->single ? 4 : glide && !o->single ? notes : always && !o->single ? 3 :
-               how == 0 ? 0 : 1;
+    /* single notes (no chord button, or Off) with a Glide time: a new note slides from the last one struck, while one
+     * is held (Legato) or a few seconds after (Always); the held ones stay (the owner, 2026-10-19: they glided not at
+     * all, the chords only) */
+    int sglide = o->single && cfp_cfg.glide_ms && m && cfp.slast &&
+                 (cfp.n || (cfp_cfg.glide_always && (uint32_t)(cf_now_ms - cfp.last_ms) < 4000u));
+    int mode = sglide ? 6 : strike && cfp.n && m && !o->single ? 4 : glide && !o->single ? notes :
+               always && !o->single ? 3 : how == 0 ? 0 : 1;
     int bmode = strike && cfp.nb && mb ? 4 : glide && cfp.nb && mb ? notes : always && !cfp.nb && mb && cfp.nlb ? 3 :
                 how == 0 ? 0 : 1;
     if (m && (!cfp.n || how == 0))
@@ -394,7 +410,19 @@ static void cfp_sync(int how)
             cfp.note[i] = o->note[i];
         cfp.n = (uint8_t)m;
     } else {
+        uint8_t was[CF_MAX_NOTES], nw = cfp.n;
+        int i, j;
+        for (i = 0; i < nw; i++)
+            was[i] = cfp.note[i];
         cfp_change(cfp_cp, cfp.note, &cfp.n, o->note, m, mode);
+        if (!o->single && m)                         /* (a chord: single notes after it start afresh) */
+            cfp.slast = 0;
+        for (i = 0; o->single && i < m; i++) {       /* (the note struck now: the next one slides from it) */
+            for (j = 0; j < nw && was[j] != o->note[i]; j++)
+                ;
+            if (j == nw)
+                cfp.slast = o->note[i];
+        }
     }
     if (!(cfa.latched && !mb))                       /* (LATCH: the bass held under the arpeggio too) */
         cfp_change(1, cfp.bass, &cfp.nb, nb, mb, bmode);
