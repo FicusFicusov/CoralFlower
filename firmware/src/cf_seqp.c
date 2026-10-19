@@ -30,8 +30,6 @@ static struct {
     uint32_t t, acc;             /* ticks into the bar; the clock's samples x bpm */
     uint8_t nu;                  /* the next place in the bar (1/24 of a beat) whose steps have not sounded yet */
     uint8_t nh;                  /* .. the drums' next step */
-    uint8_t sb[SQ_NTRK];         /* the bar each track plays in this one (a short track repeats: sq_src_bar) */
-    uint8_t sbok;                /* .. worked out for this bar */
     uint8_t n, note[6], nb, bass[2], ln, lnote[6];   /* what sounds: the chord, the bass, the layer */
     uint32_t left[3];            /* .. the ticks it still lasts (it may run on over a bar line) */
     uint8_t lit[SQ_NTRK];        /* where in the bar (1/24 of a beat) each track sounded last (the screens' pollen),
@@ -158,14 +156,15 @@ static uint32_t sqp_drum_tick(const sq_pat_t *p, uint32_t i)
     return t;
 }
 
-/* track tk at place u of the bar now (1/24 of a beat; the drums: their step h): what begins there sounds */
+/* track tk at place u of the bar now (1/24 of a beat; the drums: their step h): what begins there sounds. A track
+ * shorter than the pattern plays its own bars round (sq_trk_bar) */
 static void sqp_fire(const sq_pat_t *p, uint32_t tk, uint32_t u)
 {
-    uint32_t i;
+    uint32_t i, b = sq_trk_bar(p, tk, sqp.bar);
     if (tk == SQ_DRUMS) {
         uint32_t l, any = 0, h = u;
         for (l = 0; l < SQ_NLANE; l++)
-            if ((p->hit[l][sqp.sb[tk]] >> h) & 1u) {
+            if ((p->hit[l][b] >> h) & 1u) {
                 sqp_lane_kit(l, p->dkit[l]);     /* (its kit) */
                 trk_note_on(&trk[CF_PART_DRUM], SQ_LANE_NOTE[l], 100);
                 cfp_midi(0x90u, cfp_ch(CF_PART_DRUM), SQ_LANE_NOTE[l], 100);
@@ -175,9 +174,9 @@ static void sqp_fire(const sq_pat_t *p, uint32_t tk, uint32_t u)
             }
 #ifdef CF_TRACE
         if (any)
-            fprintf(stderr, "%6u seq %c bar %u drums step %u:%s%s%s\n", (unsigned)cf_now_ms, 'A' + sqp.pat, sqp.bar + 1u,
-                    (unsigned)h, (p->hit[0][sqp.sb[tk]] >> h) & 1u ? " kick" : "",
-                    (p->hit[1][sqp.sb[tk]] >> h) & 1u ? " snare" : "", (p->hit[3][sqp.sb[tk]] >> h) & 1u ? " hat" : "");
+            fprintf(stderr, "%6u seq %c bar %u (its %u) drums step %u:%s%s%s\n", (unsigned)cf_now_ms, 'A' + sqp.pat,
+                    sqp.bar + 1u, (unsigned)b + 1u, (unsigned)h, (p->hit[0][b] >> h) & 1u ? " kick" : "",
+                    (p->hit[1][b] >> h) & 1u ? " snare" : "", (p->hit[3][b] >> h) & 1u ? " hat" : "");
 #endif
         if (any) {
             sqp.lit[tk] = (uint8_t)(h * (SQ_U / sq_dsteps()));
@@ -189,14 +188,15 @@ static void sqp_fire(const sq_pat_t *p, uint32_t tk, uint32_t u)
         const sq_ev_t *e = &p->ev[i];
         sq_ev_t now;
         uint32_t off, j;
-        if (e->trk != tk || e->bar != sqp.sb[tk] || e->pos != u)
+        if (e->trk != tk || e->bar != b || e->pos != u)
             continue;
         if (p->follow && sq_resolve(&sqp.cm, e, &cfc.cfg, &now))   /* (the key HOME has now) */
             e = &now;
         off = e->len * sqp_bar_ticks() / SQ_U;   /* (how long: it may run on into the bars after) */
 #ifdef CF_TRACE
-        fprintf(stderr, "%6u seq %c bar %u %s at %u/24 len %u: %u notes, first %u\n", (unsigned)cf_now_ms, 'A' + sqp.pat,
-                sqp.bar + 1u, tk == SQ_LAYER ? "layer" : tk ? "bass" : "chord", (unsigned)u, e->len, e->n, e->note[0]);
+        fprintf(stderr, "%6u seq %c bar %u (its %u) %s at %u/24 len %u: %u notes, first %u\n", (unsigned)cf_now_ms,
+                'A' + sqp.pat, sqp.bar + 1u, (unsigned)b + 1u, tk == SQ_LAYER ? "layer" : tk ? "bass" : "chord",
+                (unsigned)u, e->len, e->n, e->note[0]);
 #endif
         sqp.lit[tk] = (uint8_t)u;
         sqp.lit_t[tk] = cf_now_ms;
@@ -280,11 +280,6 @@ static void sqp_now(void)
             sqp_layer_off();
         return;
     }
-    if (!sqp.sbok) {                             /* (a bar begins: what each track plays in it) */
-        for (tk = 0; tk < SQ_NTRK; tk++)
-            sqp.sb[tk] = (uint8_t)sq_src_bar(p, tk, sqp.bar);
-        sqp.sbok = 1;
-    }
     while (sqp.nu < SQ_U && sqp.t >= sqp.nu * sqp_bar_ticks() / SQ_U) {
         for (tk = 0; tk < SQ_DRUMS; tk++)
             if (!((sq_st.song.mute >> tk) & 1u))   /* (muted: its steps pass by) */
@@ -306,8 +301,8 @@ static void sqp_next_bar(void)
     const sq_pat_t *p = &sq_st.pat[sqp.pat % SQ_NPAT];
     uint32_t i;
     sqp.t = 0;                                   /* (what sounds lasts on over the bar line: its own count) */
-    sqp.nu = sqp.nh = sqp.sbok = 0;
-    if (++sqp.bar < p->start + p->bars && sqp.bar >= p->start && sqp.next == 0xFFu)
+    sqp.nu = sqp.nh = 0;
+    if (++sqp.bar < p->start + sq_len(p) && sqp.bar >= p->start && sqp.next == 0xFFu)
         return;                                  /* (the window moved under it: back to its top) */
     sqp.bar = p->start;
     if (sqp.next != 0xFFu) {                     /* another pattern picked (the song: PLAY on it): it comes in now */
@@ -436,7 +431,7 @@ static void sqp_begin(uint32_t pat, uint32_t slot, int cin)
     sqp.bar = sq_st.pat[sqp.pat].start;
     sqp.t = 0;
     sqp.acc = 0;
-    sqp.nu = sqp.nh = sqp.sbok = 0;
+    sqp.nu = sqp.nh = 0;
     for (i = 0; i < SQ_NTRK; i++)
         sqp.lit[i] = 0xFFu;
     sqp.ckey = sqp.lkey = 0xFF;

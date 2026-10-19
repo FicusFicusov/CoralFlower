@@ -45,8 +45,6 @@ static struct {
     uint32_t oct_down;           /* OCT+ down in a track (0: up): a tap is OCT+, held with SELECT turned it copies the
                                   * frame's bar to where the frame goes (the owner's pick, 2026-10-19) */
     uint8_t ocpy, ofrom;         /* .. SELECT turned while it is down; the bar copied */
-    uint8_t k3_base;             /* K3 turned: the bars the window had when it began (the bars it adds repeat them) */
-    uint32_t k3_ms;              /* .. when it was last turned (a pause of 0.7 s: a new turn, a new phrase) */
 } squ = {.len = 1};
 
 #define SQ_ST(p) sq_steps((p), squ.trk, squ.bar)    /* the frame's bar's steps in the open track */
@@ -294,7 +292,6 @@ static int sq_open(void)                         /* returns 1: the track's scree
 }
 
 static void sq_erase_here(void);
-static void sq_materialize(sq_pat_t *p, uint32_t trk, uint32_t b);
 /* SELECT in a track: CHORDS / BASS walk the steps (over the bars, round), DRUMS the bars */
 static void sq_select(int d)
 {
@@ -372,7 +369,6 @@ static void sq_write_poll(void)
         if (o->sounding && o->n) {
             sq_ev_t e;
             uint32_t i, room;
-            sq_materialize(p, squ.trk, squ.bar);   /* (a bar the track repeated: the repeats become its own first) */
             e.trk = squ.trk;
             e.bar = squ.bar;
             e.pos = (uint8_t)(squ.step * SQ_SU(p));
@@ -458,7 +454,6 @@ static void sq_follow_toggle(void)
 static void sq_erase_here(void)
 {
     sq_pat_t *p = sq_cur();
-    sq_materialize(p, squ.trk, squ.bar);
     if (squ.trk == SQ_DRUMS) {
         if (p->hit[squ.lane][squ.bar]) {
             p->hit[squ.lane][squ.bar] = 0;
@@ -501,19 +496,6 @@ static void sq_copy_track_bar(sq_pat_t *p, uint32_t trk, uint32_t from, uint32_t
                 e.len = (uint16_t)sq_room(p, &e);
             sq_put(p, &e);
         }
-}
-/* bar b of a track that repeats its first bars there (sq_src_bar): the repeats up to b become the track's own, so
- * an edit there changes that bar alone and everything sounds as it did (writing into a repeat lengthened the track,
- * and the bars between went silent) */
-static void sq_materialize(sq_pat_t *p, uint32_t trk, uint32_t b)
-{
-    uint32_t n, x;
-    if (sq_src_bar(p, trk, b) == b)
-        return;
-    n = sq_track_bars(p, trk);
-    for (x = p->start + n; x <= b; x++)
-        sq_copy_track_bar(p, trk, p->start + (x - p->start) % n, x);
-    sq_touch();
 }
 /* a pattern copied onto another letter (OCT+ held, ALGORITHM turned on the SEQUENCER, OCT+ let go): what the letter
  * had goes (REC held: back); the copy is shown */
@@ -561,7 +543,6 @@ static void sq_oct_poll(void)                    /* every frame: OCT+ let go in 
     sqh.busy = 0;                                /* (an action of its own) */
     sq_undo_poll();
     sq_touch();
-    sq_materialize(sq_cur(), squ.trk, squ.ofrom > squ.bar ? squ.ofrom : squ.bar);   /* (a bar repeated: real first) */
     sq_copy_track_bar(sq_cur(), squ.trk, squ.ofrom, squ.bar);
     str_cpy(m, "Bar ", sizeof m);
     kint(m + str_len(m), squ.ofrom + 1, 0);
@@ -610,7 +591,6 @@ static void sq_clear(void)
     sq_pat_t *p = sq_cur();
     if (squ.trk == SQ_DRUMS)
         return;
-    sq_materialize(p, squ.trk, squ.bar);
     sq_touch();
     {
         int i = sq_at(p, squ.trk, squ.bar, squ.step);
@@ -684,7 +664,6 @@ static int sq_key(int key, int down)             /* returns 1: the key is the se
         }
     } else if (i < SQ_ST(p)) {                   /* (a step: on, off) */
         uint32_t *h = &p->hit[squ.lane][squ.bar], m = 1u << i;
-        sq_materialize(p, SQ_DRUMS, squ.bar);
         *h ^= m;
         sq_touch();
         if ((*h & m) && !cf_sn.sq_on)
@@ -737,6 +716,7 @@ static void sq_rec_poll(void)
         squ.rr++;
         if (sq_empty(p) || bar >= SQ_BARS || !bt)
             continue;
+        bar = sq_trk_bar(p, trk, bar);           /* (a track shorter than the pattern: its own bar there) */
         st = sq_steps(p, trk, bar);
         step = (e.t * st + bt / 2u) / bt;
         if (e.kind == 2) {                       /* a chord ended: its length */
@@ -752,7 +732,7 @@ static void sq_rec_poll(void)
                 uint32_t s0 = sq_ev_start(p, &p->ev[i]), su = SQ_U / sq_steps(p, trk, squ.rbar), len;
                 int32_t d = (int32_t)(bar * SQ_U + e.t * SQ_U / bt) - (int32_t)s0;
                 if (d <= 0)
-                    d += (int32_t)(p->bars * SQ_U);
+                    d += (int32_t)(sq_tbars(p, trk) * SQ_U);
                 len = ((uint32_t)d + su / 2u) / su * su;
                 if (len > sq_room(p, &p->ev[i]))
                     len = sq_room(p, &p->ev[i]);
@@ -763,7 +743,7 @@ static void sq_rec_poll(void)
         }
         if (step >= st) {                        /* (late in the bar: the next bar's first step) */
             step = 0;
-            bar = bar + 1u < (uint32_t)p->start + p->bars ? bar + 1u : p->start;
+            bar = bar + 1u < (uint32_t)p->start + sq_tbars(p, trk) ? bar + 1u : p->start;
             st = sq_steps(p, trk, bar);
         }
         if (e.kind == 3) {
@@ -772,7 +752,6 @@ static void sq_rec_poll(void)
                     (unsigned)step, (unsigned)st, (unsigned)e.t);
 #endif
             if (trk == SQ_DRUMS && step < st) {
-                sq_materialize(p, trk, bar);
                 p->hit[e.n % SQ_NLANE][bar] |= 1u << step;
                 sq_touch();
             }
@@ -783,7 +762,6 @@ static void sq_rec_poll(void)
         {
             sq_ev_t v;
             uint32_t i, k;
-            sq_materialize(p, trk, bar);
             v.trk = (uint8_t)trk;
             v.bar = (uint8_t)bar;
             v.pos = (uint8_t)(step * (SQ_U / st));
@@ -1018,7 +996,7 @@ static void sq_knob_info(int k, cf_knob_t *o)
             kfmt(o->name, 12, sq_lane_label(squ.lane));
             kfmt(o->val, 14, SQ_KITS[p->dkit[squ.lane % SQ_NLANE] % SQ_NKIT].name);
         } else {
-            int i = sq_at(p, squ.trk, sq_src_bar(p, squ.trk, squ.bar), squ.step);   /* (what plays there) */
+            int i = sq_at(p, squ.trk, squ.bar, squ.step);
             uint32_t n = i >= 0 ? sq_len_steps(p, &p->ev[i]) : squ.len;
             kfmt(o->name, 12, "LENGTH");
             kint(o->val, (int)n, n > 1u ? " steps" : " step");
@@ -1037,13 +1015,13 @@ static void sq_knob_info(int k, cf_knob_t *o)
             kint(o->val, SQ_ST(p), 0);
         }
         break;
-    case 2: kfmt(o->name, 12, "BARS"); kint(o->val, p->bars, 0); break;
-    default: {                                   /* the window that plays: its first bar to its last */
+    case 2: kfmt(o->name, 12, "BARS"); kint(o->val, (int)sq_tbars(p, squ.trk), 0); break;   /* (the track's own) */
+    default: {                                   /* the window that plays: its first bar to the track's last */
         char b[8];
         kfmt(o->name, 12, "PLAYS");
         kint(o->val, p->start + 1, 0);
-        if (p->bars > 1u) {
-            kint(b, p->start + p->bars, 0);
+        if (sq_tbars(p, squ.trk) > 1u) {
+            kint(b, p->start + (int)sq_tbars(p, squ.trk), 0);
             str_cpy(o->val + str_len(o->val), "-", 2);
             str_cpy(o->val + str_len(o->val), b, 4);
         }
@@ -1055,8 +1033,6 @@ static void sq_knob_info(int k, cf_knob_t *o)
 static void sq_knob_turn(int k, int d)
 {
     sq_pat_t *p = sq_cur();
-    if (k != 2)
-        squ.k3_base = 0;
     if (cu.scr == SCR_SQED || (squ.pat == SQ_SONGPG && k < 2))
         sq_touch();
     if (cu.scr == SCR_SQ && squ.pat == SQ_SONGPG) {
@@ -1109,11 +1085,7 @@ static void sq_knob_turn(int k, int d)
         if (squ.trk == SQ_DRUMS) {
             sq_drum_kit_turn(p, d);
         } else {
-            int i = sq_at(p, squ.trk, sq_src_bar(p, squ.trk, squ.bar), squ.step);
-            if (i >= 0) {                        /* (a step the track repeats there: its own first) */
-                sq_materialize(p, squ.trk, squ.bar);
-                i = sq_at(p, squ.trk, squ.bar, squ.step);
-            }
+            int i = sq_at(p, squ.trk, squ.bar, squ.step);
             if (i >= 0) {                        /* the step under the cursor, and the next ones written (in whole
                                                   * steps of the grid; up to the next step) */
                 sq_ev_t *e = &p->ev[i];
@@ -1137,15 +1109,12 @@ static void sq_knob_turn(int k, int d)
             sq_set_steps(p, squ.trk, squ.bar, SQ_KS[i]);
         }
     } else if (k == 2) {
-        if (!squ.k3_base || cu.now - squ.k3_ms > 700u)   /* (a new turn: the phrase the new bars repeat) */
-            squ.k3_base = p->bars;
-        squ.k3_ms = cu.now;
-        sq_set_bars(p, (uint32_t)clampi(p->bars + d, 1, SQ_BARS), squ.k3_base);
+        sq_set_bars(p, squ.trk, (uint32_t)clampi((int)sq_tbars(p, squ.trk) + d, 1, SQ_BARS));
     } else {                                     /* K4: the window up and down a bar (the frame goes with it while it
                                                   * is in the window: the bar being worked on stays in sight) */
         int was = p->start, st = SQ_ST(p);
         sq_set_start(p, p->start + d);
-        if (sq_plays(p, (uint32_t)squ.bar - (uint32_t)(p->start - was)) && p->start != was) {
+        if (sq_trk_plays(p, squ.trk, (uint32_t)squ.bar - (uint32_t)(p->start - was)) && p->start != was) {
             squ.bar = (uint8_t)(squ.bar + (p->start - was));
             squ.step = (uint8_t)(squ.step * SQ_ST(p) / st);
         }
@@ -1243,7 +1212,7 @@ static int sq_keycap(int key, cf_keycap_t *o)    /* returns 1: the cap is the se
             kint(o->top, i * cs.beats / SQ_ST(p) + 1, 0);
         else
             kfmt(o->top, 8, ".");
-        o->style = (cu.keys >> key) & 1u ? KC_DOWN : (p->hit[squ.lane][sq_src_bar(p, SQ_DRUMS, squ.bar)] >> i) & 1u ? KC_ON :
+        o->style = (cu.keys >> key) & 1u ? KC_DOWN : (p->hit[squ.lane][squ.bar] >> i) & 1u ? KC_ON :
                    beat ? KC_ROOT : KC_OFF;
     } else {
         o->style = KC_OFF;

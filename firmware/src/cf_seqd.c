@@ -44,10 +44,15 @@ typedef struct {
 } sq_ev_t;
 
 typedef struct {
-    uint8_t bars;                                /* bars it plays, 1..8; 0: empty (never written) */
+    uint8_t bars;                                /* 0: empty (never written); else its first count of bars (how long
+                                                  * it plays: sq_len, its longest track's) */
     uint8_t start;                               /* the first of them: the bars start .. start + bars - 1 play, the
                                                   * others keep their steps (the screen's green side bars; K4 moves
                                                   * them up and down, the owner's mock-up) */
+    uint8_t tb[SQ_NTRK];                         /* each track's own bars from start (BARS in its editor): a shorter
+                                                  * track plays round under the longer ones, from start each time,
+                                                  * and an empty bar of it is silence (the owner, 2026-10-19: a bar of
+                                                  * chords goes on under two of drums; nothing is copied for it) */
     uint8_t steps[SQ_NTRK][SQ_BARS];             /* each track's steps a beat in each bar (its grid there: sq_steps) */
     uint8_t nev;
     uint8_t kit;                                 /* the drum kit (SQ_KITS) */
@@ -71,8 +76,8 @@ typedef struct {
 } sq_song_t;
 
 /* all of it in one block, as flash keeps it (cf_sequi.c: six objects of it) */
-#define SQ_MAGIC 0x33514643u                     /* "CFQ3" (CFQ2: 1/96 of a bar, the drums at 1/48; CFQ1: positions
-                                                  * in steps, a grid a bar) */
+#define SQ_MAGIC 0x34514643u                     /* "CFQ4" (CFQ3: one count of bars for every track; CFQ2: 1/96 of a
+                                                  * bar, the drums at 1/48; CFQ1: positions in steps, a grid a bar) */
 typedef struct {
     uint32_t magic, size, check;                 /* check: FNV-1a over what follows */
     sq_song_t song;
@@ -122,6 +127,8 @@ static void sq_fresh(sq_pat_t *p, uint32_t beats)
     p->follow = 1;
     p->bars = 4;
     p->start = 0;
+    for (l = 0; l < SQ_NTRK; l++)
+        p->tb[l] = 4;
     p->nev = 0;
     p->kit = 0;
     p->swing = 0;
@@ -290,82 +297,53 @@ static uint32_t sq_len_steps(const sq_pat_t *p, const sq_ev_t *e)
  * steps written next go by the new grid; a step off it stands between its marks) */
 static void sq_set_steps(sq_pat_t *p, uint32_t trk, uint32_t b, uint32_t k) { p->steps[trk][b] = (uint8_t)k; }
 
-static int sq_plays(const sq_pat_t *p, uint32_t b) { return b >= p->start && b < (uint32_t)p->start + p->bars; }
-
-/* a track's own bars in the window: up to its last bar with something in it (a step that starts or lasts there, a
- * drum hit), any count; a track shorter than the window plays round in it, from the window's top each time (a bar of
- * chords under two of drums repeats, and the other way round: the owner, 2026-10-19). An empty track: the window */
-static uint32_t sq_track_bars(const sq_pat_t *p, uint32_t trk)
+/* track trk's own bars (1 .. the grid from start) */
+static uint32_t sq_tbars(const sq_pat_t *p, uint32_t trk)
 {
-    uint32_t b0, i, l, last = 0;
-    for (b0 = 0; b0 < p->bars; b0++) {
-        uint32_t b = p->start + b0, has = 0;
-        if (b >= SQ_BARS)
-            break;
-        if (trk == SQ_DRUMS) {
-            for (l = 0; l < SQ_NLANE; l++)
-                has |= p->hit[l][b];
-        } else {
-            for (i = 0; i < p->nev && !has; i++) {
-                const sq_ev_t *e = &p->ev[i];
-                has = e->trk == trk && sq_ev_start(p, e) < (b + 1u) * SQ_U && sq_ev_end(p, e) > b * SQ_U;
-            }
-        }
-        if (has)
-            last = b0 + 1u;
-    }
-    return last ? last : (p->bars ? p->bars : 1u);
+    uint32_t n = p->tb[trk % SQ_NTRK];
+    return n < 1u ? 1u : n > SQ_BARS - p->start ? SQ_BARS - p->start : n;
 }
-/* the bar track trk plays at bar b of the window (b itself, or the one it repeats) */
-static uint32_t sq_src_bar(const sq_pat_t *p, uint32_t trk, uint32_t b)
+/* bar b is one of track trk's own (it plays) */
+static int sq_trk_plays(const sq_pat_t *p, uint32_t trk, uint32_t b)
 {
-    if (!sq_plays(p, b))
-        return b;
-    return p->start + (b - p->start) % sq_track_bars(p, trk);
+    return b >= p->start && b < p->start + sq_tbars(p, trk);
+}
+/* the bar track trk plays while the pattern is at its bar b: its own bars round from start */
+static uint32_t sq_trk_bar(const sq_pat_t *p, uint32_t trk, uint32_t b)
+{
+    return b < p->start ? b : p->start + (b - p->start) % sq_tbars(p, trk);
 }
 
-/* the bars played (K3): the window grows at its foot (at the grid's end, at its top); a bar that comes in for the
- * first time (nothing in it) is a copy of the phrase the window had when the turn began (base bars: 1-4 turned to 8
- * gives 5-8 a copy of 1-4, the owner's "duplicate the bars"), so a pattern grows by repeating itself and is then
- * changed (the bars let go keep what they had) */
-static void sq_copy_bar(sq_pat_t *p, uint32_t to, uint32_t from)
+/* the bars the pattern plays before it begins again: its longest track's with something in it (an empty track does
+ * not make it longer); nothing in it: its longest track's */
+static uint32_t sq_len(const sq_pat_t *p)
 {
-    uint32_t l, i, n = p->nev;
-    for (l = 0; l < SQ_NLANE; l++)
-        if (p->hit[l][to])
-            return;
-    for (i = 0; i < p->nev; i++)
-        if (p->ev[i].bar == to)
-            return;
-    for (l = 0; l < SQ_NTRK; l++)
-        p->steps[l][to] = p->steps[l][from];
-    for (l = 0; l < SQ_NLANE; l++)
-        p->hit[l][to] = p->hit[l][from];
-    for (i = 0; i < n; i++)
-        if (p->ev[i].bar == from && p->nev < SQ_NEV) {
-            sq_ev_t e = p->ev[i];
-            e.bar = (uint8_t)to;
-            p->ev[p->nev++] = e;
-        }
-}
-static void sq_set_bars(sq_pat_t *p, uint32_t n, uint32_t base)
-{
-    n = n < 1u ? 1u : n > SQ_BARS ? SQ_BARS : n;
-    base = base < 1u ? 1u : base;
-    while (p->bars < n) {
-        if (p->start + p->bars < SQ_BARS) {      /* (at its foot: the phrase again) */
-            sq_copy_bar(p, p->start + p->bars, p->start + p->bars % base);
-        } else {                                 /* (the grid's end: at its top) */
-            p->start--;
-            sq_copy_bar(p, p->start, p->start + 1u);
-        }
-        p->bars++;
+    uint32_t t, n = 0, all = 1;
+    for (t = 0; t < SQ_NTRK; t++) {
+        uint32_t k = sq_tbars(p, t);
+        if (k > all)
+            all = k;
+        if (k > n && (t == SQ_DRUMS ? sq_drums(p) : sq_count(p, t) > 0))
+            n = k;
     }
-    p->bars = (uint8_t)n;
+    return n ? n : all;
+}
+/* bar b is one the pattern plays */
+static int sq_plays(const sq_pat_t *p, uint32_t b) { return b >= p->start && b < p->start + sq_len(p); }
+/* track trk's bars (K3 in its editor): it grows at its foot, up to the grid's end; a bar that comes in has what it
+ * had (nothing: silence), the bars let go keep theirs. Nothing is copied or repeated into a bar by itself (the owner,
+ * 2026-10-19: "Повторы там вообще не нужны. Если там пусто, то играет пустота"; a bar written once had come out in
+ * the others): a copy is OCT+ held, SELECT turned */
+static void sq_set_bars(sq_pat_t *p, uint32_t trk, uint32_t n)
+{
+    p->tb[trk % SQ_NTRK] = (uint8_t)(n < 1u ? 1u : n > SQ_BARS - p->start ? SQ_BARS - p->start : n);
 }
 /* the window moved (K4): up or down a bar, its length kept */
 static void sq_set_start(sq_pat_t *p, int s)
 {
-    int hi = (int)SQ_BARS - p->bars;
+    int hi = (int)SQ_BARS, t;
+    for (t = 0; t < (int)SQ_NTRK; t++)            /* (every track's bars stay on the grid) */
+        if ((int)SQ_BARS - (int)sq_tbars(p, (uint32_t)t) < hi)
+            hi = (int)SQ_BARS - (int)sq_tbars(p, (uint32_t)t);
     p->start = (uint8_t)(s < 0 ? 0 : s > hi ? hi : s);
 }
