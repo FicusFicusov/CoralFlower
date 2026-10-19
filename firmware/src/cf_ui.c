@@ -1354,8 +1354,8 @@ static int sq_key_led(uint32_t k, uint8_t *lit, uint8_t *mid, uint8_t *dim, uint
         }
         if (i >= st)
             return 1;
-        if (cf_sn.sq_on && cf_sn.sq_pat == squ.pat && sq_plays(p, cf_sn.sq_bar) &&   /* (the song's too) */
-            sq_trk_bar(p, SQ_DRUMS, cf_sn.sq_bar) == squ.bar && cf_sn.sq_bt &&
+        if (cf_sn.sq_on && cf_sn.sq_pat == squ.pat &&   /* (the song's too) */
+            sq_trk_bar(p, SQ_DRUMS, cf_sn.sq_n) == squ.bar && cf_sn.sq_bt &&
             (int)(cf_sn.sq_t * (uint32_t)st / cf_sn.sq_bt) == i)
             cf_led(lit, id, 1);                  /* (the running light) */
         else if ((p->hit[squ.lane][squ.bar] >> i) & 1u)   /* (what plays in the bar) */

@@ -582,8 +582,10 @@ typedef struct {
     uint16_t loop_nev;
     uint8_t ext_clock;           /* MIDI clock in runs the beat */
     uint16_t ext_bpm;            /* .. at this tempo */
-    uint8_t sq_on, sq_song, sq_pat, sq_slot, sq_bar;   /* the sequencer: playing, the song, where */
+    uint8_t sq_on, sq_song, sq_pat, sq_slot, sq_bar;   /* the sequencer: playing, the song, where (bar: in the
+                                                        * pattern, 0 .. its length - 1) */
     uint32_t sq_t, sq_bt;        /* .. ticks into the bar, of the bar */
+    uint32_t sq_n;               /* .. bars since the pattern began (each track's bar: cf_seqd.c sq_trk_bar) */
     uint8_t sq_lit[SQ_NTRK];     /* .. each track's step that sounded last */
     uint32_t sq_lit_t[SQ_NTRK];  /* .. when */
     uint32_t sq_lane_t[SQ_NLANE];   /* .. each drum's last hit */
@@ -641,6 +643,7 @@ static void cf_snapshot(void)
     cf_sn.sq_pat = sqp.pat;
     cf_sn.sq_slot = sqp.slot;
     cf_sn.sq_bar = sqp.bar;
+    cf_sn.sq_n = sqp.nbar;
     cf_sn.sq_t = sqp.t;
     cf_sn.sq_bt = sqp_bar_ticks();
     for (i = 0; i < SQ_NTRK; i++) {

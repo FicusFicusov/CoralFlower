@@ -291,8 +291,8 @@ static void sq_firefly(int x, int y)
 }
 static void sq_play_marks(const sq_pat_t *p, uint32_t trk)
 {
-    int b = (int)sq_trk_bar(p, trk, cf_sn.sq_bar), y = SQG_Y0 + b * SQG_RH, k, cx, age;   /* (the track's bar) */
-    if (!sq_playing_here() || !sq_plays(p, cf_sn.sq_bar))
+    int b = (int)sq_trk_bar(p, trk, cf_sn.sq_n), y = SQG_Y0 + b * SQG_RH, k, cx, age;   /* (the track's bar) */
+    if (!sq_playing_here())
         return;
     sq_firefly(SQG_X0 + (int)(cf_sn.sq_t * (uint32_t)(SQG_X1 - SQG_X0) / cf_sn.sq_bt), y + 1);
     k = cf_sn.sq_lit[trk];                       /* (where it sounded: 1/96 of the bar) */
@@ -358,7 +358,7 @@ static void draw_sq_track(void)
         fb_signs(c, d, sizeof d);
         fb_text_r(&CF_FONT_UI, 232, Y_VIEW + 4, d, drums ? FL_C(sq_lane_ink(squ.lane).ramp, 0) : C_ACC(0), 1);
     }
-    sq_stalks(p->start, (int)sq_tbars(p, squ.trk));   /* (the track's own bars: the ones it plays, round) */
+    sq_stalks((int)sq_ts(p, squ.trk), (int)sq_tbars(p, squ.trk));   /* (the track's own bars: the ones it plays, round) */
     for (bar = 0; bar < (int)SQ_BARS; bar++) {
         int on = sq_trk_plays(p, squ.trk, (uint32_t)bar);
         if (drums)
@@ -428,7 +428,7 @@ static void sq_track_strip(const sq_pat_t *p, uint32_t trk, int x0, int ym, int 
                                                   * (the owner: in the middle of the row), what plays in it over it */
         int bx = x0 + b0 * w / nb, bw = w / nb - 2;
         int st;
-        b = p->start + b0;
+        b = (int)sq_ts(p, trk) + b0;
         st = (int)sq_steps(p, trk, (uint32_t)b);
         fb_rect(bx, ym - 2, bw, 4, FL_BG2);
         if (trk == SQ_DRUMS) {
@@ -532,9 +532,9 @@ static void draw_sq_tracks(void)
             continue;
         }
         sq_track_strip(p, r, 92, ym, SQT_W);
-        if (sq_playing_here() && sq_plays(p, cf_sn.sq_bar)) {   /* (where the time is: in the track's own bars) */
-            int bw = SQT_W / (int)sq_len(p), tb = (int)sq_trk_bar(p, (uint32_t)r, cf_sn.sq_bar);
-            fb_rect(92 + (tb - p->start) * bw + (int)(cf_sn.sq_t * (uint32_t)(bw - 2) / cf_sn.sq_bt), ym - 5, 1, 11,
+        if (sq_playing_here()) {                 /* (where the time is: in the track's own bars) */
+            int bw = SQT_W / (int)sq_len(p), tb = (int)sq_trk_bar(p, (uint32_t)r, cf_sn.sq_n);
+            fb_rect(92 + (tb - (int)sq_ts(p, (uint32_t)r)) * bw + (int)(cf_sn.sq_t * (uint32_t)(bw - 2) / cf_sn.sq_bt), ym - 5, 1, 11,
                     FL_C(FL_R_SAND, 0));
         }
     }
@@ -645,7 +645,7 @@ static void draw_sq_song(void)
         if (cf_sn.sq_on && cf_sn.sq_song && i == cf_sn.sq_slot) {   /* (playing: a firefly over it) */
             const sq_pat_t *pp = &sq_st.pat[g->pat[i] % SQ_NPAT];
             int w = sq_block_w(g->pat[i]) - 4;
-            int f = pp->bars && cf_sn.sq_bt ? ((cf_sn.sq_bar - pp->start) * w + (int)(cf_sn.sq_t * (uint32_t)w / cf_sn.sq_bt)) /
+            int f = pp->bars && cf_sn.sq_bt ? (cf_sn.sq_bar * w + (int)(cf_sn.sq_t * (uint32_t)w / cf_sn.sq_bt)) /
                                               (int)sq_len(pp) : 0;
             sq_firefly(bx[i] + 2 + f, y - 3);
         }

@@ -26,7 +26,10 @@ static const uint8_t SQ_LANE_NOTE[SQ_NLANE] = {36, 38, 39, 42, 46, 43, 47, 50, 3
 
 static struct {
     uint8_t on, song;            /* playing; the song (else the one pattern, round) */
-    uint8_t pat, slot, bar;      /* where */
+    uint8_t pat, slot, bar;      /* where (bar: in the pattern, 0 .. its length - 1: nbar round it) */
+    uint32_t nbar;               /* bars since the pattern began (on and on while it plays round; 0 at a new one) */
+    uint8_t sb[SQ_NTRK];         /* .. the bar each track plays in this one (sq_trk_bar, taken as the bar begins:
+                                  * BARS turned while it plays counts from the next bar line) */
     uint32_t t, acc;             /* ticks into the bar; the clock's samples x bpm */
     uint8_t nu;                  /* the next place in the bar (1/24 of a beat) whose steps have not sounded yet */
     uint8_t nh;                  /* .. the drums' next step */
@@ -165,12 +168,12 @@ static uint32_t sqp_drum_tick(const sq_pat_t *p, uint32_t i)
  * shorter than the pattern plays its own bars round (sq_trk_bar) */
 static void sqp_fire(const sq_pat_t *p, uint32_t tk, uint32_t u)
 {
-    uint32_t i, b = sq_trk_bar(p, tk, sqp.bar);
+    uint32_t i, b = sqp.sb[tk];
     if (tk == SQ_DRUMS) {
         uint32_t l, any = 0, h = u;
         for (l = 0; l < SQ_NLANE; l++)
             if ((p->hit[l][b] >> h) & 1u) {
-                if (sqp.dsk[l] == h + 1u && sqp.dskb[l] == sqp.bar && sqp.dskp[l] == sqp.pat) {
+                if (sqp.dsk[l] == h + 1u && sqp.dskb[l] == (uint8_t)sqp.nbar && sqp.dskp[l] == sqp.pat) {
                     sqp.dsk[l] = 0;              /* (struck by hand a moment ago, in the take: once is enough) */
                     continue;
                 }
@@ -307,15 +310,28 @@ static void sqp_now(void)
 }
 
 /* the next bar: the pattern's next, or the song's next pattern (an empty one passed over) */
+static void sqp_bars(void)                       /* a bar begins: the bar each track plays in it */
+{
+    const sq_pat_t *p = &sq_st.pat[sqp.pat % SQ_NPAT];
+    uint32_t k;
+    for (k = 0; k < SQ_NTRK; k++)
+        sqp.sb[k] = (uint8_t)sq_trk_bar(p, k, sqp.nbar);
+}
 static void sqp_next_bar(void)
 {
     const sq_pat_t *p = &sq_st.pat[sqp.pat % SQ_NPAT];
-    uint32_t i;
+    uint32_t i, len = sq_len(p);
     sqp.t = 0;                                   /* (what sounds lasts on over the bar line: its own count) */
     sqp.nu = sqp.nh = 0;
-    if (++sqp.bar < p->start + sq_len(p) && sqp.bar >= p->start && sqp.next == 0xFFu)
-        return;                                  /* (the window moved under it: back to its top) */
-    sqp.bar = p->start;
+    if (sqp.next == 0xFFu && (!sqp.song || !sq_st.song.n || sqp.nbar + 1u < len)) {   /* it goes on: alone, round and
+                                                  * round (each track on its own length); in the song, to its end */
+        sqp.nbar++;
+        sqp.bar = (uint8_t)(sqp.nbar % len);
+        sqp_bars();
+        return;
+    }
+    sqp.nbar = 0;
+    sqp.bar = 0;
     if (sqp.next != 0xFFu) {                     /* another pattern picked (the song: PLAY on it): it comes in now */
         if (sqp.next >= SQ_NPAT && sq_st.song.n) {
             sqp.song = 1;
@@ -326,18 +342,16 @@ static void sqp_next_bar(void)
             sqp.pat = sqp.next;
         }
         sqp.next = 0xFF;
-        sqp.bar = sq_st.pat[sqp.pat].start;
+        sqp_bars();
         return;
     }
-    if (!sqp.song || !sq_st.song.n)
-        return;
     for (i = 0; i < sq_st.song.n; i++) {            /* (at most once round: a song of empty patterns stays put) */
         sqp.slot = (uint8_t)((sqp.slot + 1u) % sq_st.song.n);
         sqp.pat = sq_st.song.pat[sqp.slot] % SQ_NPAT;
         if (!sq_empty(&sq_st.pat[sqp.pat]))
             break;
     }
-    sqp.bar = sq_st.pat[sqp.pat].start;
+    sqp_bars();
 }
 
 static void sqp_drum_offs(void)                  /* the drums' MIDI notes of the last tick go off */
@@ -361,7 +375,7 @@ static void sqp_rec_watch(void)
     if (sqp.cin >= SQ_PPQN / 4u)                 /* (the count-in: only its last sixteenth counts, as the first step) */
         return;
     e.pat = sqp.pat;
-    e.bar = sqp.bar;
+    e.bar = sqp.sb[sqp.rec % SQ_NTRK];           /* (the take's track's own bar) */
     e.t = sqp.cin ? 0u : sqp.t;
     if (sqp.ropen) {
         e.kind = 2;
@@ -427,7 +441,7 @@ static void sqp_stop(void)
         sqr_ev_t e;
         e.kind = 2;
         e.pat = sqp.pat;
-        e.bar = sqp.bar;
+        e.bar = sqp.sb[sqp.rec % SQ_NTRK];
         e.t = sqp.t;
         e.dur = sqp.rheld;
         sqp_rpush(&e);
@@ -454,7 +468,9 @@ static void sqp_begin(uint32_t pat, uint32_t slot, int cin)
     }
     for (i = 0; i < SQ_NLANE; i++)
         sqp.dsk[i] = 0;
-    sqp.bar = sq_st.pat[sqp.pat].start;
+    sqp.bar = 0;
+    sqp.nbar = 0;
+    sqp_bars();
     sqp.t = 0;
     sqp.acc = 0;
     sqp.nu = sqp.nh = 0;
@@ -519,7 +535,7 @@ static void sqp_rec_stop(void)                   /* REC again: the take ends, th
         sqr_ev_t e;
         e.kind = 2;
         e.pat = sqp.pat;
-        e.bar = sqp.bar;
+        e.bar = sqp.sb[sqp.rec % SQ_NTRK];
         e.t = sqp.t;
         e.dur = sqp.rheld;
         sqp_rpush(&e);
@@ -542,7 +558,7 @@ static void sqp_audition(uint32_t lane, uint32_t kit)   /* kit: the drum's */
         e.kind = 3;
         e.n = (uint8_t)l;
         e.pat = sqp.pat;
-        e.bar = sqp.bar;
+        e.bar = sqp.sb[SQ_DRUMS];
         e.t = sqp.cin ? 0u : sqp.t;
         e.h = 0;
         for (h = 0; h <= sd; h++) {              /* (the nearest step as it plays: SWING's late ones late) */
@@ -554,7 +570,7 @@ static void sqp_audition(uint32_t lane, uint32_t kit)   /* kit: the drum's */
         }
         if (e.h >= sqp.nh) {                     /* (a step still to come: it is not struck again there) */
             sqp.dsk[l] = (uint8_t)(e.h < sd ? e.h + 1u : 1u);
-            sqp.dskb[l] = (uint8_t)(e.h < sd ? sqp.bar : sqp.bar + 1u < p->start + sq_len(p) ? sqp.bar + 1u : p->start);
+            sqp.dskb[l] = (uint8_t)(sqp.nbar + (e.h < sd ? 0u : 1u));   /* (the bar: nbar's low byte) */
             sqp.dskp[l] = sqp.pat;
         }
         sqp_rpush(&e);

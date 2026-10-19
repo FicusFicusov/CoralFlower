@@ -280,14 +280,14 @@ static void sq_drum_kit_turn(sq_pat_t *p, int d)
  * owner, 2026-10-19: "то вверх перемещает то влево вправо — кринж") */
 static uint32_t sq_own_bar(const sq_pat_t *p, int b, int d)
 {
-    int lo = p->start, n = (int)sq_tbars(p, squ.trk);
+    int lo = (int)sq_ts(p, squ.trk), n = (int)sq_tbars(p, squ.trk);
     return (uint32_t)(lo + wrapi(b - lo + d, n));
 }
 static void sq_clamp(void)
 {
     sq_pat_t *p = sq_cur();
     if (!sq_trk_plays(p, squ.trk, squ.bar))      /* (the frame stays in the track's own bars) */
-        squ.bar = (uint8_t)(squ.bar < p->start ? p->start : p->start + sq_tbars(p, squ.trk) - 1u);
+        squ.bar = (uint8_t)(squ.bar < sq_ts(p, squ.trk) ? sq_ts(p, squ.trk) : sq_ts(p, squ.trk) + sq_tbars(p, squ.trk) - 1u);
     if (squ.step >= SQ_ST(p))
         squ.step = (uint8_t)(SQ_ST(p) - 1u);
 }
@@ -741,8 +741,7 @@ static void sq_rec_poll(void)
         squ.rr++;
         if (sq_empty(p) || bar >= SQ_BARS || !bt)
             continue;
-        bar = sq_trk_bar(p, trk, bar);           /* (a track shorter than the pattern: its own bar there) */
-        st = sq_steps(p, trk, bar);
+        st = sq_steps(p, trk, bar);              /* (bar: the track's own) */
         step = (e.t * st + bt / 2u) / bt;
         if (e.kind == 2) {                       /* a chord ended: its length */
             int i;
@@ -769,7 +768,7 @@ static void sq_rec_poll(void)
             step = e.h;                          /* (the drums: the step the ISR found, SWING's late ones late) */
         if (step >= st) {                        /* (late in the bar: the next bar's first step) */
             step = 0;
-            bar = bar + 1u < (uint32_t)p->start + sq_tbars(p, trk) ? bar + 1u : p->start;
+            bar = bar + 1u < sq_ts(p, trk) + sq_tbars(p, trk) ? bar + 1u : sq_ts(p, trk);
             st = sq_steps(p, trk, bar);
         }
         if (e.kind == 3) {
@@ -1042,9 +1041,9 @@ static void sq_knob_info(int k, cf_knob_t *o)
     default: {                                   /* the window that plays: its first bar to the track's last */
         char b[8];
         kfmt(o->name, 12, "PLAYS");
-        kint(o->val, p->start + 1, 0);
+        kint(o->val, (int)sq_ts(p, squ.trk) + 1, 0);
         if (sq_tbars(p, squ.trk) > 1u) {
-            kint(b, p->start + (int)sq_tbars(p, squ.trk), 0);
+            kint(b, (int)(sq_ts(p, squ.trk) + sq_tbars(p, squ.trk)), 0);
             str_cpy(o->val + str_len(o->val), "-", 2);
             str_cpy(o->val + str_len(o->val), b, 4);
         }
@@ -1135,10 +1134,10 @@ static void sq_knob_turn(int k, int d)
         sq_set_bars(p, squ.trk, (uint32_t)clampi((int)sq_tbars(p, squ.trk) + d, 1, SQ_BARS));
     } else {                                     /* K4: the window up and down a bar (the frame goes with it while it
                                                   * is in the window: the bar being worked on stays in sight) */
-        int was = p->start, st = SQ_ST(p), in = sq_trk_plays(p, squ.trk, squ.bar);   /* (in the window before) */
-        sq_set_start(p, p->start + d);
-        if (in && p->start != was) {
-            squ.bar = (uint8_t)(squ.bar + (p->start - was));
+        int was = (int)sq_ts(p, squ.trk), st = SQ_ST(p), in = sq_trk_plays(p, squ.trk, squ.bar);   /* (in it before) */
+        sq_set_start(p, squ.trk, was + d);
+        if (in && (int)sq_ts(p, squ.trk) != was) {
+            squ.bar = (uint8_t)(squ.bar + ((int)sq_ts(p, squ.trk) - was));
             squ.step = (uint8_t)(squ.step * SQ_ST(p) / st);
         }
     }
