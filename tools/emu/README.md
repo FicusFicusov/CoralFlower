@@ -235,8 +235,8 @@ SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy build/host/emu --no-midi --demo --qu
 module played from a web page (no Emscripten JS runtime, no COOP/COEP headers: it runs on GitHub Pages):
 
 ```sh
-sh tools/emu/web/build_web.sh          # -> build/emu-web/{index.html, emu.js, keymap.js, worklet.js, choralroot.wasm}
-node tools/emu/web/test_web_emu.mjs    # boots the wasm in node, plays scripts/cr_dmaj.txt, compares with build/host/emu
+sh tools/emu/web/build_web.sh          # -> build/emu-web/{index.html, emu.js, keymap.js, worklet.js, coralflower.wasm}
+node tools/emu/web/test_web_emu.mjs    # boots the wasm in node, plays its script, compares with tools/emu/cf_headless.sh
 ```
 
 Needs `emcc` (the Emscripten SDK; `~/emsdk/emsdk_env.sh` is sourced when it is not on the PATH); `CR_VERSION=1.0`
