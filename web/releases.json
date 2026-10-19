@@ -1,6 +1,19 @@
 {
  "releases": [
   {
+   "version": "0.3.1",
+   "tag": "v0.3.1",
+   "sha256": "198fb92550bc02a47e6cf5c0f14f97349c6ed7fc284d5387d812464b68856dd5",
+   "pkg": "coralflower-0.3.1.fwsc",
+   "date": "2026-10-19",
+   "title": "Patterns in the backup",
+   "notes": [
+    "A backup now holds the sequencer's patterns and song, with your sounds, settings and loop.",
+    "Restore brings the patterns back. Backups made with 0.3 don't have them.",
+    "After an install, the page says where to make a backup."
+   ]
+  },
+  {
    "version": "0.3",
    "tag": "v0.3",
    "sha256": "b4220d95cc1088b9ca57d93e359fe2a4817c01981bc2363bfe32a7892c84d1bb",
