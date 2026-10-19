@@ -58,6 +58,8 @@ static drum_lane_t drum_kit[DRUM_NPART][DV_NLANE] __attribute__((section(".pool"
  * hit (CoralFlower's sequencer: a kit a drum, kits mixed), instead of the part's E1..E8 */
 #ifdef DRUM_LANE_KNOBS
 static int16_t drum_lane_knobs[DRUM_NPART][DV_NLANE][8];
+static uint8_t drum_lane_att[DRUM_NPART][DV_NLANE];   /* .. and its level taken down from the design's: 100 - LEVEL %
+                                                       * (0: as designed; CoralFlower: a drum's level, K2) */
 #endif
 /* knob i (0 KIT .. 7 DRV) of lane `lane` of the part t plays */
 static int32_t drum_knob(const track_t *t, uint32_t lane, uint32_t i)
@@ -265,6 +267,10 @@ static void drum_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const 
         n = CTL;
     r = L->role;
     dv_default(&k, r);                                   /* the knobs move every lane from its design (64) */
+#ifdef DRUM_LANE_KNOBS
+    if (t >= &trk[DRUM_PART0] && t < &trk[DRUM_PART0 + DRUM_NPART])   /* (the lane's own level) */
+        k.level = (uint8_t)(100u - drum_lane_att[t - trk - DRUM_PART0][(uint32_t)(L - drum_kit_of(t)) % DV_NLANE]);
+#endif
     k.decay = (uint8_t)clamp(k.decay + e[3] - 64, 0, 127);
     k.tone = (uint8_t)clamp(k.tone + e[2] - 64, 0, 127);
     k.extra = (uint8_t)clamp(k.extra + e[4] - 64, 0, 127);

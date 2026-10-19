@@ -159,11 +159,12 @@ static void sqp_bass_on(const uint8_t *b, uint32_t n, uint32_t left)
 
 /* drum l in kit k: the DRUM engine's eight knobs (SQ_KITS) on the engine's lane that plays it (eng_drum.c
  * DRUM_LANE_KNOBS), before its hit */
-static void sqp_lane_kit(uint32_t l, uint32_t k)
+static void sqp_lane_kit(uint32_t l, uint32_t k, uint32_t lvl)   /* lvl: its level, 0..100 % */
 {
     uint32_t i, el = drum_lane(SQ_LANE_NOTE[l % SQ_NLANE]);
     for (i = 0; i < 8u; i++)
         drum_lane_knobs[0][el][i] = (int16_t)SQ_KITS[k % SQ_NKIT].e[i];
+    drum_lane_att[0][el] = (uint8_t)(100u - (lvl < 100u ? lvl : 100u));
 }
 
 /* ARP on a track (CHORDS, LAYER; the ARP button in its editor: the owner, 2026-10-19): its steps are played by an
@@ -230,7 +231,7 @@ static void sqp_fire(const sq_pat_t *p, uint32_t tk, uint32_t u)
                     sqp.dsk[l] = 0;              /* (struck by hand a moment ago, in the take: once is enough) */
                     continue;
                 }
-                sqp_lane_kit(l, p->dkit[l]);     /* (its kit) */
+                sqp_lane_kit(l, p->dkit[l], p->dlev[l]);   /* (its kit, its level) */
                 trk_note_on(&trk[CF_PART_DRUM], SQ_LANE_NOTE[l], 100);
                 cfp_midi(0x90u, cfp_ch(CF_PART_DRUM), SQ_LANE_NOTE[l], 100);
                 sqp.doff |= (uint16_t)(1u << l);
@@ -621,9 +622,9 @@ static void sqp_rec_stop(void)                   /* REC again: the take ends, th
 }
 
 /* a drum heard at once (the DRUMS screen: a drum picked, a step set); in a take on DRUMS, a hit there too */
-static void sqp_audition(uint32_t lane, uint32_t kit)   /* kit: the drum's */
+static void sqp_audition(uint32_t lane, uint32_t kit)   /* kit: the drum's, its level 0..100 % above it (bits 8-15) */
 {
-    sqp_lane_kit(lane, kit);
+    sqp_lane_kit(lane, kit & 0xFFu, (kit >> 8) & 0xFFu);
     sqp.lane_t[lane % SQ_NLANE] = cf_now_ms;
     if (sqp.rec == SQ_DRUMS && sqp.on && sqp.cin < SQ_PPQN / 4u) {   /* (the take: where it fell; in the count-in's last
                                                                        * sixteenth, the first step) */

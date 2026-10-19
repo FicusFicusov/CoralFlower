@@ -171,16 +171,41 @@ static void sq_defaults(void)
         b[i] = 0;
     sq_st.song.n = 0;                            /* (an empty song: the page says how to add to it) */
 }
+/* a CFQ5 store read in (0.3-rc5 .. rc8: no drum levels, each pattern 12 bytes shorter): the patterns moved to their
+ * places, the last first, every drum at 100 %, written again at the next save. 1: it was one */
+static int sq_from_v5(uint32_t len)
+{
+    uint8_t *b = (uint8_t *)sq_st.pat;
+    uint32_t i, l, j, osz = __builtin_offsetof(sq_store_t, pat) + SQ_NPAT * SQ_PAT5;
+    if (len != osz || sq_st.magic != SQ_MAGIC5 || sq_st.size != osz ||
+        sq_st.check != cfs_fnv(&sq_st.song, osz - __builtin_offsetof(sq_store_t, song)) || sq_st.song.n > SQ_SONG)
+        return 0;
+    for (i = SQ_NPAT; i-- > 0;) {
+        memmove(b + i * sizeof(sq_pat_t), b + i * SQ_PAT5, SQ_PAT5);
+        for (j = SQ_PAT5; j < sizeof(sq_pat_t); j++)
+            b[i * sizeof(sq_pat_t) + j] = 0;
+        for (l = 0; l < SQ_NLANE; l++)
+            sq_st.pat[i].dlev[l] = 100;
+    }
+    sq_st.magic = SQ_MAGIC;
+    sq_st.size = sizeof sq_st;
+    sq_dirty = 1;
+    return 1;
+}
 static void sq_load(void)                        /* power-on */
 {
-    uint32_t k, got = 0;
+    uint32_t k, got = 0, len = 0;
     int ok = 1;
     for (k = 0; k < SQ_NCHUNK && sq_chunk_len(k); k++) {
         int n = st_load(OBJ_CFSEQ0 + k, (uint8_t *)&sq_st + k * SQ_CHUNK, sq_chunk_len(k));
         ok &= n == (int)sq_chunk_len(k);
         got |= (uint32_t)(n == (int)sq_chunk_len(k)) << k;
+        if (n > 0 && len == k * SQ_CHUNK)        /* (read in a row from the start: an older, shorter store too) */
+            len += (uint32_t)n;
     }
-    if (!ok || sq_st.magic != SQ_MAGIC || sq_st.size != sizeof sq_st ||
+    if (!ok && sq_from_v5(len))                  /* (the patterns kept; every object written again) */
+        got = 0;
+    else if (!ok || sq_st.magic != SQ_MAGIC || sq_st.size != sizeof sq_st ||
         sq_st.check != cfs_fnv(&sq_st.song, sizeof sq_st - __builtin_offsetof(sq_store_t, song)) ||
         sq_st.song.n > SQ_SONG)
         sq_defaults();
@@ -281,6 +306,12 @@ static const char *sq_kit_name(const sq_pat_t *p)
 }
 /* the kit turned whole (PRESETS on DRUMS, KIT on SEQUENCER): every drum in the next kit, the drum picked heard in it
  * while nothing plays */
+/* drum l heard now (its kit, its level) */
+static void sq_hear(const sq_pat_t *p, uint32_t l)
+{
+    l %= SQ_NLANE;
+    cf_post(CFE_SEQ, 2, l, (int)(p->dkit[l] | (uint32_t)(p->dlev[l] > 100u ? 100u : p->dlev[l]) << 8));
+}
 static void sq_kit_turn(sq_pat_t *p, int d)
 {
     uint32_t l;
@@ -289,7 +320,7 @@ static void sq_kit_turn(sq_pat_t *p, int d)
         p->dkit[l] = p->kit;
     sq_touch();
     if (!cf_sn.sq_on)
-        cf_post(CFE_SEQ, 2, squ.lane, p->kit);
+        sq_hear(p, squ.lane);
 }
 /* the drum picked in another kit (K1 in DRUMS: kits mixed, a kick of 808 under a snare of 909), heard */
 static void sq_drum_kit_turn(sq_pat_t *p, int d)
@@ -298,7 +329,16 @@ static void sq_drum_kit_turn(sq_pat_t *p, int d)
     p->dkit[l] = (uint8_t)clampi(p->dkit[l] + d, 0, (int)SQ_NKIT - 1);
     sq_touch();
     if (!cf_sn.sq_on)
-        cf_post(CFE_SEQ, 2, l, p->dkit[l]);
+        sq_hear(p, l);
+}
+/* the drum picked louder or softer (K2 in DRUMS, 5 % a detent: the owner, 2026-10-19), heard */
+static void sq_drum_level_turn(sq_pat_t *p, int d)
+{
+    uint32_t l = squ.lane % SQ_NLANE;
+    p->dlev[l] = (uint8_t)clampi((p->dlev[l] > 100u ? 100 : p->dlev[l]) + d * 5, 0, 100);
+    sq_touch();
+    if (!cf_sn.sq_on)
+        sq_hear(p, l);
 }
 
 /* the bar d bars from b in the open track's own bars, round (the frame walks only the bars the track plays: below
@@ -711,15 +751,14 @@ static int sq_key(int key, int down)             /* returns 1: the key is the se
     if (cf_key_is_upper(key)) {
         if (i < (int)SQ_NLANE) {
             squ.lane = (uint8_t)i;
-            cf_post(CFE_SEQ, 2, squ.lane, p->dkit[squ.lane % SQ_NLANE]);   /* (the drum heard as it is picked) */
+            sq_hear(p, squ.lane);                /* (the drum heard as it is picked) */
         }
     } else if (i < SQ_ST(p)) {                   /* (a step: on, off) */
         uint32_t *h = &p->hit[squ.lane][squ.bar], m = 1u << i;
         *h ^= m;
         sq_touch();
         if ((*h & m) && !cf_sn.sq_on)
-            cf_post(CFE_SEQ, 2, squ.lane, p->dkit[squ.lane % SQ_NLANE]);   /* (a step set: heard, while nothing
-                                                                             * plays) */
+            sq_hear(p, squ.lane);                /* (a step set: heard, while nothing plays) */
     }
     return 1;
 }
@@ -1017,8 +1056,20 @@ static void sq_knob_info(int k, cf_knob_t *o)
             }
             break;
         case 2:
+            if (t == SQ_DRUMS) {                 /* (DRUMS have no key: their SWING here, K2 in their editor is
+                                                  * the drum's level) */
+                kfmt(o->name, 12, "SWING");
+                if (sq_empty(p))
+                    kfmt(o->val, 14, "-"), o->dis = 1;
+                else if (p->swing)
+                    kint(o->val, p->swing, "%");
+                else
+                    kfmt(o->val, 14, "Off");
+                o->bar = (int16_t)(sq_empty(p) ? -1 : p->swing * 255 / 100);
+                break;
+            }
             kfmt(o->name, 12, "KEY");
-            if (sq_empty(p) || t == SQ_DRUMS) {
+            if (sq_empty(p)) {
                 kfmt(o->val, 14, "-");
                 o->dis = 1;
             } else if (p->follow) {
@@ -1051,13 +1102,17 @@ static void sq_knob_info(int k, cf_knob_t *o)
         }
         break;
     case 1:
-        if (squ.trk == SQ_DRUMS) {               /* (the drums: 16 steps, the keys; their groove here) */
-            kfmt(o->name, 12, "SWING");
-            if (p->swing)
-                kint(o->val, p->swing, "%");
+        if (squ.trk == SQ_DRUMS) {               /* (the drum picked: its level, by its kit on K1; SWING is on the
+                                                  * SEQUENCER's DRUMS row) */
+            uint32_t v = p->dlev[squ.lane % SQ_NLANE];
+            kfmt(o->name, 12, "LEVEL");
+            if (v > 100u)
+                v = 100u;
+            if (v)
+                kint(o->val, (int)v, "%");
             else
                 kfmt(o->val, 14, "Off");
-            o->bar = (int16_t)(p->swing * 255 / 100);
+            o->bar = (int16_t)(v * 255u / 100u);
         } else {
             kfmt(o->name, 12, "STEPS");
             kint(o->val, SQ_ST(p), 0);
@@ -1120,8 +1175,13 @@ static void sq_knob_turn(int k, int d)
                 if (cs.env_link && part != CF_PART_LAYER)   /* (as PRESETS / SELECT do) */
                     cf_env_follow();
             }
+        } else if (k == 2 && t == SQ_DRUMS) {    /* DRUMS: SWING, 5 % a detent */
+            if (!sq_empty(p)) {
+                sq_touch();
+                p->swing = (uint8_t)clampi(p->swing + d * 5, 0, 100);
+            }
         } else if (k == 2) {                     /* KEY: to the right it follows HOME's, to the left it stays */
-            if (t != SQ_DRUMS && (d > 0) != (p->follow != 0))
+            if ((d > 0) != (p->follow != 0))
                 sq_follow_toggle();
         } else {
             sq_st.song.mute ^= (uint8_t)(1u << t);
@@ -1145,8 +1205,8 @@ static void sq_knob_turn(int k, int d)
                 squ.len = (uint8_t)clampi(squ.len + d, 1, SQ_ST(p));
             }
         }
-    } else if (k == 1 && squ.trk == SQ_DRUMS) {  /* SWING, 5 % a detent */
-        p->swing = (uint8_t)clampi(p->swing + d * 5, 0, 100);
+    } else if (k == 1 && squ.trk == SQ_DRUMS) {  /* the drum's level */
+        sq_drum_level_turn(p, d);
     } else if (k == 1) {
         int i, st = SQ_ST(p), k = (int)sq_kbeat(p, squ.trk, squ.bar);   /* (steps a beat as it plays: 1 2 3 4 6 8) */
         for (i = 0; i < SQ_NKS && SQ_KS[i] != k; i++)

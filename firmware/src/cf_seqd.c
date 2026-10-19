@@ -70,6 +70,8 @@ typedef struct {
                                                   * editor; in what was a padding byte after SWING: CFQ5 kept) */
     uint32_t hit[SQ_NLANE][SQ_BARS];             /* lane l, bar b: bit i, a hit on the drums' step i (sq_dsteps) */
     sq_ev_t ev[SQ_NEV];
+    uint8_t dlev[SQ_NLANE];                      /* each drum's level, 0..100 % (K2 in the DRUMS editor: the owner,
+                                                  * 2026-10-19). Last: a CFQ5 pattern is this one without it */
 } sq_pat_t;
 
 typedef struct {
@@ -78,12 +80,14 @@ typedef struct {
     uint8_t mute;                                /* bit t: track t is silent (every pattern) */
 } sq_song_t;
 
-_Static_assert(sizeof(sq_pat_t) == 2524u, "CFQ5's pattern layout (a change: a new magic)");
-
 /* all of it in one block, as flash keeps it (cf_sequi.c: six objects of it) */
-#define SQ_MAGIC 0x35514643u                     /* "CFQ5" (CFQ4: one first bar for every track; CFQ3: one count of
-                                                  * bars; CFQ2: 1/96 of a bar, the drums at 1/48; CFQ1: positions in
-                                                  * steps, a grid a bar) */
+#define SQ_MAGIC 0x36514643u                     /* "CFQ6" (CFQ5: no drum levels, read in: sq_load; CFQ4: one first
+                                                  * bar for every track; CFQ3: one count of bars; CFQ2: 1/96 of a bar,
+                                                  * the drums at 1/48; CFQ1: positions in steps, a grid a bar) */
+#define SQ_MAGIC5 0x35514643u                    /* "CFQ5" */
+#define SQ_PAT5 2524u                            /* .. its pattern's size: this one's up to dlev */
+_Static_assert(sizeof(sq_pat_t) == 2536u && __builtin_offsetof(sq_pat_t, dlev) == SQ_PAT5,
+               "CFQ6's pattern layout, CFQ5's up to dlev (a change: a new magic)");
 typedef struct {
     uint32_t magic, size, check;                 /* check: FNV-1a over what follows */
     sq_song_t song;
@@ -161,6 +165,8 @@ static void sq_fresh(sq_pat_t *p, uint32_t beats)
     p->kit = 0;
     p->swing = 0;
     p->arp = 0;
+    for (l = 0; l < SQ_NLANE; l++)
+        p->dlev[l] = 100;
     for (l = 0; l < SQ_NLANE; l++)
         p->dkit[l] = 0;
     for (b = 0; b < SQ_BARS; b++) {
