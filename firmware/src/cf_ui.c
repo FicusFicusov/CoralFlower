@@ -122,6 +122,8 @@ static void kpc(char *b, int pc)
 static void cv_turned(int d);
 #include "cf_sequi.c"                            /* (the SEQUENCER screens' controls) */
 
+/* EDIT's part keys, as printed on the unit: MONO (upper key 8) the bass, POLY (9) the chords, the next (10) the LAYER */
+static uint32_t edit_key_part(int u) { return u == 8 ? CF_PART_BASS : u == 9 ? CF_PART_CHORD : CF_PART_LAYER; }
 static uint32_t env_part(void)
 {
     return cu.env_tgt == 2u ? CF_PART_BASS : cu.env_tgt == 3u ? CF_PART_LAYER : CF_PART_CHORD;
@@ -1137,7 +1139,7 @@ static void ui_note_key(int key, int down)
     int idx;
     if (sq_key(key, down))                       /* (DRUMS: the keys pick the drum and set the steps) */
         return;
-    if (cu.scr == SCR_EDIT && cf_key_is_upper(key)) {   /* EDIT: OP1..OP6 PIT GLO pick, MONO / POLY: chord / bass */
+    if (cu.scr == SCR_EDIT && cf_key_is_upper(key)) {   /* EDIT: OP1..OP6 PIT GLO pick, MONO / POLY: bass / chords */
         int u = 0, k;
         for (k = 0; k < key; k++)
             u += cf_key_is_upper(k);
@@ -1145,8 +1147,9 @@ static void ui_note_key(int key, int down)
             if (u < CFE_NSEC) {
                 cu.edit_sec = (uint8_t)u;
                 cu.page[SCR_EDIT] = (uint8_t)clampi(cu.page[SCR_EDIT], 0, (int)cfe_npages(cu.edit_part, (uint32_t)u) - 1);
-            } else if (u >= 8 && u <= 10) {      /* the chord's sound, the bass's, the LAYER's */
-                cu.edit_part = (uint8_t)(u - 8);
+            } else if (u >= 8 && u <= 10) {      /* MONO the bass's sound, POLY the chord's (the keys' print: the
+                                                  * owner, 2026-10-19), the next the LAYER's */
+                cu.edit_part = (uint8_t)edit_key_part(u);
                 cu.page[SCR_EDIT] = 0;
                 cf_send_config();                /* (the keys play the sound edited: the LAYER's too) */
             }
@@ -1227,8 +1230,8 @@ static void ui_keycap(int key, cf_keycap_t *o)
             str_cpy(o->top, cfe_key_name(cu.edit_part, (uint32_t)u), 8);
             o->style = u == cu.edit_sec ? KC_ON : KC_BTN;
         } else if (u >= 8 && u <= 10) {
-            str_cpy(o->top, u == 8 ? "CHD" : u == 9 ? "BAS" : "LAY", 8);
-            o->style = u - 8 == cu.edit_part ? KC_SOUNDING : KC_BTN;
+            str_cpy(o->top, u == 8 ? "BAS" : u == 9 ? "CHD" : "LAY", 8);
+            o->style = edit_key_part(u) == cu.edit_part ? KC_SOUNDING : KC_BTN;
         } else {
             o->style = KC_OFF;
         }
@@ -1441,7 +1444,7 @@ static void cf_leds(void)
             int u = 0, j;
             for (j = 0; j < (int)k; j++)
                 u += cf_key_is_upper(j);
-            if (u == cu.edit_sec || (u >= 8 && u - 8 == cu.edit_part))
+            if (u == cu.edit_sec || (u >= 8 && u <= 10 && edit_key_part(u) == cu.edit_part))
                 cf_led(lit, (uint32_t)id, 1);
             else if (u < 11)
                 cf_led(blink ? dim : faint, (uint32_t)id, 1);
