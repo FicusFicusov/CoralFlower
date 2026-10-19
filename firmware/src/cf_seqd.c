@@ -128,6 +128,16 @@ static uint32_t sq_steps(const sq_pat_t *p, uint32_t trk, uint32_t b)
 {
     return trk == SQ_DRUMS ? sq_dsteps() : sq_kbeat(p, trk, b) * sq_beats;
 }
+/* a take's grid in bar b (CHORDS / BASS / LAYER): twice the track's steps, or the next multiple of them that a beat's
+ * 24 parts hold (8 a beat: 24); STEPS itself stays, what is finer stands between its marks (the owner, 2026-10-19:
+ * short notes fell through the grid in a take) */
+static uint32_t sq_rec_steps(const sq_pat_t *p, uint32_t trk, uint32_t b)
+{
+    uint32_t k = sq_kbeat(p, trk, b), m;
+    for (m = 2u; k * m < SQ_UB && SQ_UB % (k * m); m++)
+        ;
+    return (k * m < SQ_UB ? k * m : SQ_UB) * sq_beats;
+}
 
 static int sq_empty(const sq_pat_t *p) { return !p->bars; }
 

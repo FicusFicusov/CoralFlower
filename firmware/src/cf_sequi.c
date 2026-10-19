@@ -741,7 +741,7 @@ static void sq_rec_poll(void)
         squ.rr++;
         if (sq_empty(p) || bar >= SQ_BARS || !bt)
             continue;
-        st = sq_steps(p, trk, bar);              /* (bar: the track's own) */
+        st = trk == SQ_DRUMS ? sq_steps(p, trk, bar) : sq_rec_steps(p, trk, bar);   /* (bar: the track's own) */
         step = (e.t * st + bt / 2u) / bt;
         if (e.kind == 2) {                       /* a chord ended: its length */
             int i;
@@ -755,7 +755,7 @@ static void sq_rec_poll(void)
                                                   * the time it was held, the ISR's count; worked out from where it
                                                   * ended, a chord let go before the step it was rounded up to came
                                                   * out a whole track long) */
-                uint32_t su = SQ_U / sq_steps(p, trk, squ.rbar), d = e.dur * SQ_U / bt, len;
+                uint32_t su = SQ_U / sq_rec_steps(p, trk, squ.rbar), d = e.dur * SQ_U / bt, len;
                 len = (d + su / 2u) / su * su;
                 if (len > sq_room(p, &p->ev[i]))
                     len = sq_room(p, &p->ev[i]);
@@ -769,7 +769,7 @@ static void sq_rec_poll(void)
         if (step >= st) {                        /* (late in the bar: the next bar's first step) */
             step = 0;
             bar = bar + 1u < sq_ts(p, trk) + sq_tbars(p, trk) ? bar + 1u : sq_ts(p, trk);
-            st = sq_steps(p, trk, bar);
+            st = trk == SQ_DRUMS ? sq_steps(p, trk, bar) : sq_rec_steps(p, trk, bar);
         }
         if (e.kind == 3) {
 #ifdef CF_TRACE
