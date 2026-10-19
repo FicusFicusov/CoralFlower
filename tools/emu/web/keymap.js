@@ -24,7 +24,7 @@ globalThis.FM1 = {
   ].map(([code, kind, idx, cap]) => ({ code, kind, idx, cap })),
   // the printed labels (EMU_B_*) and what CoralFlower makes of them
   BTN: ["FX", "SEL", "ENV", "LFO", "EDIT", "GLO", "HOME", "SAVE", "ARP", "SEQ", "PLAY", "REC", "OCT-", "OCT+"],
-  BTN_ROLE: ["EFFECTS", "CHORD", "ENVELOPE", "BASS", "SOUND", "GLOBAL", "HOME", "SAVE", "ARP", "METRO", "PLAY", "REC", "OCT−", "OCT+"],
+  BTN_ROLE: ["EFFECTS", "CHORD", "ENVELOPE", "BASS", "SOUND", "GLOBAL", "HOME", "SAVE", "ARP", "SEQUENCER", "PLAY", "REC", "OCT−", "OCT+"],
   // EMU_E_* knobs and their roles
   ENC: ["SELECT", "ALGORITHM", "PRESETS", "KNOB 1", "KNOB 2", "KNOB 3", "KNOB 4", "MASTER"],
   ENC_ROLE: ["BASS SOUND", "ALGORITHM", "CHORD SOUND", "K1", "K2", "K3", "K4", "VOLUME"],
