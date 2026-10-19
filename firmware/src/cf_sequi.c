@@ -696,12 +696,16 @@ static void sq_clear(void)
     }
 }
 
-/* the song: an upper key A..H puts its pattern after the frame (an empty pattern is said so, not put) */
+/* the song: an upper key A..H puts its pattern at the end, where the "+" waits, and the frame goes to it (an empty
+ * pattern is said so, not put). It went in after the frame once, and the "+" moved with the frame: the owner read it
+ * as out of place, 2026-10-19 ("плюс съехал"); a block goes elsewhere with MOVE (K2) */
 static void sq_song_add(uint32_t pat)
 {
     sq_song_t *g = &sq_st.song;
-    uint32_t at = g->n ? squ.slot + 1u : 0u, i;
+    uint32_t at = g->n, i;
     char m[24];
+    sqh.busy = 0;                                /* (each key its own undo step: three quick ones were undone at once) */
+    sq_undo_poll();
     if (sq_empty(&sq_st.pat[pat])) {
         str_cpy(m, "Pattern ", sizeof m);
         m[8] = (char)('A' + pat);
@@ -727,6 +731,8 @@ static void sq_song_remove(void)
     uint32_t i;
     if (!g->n)
         return;
+    sqh.busy = 0;                                /* (each tap its own undo step, as a key A..H) */
+    sq_undo_poll();
     for (i = squ.slot; i + 1u < g->n; i++)
         g->pat[i] = g->pat[i + 1u];
     g->n--;

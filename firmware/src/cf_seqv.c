@@ -343,8 +343,12 @@ static void draw_sq_track(void)
         b[9] = 0;
     }
     fb_text(&CF_FONT_UI, 8, Y_VIEW + 4, b, squ.cpy || squ.ocpy ? C_ACC(0) : FL_INK2, 1);
-    if (!squ.cpy && !squ.ocpy && !drums && (p->arp >> squ.trk) & 1u)   /* (the track's ARP on: its button named) */
-        draw_chip(8 + fb_text_w(&CF_FONT_UI, b, 1) + 6, Y_VIEW + 4, "ARP");
+    if (!squ.cpy && !squ.ocpy && !drums && (p->arp >> squ.trk) & 1u) {   /* (the track's ARP on: its button named,
+                                                  * then its state: a chip alone read as a button, not as "on") */
+        int ax = 8 + fb_text_w(&CF_FONT_UI, b, 1) + 6;
+        ax += draw_chip(ax, Y_VIEW + 4, "ARP") + 3;
+        fb_text(&CF_FONT_UI, ax, Y_VIEW + 4, "on", C_ACC(1), 1);
+    }
     c[0] = 0;
     if (drums) {
         str_cpy(c, sq_lane_name(squ.lane), sizeof c);
@@ -457,13 +461,21 @@ static void sq_track_strip(const sq_pat_t *p, uint32_t trk, int x0, int ym, int 
     }
 }
 
-static void sq_pat_row(int y0)                   /* the patterns' letters, the song last; the shown one lit; the knob
-                                                  * that turns them first, as a chip (the top bar has room for one hint) */
+static void sq_pat_row(int y0)                   /* the patterns' letters and SONG, a row of tabs, the knob that turns
+                                                  * them first as a chip (the top bar has room for one hint) */
 {
+    /* tabs, as MUI's (the owner, 2026-10-19: "у MUI есть компонент табов, надо взять у них как сделано"): every choice
+     * plain text, the shown one in the accent with a bar under it as wide as its tab; no box round a choice (a filled
+     * box, then a frame, read as a button: "song как кнопка выглядит", "и A как кнопка выглядит"). A pattern with steps
+     * in its colour, as its blocks in the song; an empty one dim. Playing: the firefly over it, as over a playing block
+     * and a track's playhead (an underline would read as the tab's bar); coming in next: a dot there, blinking */
     int i, x = 8 + draw_chip(8, y0, "ALGO") + 5;
     for (i = 0; i <= (int)SQ_NPAT; i++) {
         char b[6];
-        int w, cur = i == squ.pat;
+        int w, cur = i == squ.pat, used = i < (int)SQ_NPAT && !sq_empty(&sq_st.pat[i]);
+        int play = cf_sn.sq_on && (i < (int)SQ_NPAT ? !cf_sn.sq_song && i == cf_sn.sq_pat : cf_sn.sq_song);
+        int next = cf_sn.sq_on && cf_sn.sq_next != 0xFFu &&
+                   (i < (int)SQ_NPAT ? cf_sn.sq_next == i : cf_sn.sq_next >= SQ_NPAT);
         if (i < (int)SQ_NPAT) {
             b[0] = (char)('A' + i);
             b[1] = 0;
@@ -471,21 +483,15 @@ static void sq_pat_row(int y0)                   /* the patterns' letters, the s
             str_cpy(b, "SONG", sizeof b);
         }
         w = fb_text_w(&CF_FONT_UI, b, 1) + 6;
+        fb_rect(x, y0 + 12, w + 2, 2, FL_BG);    /* (the bars' line kept clear: the garden's dots there read as one) */
+        fb_text_halo(&CF_FONT_UI, x + 3, y0, b, cur ? C_ACC(0) : used ? FL_C(sq_root_ink((uint32_t)i * 7u).ramp, 0) :
+                     i == (int)SQ_NPAT ? FL_INK2 : FL_INK3, FL_BG, 1);
         if (cur)
-            fb_rbox(x, y0 + 1, w, 11, 2, C_ACC(1));
-        if (cf_sn.sq_on && (i < (int)SQ_NPAT ? !cf_sn.sq_song && i == cf_sn.sq_pat : cf_sn.sq_song))
-            fb_rect(x + 1, y0 + 13, w - 2, 2, FL_C(FL_R_SAND, 0));   /* (playing) */
-        else if (cf_sn.sq_on && cf_sn.sq_next == (i < (int)SQ_NPAT ? i : 0xFF) && ((cu.now / 250u) & 1u))
-            fb_rect(x + 1, y0 + 13, w - 2, 2, FL_C(FL_R_SAND, 1));   /* (coming next: blinking) */
-        else if (cf_sn.sq_on && i == (int)SQ_NPAT && cf_sn.sq_next >= SQ_NPAT && cf_sn.sq_next != 0xFF &&
-                 ((cu.now / 250u) & 1u))
-            fb_rect(x + 1, y0 + 13, w - 2, 2, FL_C(FL_R_SAND, 1));
-        if (cur)
-            fb_text(&CF_FONT_UI, x + 3, y0, b, FL_BG, 1);
-        else                                     /* (a halo: the plant shows through the row; a pattern with steps in
-                                                  * its colour, as its blocks in the song) */
-            fb_text_halo(&CF_FONT_UI, x + 3, y0, b, i < (int)SQ_NPAT && !sq_empty(&sq_st.pat[i]) ?
-                         FL_C(sq_root_ink((uint32_t)i * 7u).ramp, 0) : i == (int)SQ_NPAT ? FL_INK2 : FL_INK3, FL_BG, 1);
+            fb_rect(x, y0 + 12, w, 2, C_ACC(0));   /* (the tab's bar) */
+        if (play)
+            sq_firefly(x + w / 2 - 1, y0 - 4);
+        else if (next && ((cu.now / 250u) & 1u))
+            fb_rect(x + w / 2 - 1, y0 - 4, 2, 2, FL_C(FL_R_SAND, 1));
         x += w + 2;
     }
 }
@@ -562,11 +568,12 @@ static void draw_sq_tracks(void)
 }
 
 /* ------------------------------------------------------------ the song --- */
-/* the song as a lane of blocks, read as a line of text: a block a pattern, as long as its bars, in the pattern's own
- * colour (its letter over the tracks has it too), a tick a bar along its foot. The frame is on one block; right after
- * it a dashed "+" place: where the next pattern key puts its pattern. The lane wraps into rows and scrolls to the
- * frame */
-#define SQS_Y0 (VIEW_Y - 1)                      /* the rows: 3 of them, SQS_RH apart */
+/* the song as one row of blocks, read as a timeline: a block a pattern, as long as its bars, in the pattern's own
+ * colour (its letter over the tracks has it too), a tick a bar along its foot. The frame is on one block; after the
+ * last one a dashed "+" place: where the next pattern key puts its pattern. A long song scrolls by whole blocks to keep
+ * the frame in view, arrows say more is out of view, and a map under the row shows the whole song (the owner,
+ * 2026-10-19, "Один ряд и карта": rows that wrapped stretched over the garden) */
+#define SQS_Y0 (VIEW_Y - 1)                      /* the row; the hints SQS_RH x 3 under it */
 #define SQS_RH 24
 static sq_ink_t sq_pat_ink(uint32_t pi) { return sq_root_ink(pi * 7u); }   /* (each pattern its colour: six of
                                                                               * them, G and H as A and B) */
@@ -605,55 +612,88 @@ static void sq_plus(int x, int y)                /* the place the next pattern k
     fb_hline(x + 5, y + 10, 6, FL_INK2);
     fb_vline(x + 8, y + 7, 6, FL_INK2);
 }
+static void sq_song_firefly(int x, int y, int i, uint32_t pi)
+{
+    if (cf_sn.sq_on && cf_sn.sq_song && i == cf_sn.sq_slot) {   /* (playing: a firefly over it) */
+        const sq_pat_t *pp = &sq_st.pat[pi % SQ_NPAT];
+        int w = sq_block_w(pi) - 4;
+        int f = pp->bars && cf_sn.sq_bt ? (cf_sn.sq_bar * w + (int)(cf_sn.sq_t * (uint32_t)w / cf_sn.sq_bt)) /
+                                          (int)sq_len(pp) : 0;
+        sq_firefly(x + 2 + f, y - 3);
+    }
+}
 static void draw_sq_song(void)
 {
     const sq_song_t *g = &sq_st.song;
-    int i, n = g->n, x = 8, row = 0, first, bars = 0, secs;
-    int bx[SQ_SONG + 1], brow[SQ_SONG + 1];      /* (the blocks' places, the "+" last) */
+    int i, n = g->n, bars = 0, secs;
     char b[24], t[8];
     draw_head("Song");
     sq_pat_row(HEAD_LINE);
-    for (i = 0; i < n; i++) {                    /* lay the lane out: the blocks, the "+" after the frame */
-        int w = sq_block_w(g->pat[i]);
-        if (x + w > 232) {
-            x = 8;
-            row++;
-        }
-        bx[i] = x;
-        brow[i] = row;
-        x += w + 4;
+    for (i = 0; i < n; i++)
         if (!sq_empty(&sq_st.pat[g->pat[i] % SQ_NPAT]))
             bars += sq_len(&sq_st.pat[g->pat[i] % SQ_NPAT]);
-        if (i == (n ? squ.slot : -1)) {          /* (the "+" goes right after the frame) */
-            if (x + 16 > 232) {
-                x = 8;
-                row++;
+    {                                            /* one row from the block fk on, whole blocks, the frame kept in view
+                                                  * with one block before it; arrows where blocks are out of view; under
+                                                  * it the whole song small (a map), the part on the screen in brackets */
+        static int fk;
+        int pos[SQ_SONG + 1], total = 0, vw = 216, y = SQS_Y0 + 2, cur = n ? squ.slot : 0, x, last = -1, room;
+        for (i = 0; i < n; i++) {
+            pos[i] = total;
+            total += sq_block_w(g->pat[i]) + 4;
+        }
+        pos[n] = total;
+        total += 16;
+        if (fk > cur - 1)
+            fk = cur > 0 ? cur - 1 : 0;
+        for (;;) {                               /* (the frame, and the "+" with the last block, must fit) */
+            room = (cur >= n - 1 ? pos[n] + 16 : pos[cur] + sq_block_w(g->pat[cur])) - pos[fk];
+            if (room <= vw || fk >= cur)
+                break;
+            fk++;
+        }
+        if (total <= vw)
+            fk = 0;
+        for (i = fk, x = 12; i < n; i++) {
+            int w = sq_block_w(g->pat[i]);
+            if (x + w > 12 + vw)
+                break;
+            sq_block(x, y, g->pat[i], i == squ.slot);
+            sq_song_firefly(x, y, i, g->pat[i]);
+            last = i;
+            x += w + 4;
+        }
+        if (last == n - 1 && x + 16 <= 12 + vw)
+            sq_plus(x, y);
+        else if (n)
+            last = last < 0 ? fk : last;
+        if (fk > 0)                              /* (more before: an arrow at the left end) */
+            for (i = 0; i < 4; i++)
+                fb_vline(4 + i, y + 10 - i, 1 + 2 * i, FL_INK2);
+        if (last < n - 1 || (last == n - 1 && x + 16 > 12 + vw))   /* (more after) */
+            for (i = 0; i < 4; i++)
+                fb_vline(235 - i, y + 10 - i, 1 + 2 * i, FL_INK2);
+        if (total > vw) {
+            int my = y + 31, vx0 = pos[fk], vx1 = last >= 0 ? pos[last] + sq_block_w(g->pat[last]) : pos[n] + 16;
+            int wx0 = 12 + vx0 * vw / total, wx1 = 12 + vx1 * vw / total;
+            if (last == n - 1)
+                wx1 = 12 + vw;
+            for (i = 0; i < n; i++) {
+                int a0 = 12 + pos[i] * vw / total, z = 12 + (pos[i] + sq_block_w(g->pat[i])) * vw / total;
+                sq_ink_t k = sq_pat_ink(g->pat[i]);
+                fb_rect(a0, i == squ.slot ? my - 1 : my, z - a0 > 1 ? z - a0 : 1, i == squ.slot ? 5 : 3,
+                        i == squ.slot ? C_ACC(0) : FL_C(k.ramp, 2));
+                if (cf_sn.sq_on && cf_sn.sq_song && i == cf_sn.sq_slot)   /* (playing: a dot over it, the block may be
+                                                                           * out of view) */
+                    fb_rect(a0, my - 4, 2, 2, FL_INK);
             }
-            bx[SQ_SONG] = x;
-            brow[SQ_SONG] = row;
-            x += 20;
+            fb_vline(wx0 - 2, my - 3, 9, FL_INK2);
+            fb_hline(wx0 - 2, my - 3, 3, FL_INK2);
+            fb_hline(wx0 - 2, my + 5, 3, FL_INK2);
+            fb_vline(wx1 + 1, my - 3, 9, FL_INK2);
+            fb_hline(wx1 - 1, my - 3, 3, FL_INK2);
+            fb_hline(wx1 - 1, my + 5, 3, FL_INK2);
         }
     }
-    if (!n) {
-        bx[SQ_SONG] = 8;
-        brow[SQ_SONG] = 0;
-    }
-    first = brow[n ? squ.slot : SQ_SONG] > 2 ? brow[n ? squ.slot : SQ_SONG] - 2 : 0;
-    for (i = 0; i < n; i++) {
-        int y = SQS_Y0 + (brow[i] - first) * SQS_RH + 2;
-        if (brow[i] < first || brow[i] > first + 2)
-            continue;
-        sq_block(bx[i], y, g->pat[i], i == squ.slot);
-        if (cf_sn.sq_on && cf_sn.sq_song && i == cf_sn.sq_slot) {   /* (playing: a firefly over it) */
-            const sq_pat_t *pp = &sq_st.pat[g->pat[i] % SQ_NPAT];
-            int w = sq_block_w(g->pat[i]) - 4;
-            int f = pp->bars && cf_sn.sq_bt ? (cf_sn.sq_bar * w + (int)(cf_sn.sq_t * (uint32_t)w / cf_sn.sq_bt)) /
-                                              (int)sq_len(pp) : 0;
-            sq_firefly(bx[i] + 2 + f, y - 3);
-        }
-    }
-    if (brow[SQ_SONG] >= first && brow[SQ_SONG] <= first + 2)
-        sq_plus(bx[SQ_SONG], SQS_Y0 + (brow[SQ_SONG] - first) * SQS_RH + 2);
     if (!n)                                      /* (an empty song: how to start one) */
         fb_text_halo(&CF_FONT_UI, 32, SQS_Y0 + 7, "press A..H on the upper keys", FL_INK2, FL_BG, 1);
     /* how long it is, on the title's line; what the buttons do with the frame, under the lane */
@@ -685,7 +725,7 @@ static void draw_sq_help(void)
                                      "hold [OCT+], turn [ALGO]:", "   copy the pattern there",
                                      "hold [SEL]: clear the track", "hold [REC]: undo last change",
                                      "[SEQ] home  [GLO] close", 0};
-    static const char *const SO[] = {"upper keys A..H: add after the frame", "[SELECT] move the frame",
+    static const char *const SO[] = {"upper keys A..H: add at the end", "[SELECT] move the frame",
                                      "[SEL] remove it  [EDIT] open it", "[PLAY] play from the frame",
                                      "hold [REC]: undo last change", "[SEQ] home  [GLO] close", 0};
     /* (a gesture says "turn", and the copy where it lands: "copy the bar there" explained it, the owner, 2026-10-19) */
