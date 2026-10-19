@@ -281,7 +281,8 @@
     : fetch(url, { cache: "no-cache" }).then((r) => { if (!r.ok) throw new Error(url + ": " + r.status); return r.arrayBuffer(); });
   const wasmP = getBytes("coralflower.wasm");
 
-  // before Start: the device boots here, silently, to show its screen (?demo: MAJ + D4 held, for screenshots)
+  // before Start: the device boots here, silently, to show its screen (?demo: keys 5 and 9 held, for screenshots:
+  // Top + Lock's M9 button and D4)
   (async () => {
     try {
       const bytes = await wasmP;

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* ChoralRoot FM-1 in the browser: the emulator's firmware side (../emu_fw.c: the firmware through emu_firmware.h,
+/* CoralFlower in the browser: the emulator's firmware side (../emu_fw.c: the firmware through emu_firmware.h,
  * the HAL of emu_hal_fw.h, the emu_fw_* hooks) compiled to a standalone WebAssembly module (no Emscripten JS
  * runtime) and run inside an AudioWorklet (worklet.js). Each render quantum asks for 128 frames; producing them
  * runs the device clock one millisecond at a time exactly as emu.c's headless loop does (tick, then a UI frame
@@ -11,7 +11,8 @@
  * the saved image into web_flash_stage() before web_boot (emu_flash_open "reads" it from there), and saves
  * web_flash() back when web_flash_dirty() moves.
  *
- *   sh tools/emu/web/build_web.sh  ->  build/emu-web/choralroot.wasm (+ the page) */
+ *   sh tools/emu/web/build_web.sh  ->  build/emu-web/coralflower.wasm (+ the page)
+ * tools/emu/cf_headless.c runs this same unit natively, from a script (tools/emu/cf_headless.sh). */
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
