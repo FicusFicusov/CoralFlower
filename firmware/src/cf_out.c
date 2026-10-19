@@ -224,9 +224,9 @@ enum {
     CFE_TEMPO,        /* v: BPM 30..300 */
     CFE_SIG,          /* v: beats a bar 1..12 */
     CFE_TRANSPORT,    /* v: 1 start (from beat 1), 0 stop */
-    CFE_LOOP,         /* a: 0 REC tapped, 1 PLAY tapped, 2 REC held (undo), 3 cleared (SAVE > Loop > Delete) */
     CFE_SEQ,          /* the sequencer: a 0 stop, 1 play pattern b (SQ_NPAT: the song from place v), 2 drum b heard (kit v),
-                       * 3 pattern b next (the song from place v), 4 a take on pattern b, track v, 5 the take ends */
+                       * 3 pattern b next (the song from place v), 4 a take on pattern b, track v, 5 the take ends,
+                       * 6 a take from HOME on pattern b, track v (8 bars at most) */
 };
 typedef struct { uint8_t op, a, b, rsv; int16_t v; } cf_ev_in_t;
 #define CF_EVQ 128u                              /* a power of two */
@@ -269,7 +269,7 @@ static struct {
 
 #include "cr_midi.c"                             /* (MIDI in's pure part: the clock's follower, the channels' map) */
 /* MIDI clock in (GLO > MIDI > CLOCK IN, cf_midi_in): while its pulses come, they run the beat (a pulse is 1/24 of
- * one) instead of the tempo, so the metronome, the arpeggiator and the loop follow the other instrument */
+ * one) instead of the tempo, so the metronome, the arpeggiator and the sequencer follow the other instrument */
 static struct {
     crm_clock_t f;               /* (cr_midi.c's tempo follower) */
     uint32_t pulses;             /* come since the last block */
@@ -311,7 +311,7 @@ static void cfm_tick(uint32_t n, uint32_t pulses)
                                                                           * without a 64-bit division, which the
                                                                           * device has none of) */
 }
-/* MIDI clock out (CLOCK Out): while the beat runs (PLAY, a loop, the sequencer), 24 pulses a beat on the metronome's
+/* MIDI clock out (CLOCK Out): while the beat runs (PLAY, the sequencer), 24 pulses a beat on the metronome's
  * own grid (cf_grid.g24: a beat's first pulse is its downbeat), a start when it begins, a stop when it ends. USB MIDI
  * CIN 0x0F: a single-byte system real-time message (as ChoralRoot's cr_out.c sent them) */
 static struct { uint8_t was; uint32_t g24, gen; } cfo;
@@ -351,7 +351,7 @@ static void cfm_restart(void)
     cf_grid.gen++;
 }
 
-#include "cf_loop.c"                             /* (the looper: on the metronome's clock) */
+#include "cf_loop.c"                             /* (the old looper's saved format: read once, cf_sequi.c) */
 #include "cf_seqd.c"                             /* (the sequencer's patterns and song) */
 #include "cf_seqp.c"                             /* (.. playing them) */
 
@@ -375,7 +375,7 @@ static void cf_click_mix(int32_t *out, uint32_t n)
     uint32_t i;
     if (cfm.click) {
         const cf_click_t *k = &CF_CLICKS[cf_click_sound < CF_NCLICKS ? cf_click_sound : 0];
-        int32_t lv = (cfl.click || sqp.click) && cfm.level < 60u ? 60 : (int32_t)cfm.level;   /* (a count-in and a
+        int32_t lv = sqp.click && cfm.level < 60u ? 60 : (int32_t)cfm.level;   /* (a count-in and a
                                                                                               * take are always heard) */
         int32_t amp = (cfm.on || cfm.running) ? 10000 * lv / 100 : 0;
         int acc = cfm.click == 2u;
@@ -435,14 +435,10 @@ static void cf_midi_in(void)
                 }
                 cfx_in.pulses++;
                 cfx_in.last_ms = cf_now_ms;
-            } else if (status == 0xFAu || status == 0xFBu) {   /* start / continue: from beat 1, the loop too */
+            } else if (status == 0xFAu || status == 0xFBu) {   /* start / continue: from beat 1 */
                 cfm_restart();
                 cfm.running = 1;
-                if (cfl.d.len && cfl.cap == CFL_CAP_NONE)
-                    cfl_start();
             } else if (status == 0xFCu) {        /* stop */
-                if (cfl.state == CFL_PLAYING && cfl.cap == CFL_CAP_NONE)
-                    cfl_stop();
                 cfm.running = 0;
             }
             continue;
@@ -464,13 +460,11 @@ static void cf_apply(const cf_ev_in_t *e)
 {
     switch (e->op) {
     case CFE_KEY:
-        cfl_key(e->a, e->v);                     /* (the looper takes it first: a chord starting a take) */
         cfp_key(e->a, e->v);
         break;
     case CFE_CONFIG: cfp_config(); break;
     case CFE_PANIC:
         sqp_stop();
-        cfl_panic();
         cfp_panic();
         break;
     case CFE_SEQ:
@@ -484,21 +478,12 @@ static void cf_apply(const cf_ev_in_t *e)
             sqp_rec_start(e->b, (uint32_t)e->v);
         else if (e->a == 5)
             sqp_rec_stop();
+        else if (e->a == 6) {                    /* (a take from HOME: into a new pattern, 8 bars at most) */
+            sqp_rec_start(e->b, (uint32_t)e->v);
+            sqp.rlim = SQ_BARS;
+        }
         else
             sqp_stop();
-        break;
-    case CFE_LOOP:
-        if (e->a == 0)
-            cfl_rec();
-        else if (e->a == 1)
-            cfl_play();
-        else if (e->a == 2)
-            cfl_undo();
-        else {
-            cfl.cap = CFL_CAP_NONE;
-            cfl.click = 0;
-            cfl_clear();
-        }
         break;
     case CFE_METRO:
         if (e->a && !cfm.on && !cfm.running)
@@ -532,7 +517,6 @@ static void cf_out_init(void)                    /* power-on (the audio ISR may 
     xf_defaults();                               /* cr_fx.c: the delay's and the reverb's parameters */
 #endif
     cfp_init();
-    cf_chord_init(&cfl.c, &cfc_shadow);
     cf_now_ms = cf_ms_rem = 0;
     cf_evq_r = cf_evq_w = 0;
     cf_ready = 1;
@@ -561,7 +545,6 @@ static void cf_audio_block(uint32_t n)
         cfx_in.active = cfp_cfg.clock_in && cfx_in.bpm && (uint32_t)(cf_now_ms - cfx_in.last_ms) < 300u;
         cfa_tick(n);                             /* (the arpeggiator: its steps, its strum) */
         sqp_arp_tick(n);                         /* (the sequencer's tracks' with ARP on) */
-        cfl_tick(n, pulses);                     /* (the looper: its takes, its playing) */
         sqp_tick(n, pulses);                     /* (the sequencer) */
         cfm_tick(n, pulses);
         cf_clock_out();
@@ -578,9 +561,6 @@ typedef struct {
     uint32_t keys_held;          /* bit k: key k is down in the chord model's view */
     uint8_t arp_on, arp_latched, arp_steps, arp_note, arp_n, arp_note_list[CF_MAX_NOTES];
     uint32_t arp_idx;            /* the arpeggiator: steps played, the last note, the chord it plays */
-    uint8_t loop_state, loop_cap, loop_gen, loop_layers;
-    uint32_t loop_pos, loop_len, loop_rec, loop_rec_len, loop_cin, loop_cin_len;   /* the looper (ticks) */
-    uint16_t loop_nev;
     uint8_t ext_clock;           /* MIDI clock in runs the beat */
     uint16_t ext_bpm;            /* .. at this tempo */
     uint8_t sq_on, sq_song, sq_pat, sq_slot, sq_bar;   /* the sequencer: playing, the song, where (bar: in the
@@ -615,17 +595,6 @@ static void cf_snapshot(void)
     cf_sn.arp_note = cfa.last_note;
     cf_sn.arp_idx = cfa.idx;
     cf_sn.arp_n = cfa.n;
-    cf_sn.loop_state = cfl.state;
-    cf_sn.loop_cap = cfl.cap;
-    cf_sn.loop_gen = cfl.gen;
-    cf_sn.loop_layers = (uint8_t)cfl.d.nlayers;
-    cf_sn.loop_pos = cfl.pos;
-    cf_sn.loop_len = cfl.d.len;
-    cf_sn.loop_rec = cfl.rec_t;
-    cf_sn.loop_rec_len = cfl.rec_len;
-    cf_sn.loop_cin = cfl.cin_t;
-    cf_sn.loop_cin_len = cfl.cin_len;
-    cf_sn.loop_nev = cfl.d.nev;
     cf_sn.ext_clock = cfx_in.active;
     cf_sn.ext_bpm = cfx_in.bpm;
     for (i = 0; i < cfa.n; i++)

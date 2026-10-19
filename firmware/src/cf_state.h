@@ -14,13 +14,12 @@ enum {
     SCR_ARP,       /* ARP: the arpeggiator */
     SCR_SEQ,       /* SEQ: the metronome */
     SCR_SAVE,      /* SAVE */
-    SCR_LOOP,      /* PLAY held: the looper */
     SCR_SQ,        /* SEQ again: the sequencer, a pattern's tracks or the song (cf_sequi.c) */
     SCR_SQED,      /* .. a track open: its steps */
     SCR_N
 };
 static const char *const SCR_NAME[SCR_N] = {"HOME", "CHORD", "ENVELOPE", "BASS", "SOUND", "GLOBAL", "EFFECTS",
-                                             "ARPEGGIO", "METRONOME", "SAVE", "LOOPER", "SEQUENCER",
+                                             "ARPEGGIO", "METRONOME", "SAVE", "SEQUENCER",
                                              "PATTERN"};
 
 /* themes: the one interface colour (GLO > Display > COLOR), a palette ramp, after the M-VAVE synths' panel
@@ -62,14 +61,15 @@ typedef struct {
                                   * (the behaviour before WAIT); CF_RT_STRIKE the new notes strike; CF_RT_CHORD
                                   * the whole new chord strikes, the shared tones too, gliding from the last chord */
     cf_arp_t arp;                /* the arpeggiator's settings (ARP; on / off is not kept: off at power-on) */
-    cf_loop_t loop;              /* the looper's settings (LOOPER; the loop itself: SAVE > Loop, OBJ_CFLOOP) */
-    uint8_t clock_in;            /* GLO > MIDI > CLOCK: 0 Off; 1 In, MIDI clock's pulses run the beat, start / stop the
-                                  * loop; 2 Out, the unit sends its beat as MIDI clock */
+    cf_loop_t loop;              /* the looper's settings up to 0.3.1 (unused: kept for the record's layout) */
+    uint8_t clock_in;            /* GLO > MIDI > CLOCK: 0 Off; 1 In, MIDI clock's pulses run the beat; 2 Out, the unit sends its beat as MIDI clock */
     uint8_t boot_sound;          /* GLO > Display > BOOT SOUND: the chime with the intro */
     uint8_t level_chord, level_layer, level_drums;   /* the parts' P_LEVEL (the sequencer's tracks, K1; the bass's:
                                                       * bass_level) */
     uint16_t snd_layer;          /* the LAYER's sound (part 2): its index in the chord sounds' row; 0xFFFF: the default */
     uint8_t ch_layer, ch_drums;  /* GLO > Channels: the sequencer's LAYER and DRUMS out on MIDI, 0..15 */
+    uint8_t seq_hint;            /* the panel after the first take from HOME has been shown (it says the take is a
+                                  * pattern in the SEQUENCER and how to open it, once: 0.4) */
 } cf_set_t;
 
 static cf_set_t cs;
@@ -110,6 +110,7 @@ static void cs_defaults(cf_set_t *s)
     s->snd_layer = 0xFFFFu;
     s->ch_layer = 2;                             /* (channel 3) */
     s->ch_drums = 9;                             /* (channel 10: General MIDI's drums) */
+    s->seq_hint = 0;
 }
 
 /* --------------------------------------------------------- the UI's own --- */
@@ -126,9 +127,8 @@ typedef struct {
     char save_name[13];          /* .. its name, being edited */
     uint8_t save_cur;            /* .. the letter K3 changes */
     uint32_t save_hold;          /* .. when SAVE went down on the SAVE screen (0: not held) */
-    uint32_t play_hold, rec_hold;   /* when PLAY / REC went down (0: up): a tap or a hold (cf_loop_poll) */
-    uint8_t play_fired, rec_fired;  /* .. the hold acted: its release does nothing */
-    uint8_t loop_saved_gen;         /* the loop's content (cf_sn.loop_gen) as it was saved or loaded */
+    uint32_t rec_hold;           /* when REC went down (0: up): a tap or a hold (cf_rec_poll) */
+    uint8_t rec_fired;           /* .. the hold acted: its release does nothing */
     uint8_t save_del;            /* .. ACTION Delete (a user sound only) */
     uint32_t now, last_ms;       /* ms */
     uint32_t frame_dt;           /* ms since the frame before */
@@ -138,14 +138,14 @@ typedef struct {
     /* popups over the plant */
     uint8_t pop;                 /* POP_* */
     uint32_t pop_until;
-    char msg[24];
+    char msg[64];                /* (two lines at most, a '\n' between them) */
     uint8_t booted;
     uint32_t frames;
     uint32_t idle_ms;            /* since the last touch */
     uint8_t upd_left, upd_stub;  /* the update gesture's countdown (cf_shim.c cr_update_poll) */
     uint8_t edited[3];           /* a part's sound changed since it was loaded (SAVE keeps it): chord, bass, layer */
 } cf_ui_t;
-enum { POP_NONE, POP_SOUND_CHORD, POP_SOUND_BASS, POP_ALGO, POP_OCTAVE, POP_MSG, POP_SOUND_LAYER };
+enum { POP_NONE, POP_SOUND_CHORD, POP_SOUND_BASS, POP_ALGO, POP_OCTAVE, POP_MSG, POP_SOUND_LAYER, POP_SEQHINT };
 static cf_ui_t cu;
 
 /* the plant */

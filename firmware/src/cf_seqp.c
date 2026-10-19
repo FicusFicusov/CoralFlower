@@ -2,16 +2,16 @@
  * CoralFlower: the sequencer playing (cf_seqd.c's patterns; the audio side). Included by cf_out.c after cf_seqd.c.
  *
  * PLAY on the SEQUENCER screens plays the pattern shown, round, or the song from the place picked, round. Its clock is
- * the looper's: 96 ticks a beat from the tempo (MIDI clock in: 4 ticks a pulse); the metronome's beat 1 at its start.
+ * 96 ticks a beat from the tempo (MIDI clock in: 4 ticks a pulse); the metronome's beat 1 at its start.
  * A step sounds at its place in the bar (1/24 of a beat: 4 ticks; the drums at their steps, every second one late by
  * the pattern's SWING). CHORDS on part 0, BASS on part 1 (a pattern
  * with no bass steps: the bass each chord had when it was written, as under the hands), LAYER on part 2 (its own
  * sound), DRUMS on part 3 (the DRUM engine, a General MIDI note a lane). A muted track (sq_song_t.mute) is skipped.
- * A note the keys or the loop also hold is theirs to let go (cfp_holds, cfl_holds), and theirs do not cut the
+ * A note the keys also hold is theirs to let go (cfp_holds), and theirs do not cut the
  * sequencer's (cf_play.c cfp_off asks sqp_holds).
  * Another pattern picked while one plays comes in at the next bar line (sqp.next; it waited for the pattern's end, and
  * did not seem to switch at all: the owner, 2026-10-19).
- * REC: a take into one track. From a stop, a bar of count-in (the click loud, as the looper's), then the pattern
+ * REC: a take into one track. From a stop, a bar of count-in (the click loud), then the pattern
  * from its first bar; while it plays, at once. What the keys play then (the chord model's changes; on DRUMS the drum
  * keys) goes into a queue with where it fell in the bar (sqp_rq); the UI takes it from there and writes the steps
  * (cf_sequi.c sq_rec_poll: one writer of the patterns, the UI). */
@@ -46,6 +46,8 @@ static struct {
     uint8_t next;                /* the pattern that comes in when this one ends (SQ_NPAT + k: the song from place k),
                                   * 0xFF none */
     uint8_t rec;                 /* a take: its track, 0xFF none */
+    uint8_t rlim;                /* .. from HOME: it ends by itself after this many bars, the pattern plays on (0: no
+                                  * limit; the owner, 2026-10-19: "до второго REC, максимум 8 тактов") */
     uint8_t click;               /* the click loud (count-in, a take) */
     uint32_t cin;                /* count-in ticks left */
     uint32_t rserial;            /* the chord model's serial last seen in a take */
@@ -110,7 +112,7 @@ static int sqp_holds(uint32_t part, uint32_t note)
 static void sqp_off(uint32_t part, uint32_t note)
 {
     /* (also the tracks' arpeggiators' notes: cf_arp.c) */
-    if (cfp_holds(part, note) || cfl_holds(part, note))   /* (the keys or the loop sound it too: theirs to let go) */
+    if (cfp_holds(part, note))                   /* (the keys sound it too: theirs to let go) */
         return;
     trk_note_off(&trk[part], note);
     cfp_midi(0x80u, cfp_ch(part), note, 0);
@@ -150,7 +152,7 @@ static void sqp_bass_on(const uint8_t *b, uint32_t n, uint32_t left)
     cfp_bass_mono();                             /* (one voice: a new note cuts the old one's tail) */
     for (i = 0; i < n && i < 2u; i++) {
         sqp.bass[i] = b[i];
-        if (!cfp_holds(1, b[i]) && !cfl_holds(1, b[i]))
+        if (!cfp_holds(1, b[i]))
             cfp_on(1, b[i], cfp_cfg.vel);
     }
     sqp.nb = (uint8_t)(n < 2u ? n : 2u);
@@ -319,7 +321,7 @@ static void sqp_fire(const sq_pat_t *p, uint32_t tk, uint32_t u)
         } else {
             for (j = 0; j < e->n; j++) {
                 sqp.note[j] = e->note[j];
-                if (!cfp_holds(0, e->note[j]) && !cfl_holds(0, e->note[j]))
+                if (!cfp_holds(0, e->note[j]))
                     cfp_on(0, e->note[j], cfp_cfg.vel);
             }
             sqp.n = e->n;
@@ -391,10 +393,15 @@ static void sqp_bars(void)                       /* a bar begins: the bar each t
     for (k = 0; k < SQ_NTRK; k++)
         sqp.sb[k] = (uint8_t)sq_trk_bar(p, k, sqp.nbar);
 }
+static void sqp_rec_stop(void);
 static void sqp_next_bar(void)
 {
     const sq_pat_t *p = &sq_st.pat[sqp.pat % SQ_NPAT];
-    uint32_t i, len = sq_len(p);
+    uint32_t i, len;
+    if (sqp.rec != 0xFFu && sqp.rlim && sqp.nbar + 1u >= sqp.rlim)   /* (a take from HOME: its bars are up; its last
+                                                  * chord ends at this bar's end) */
+        sqp_rec_stop();
+    len = sq_len(p);
     sqp.t = 0;                                   /* (what sounds lasts on over the bar line: its own count) */
     sqp.nu = sqp.nh = 0;
     if (sqp.next == 0xFFu && (!sqp.song || !sq_st.song.n || sqp.nbar + 1u < len)) {   /* it goes on: alone, round and
@@ -524,16 +531,14 @@ static void sqp_stop(void)
     }
     sqp.ropen = 0;
     sqp.rec = 0xFF;
-    if (cfl.state != CFL_PLAYING)
-        cfm.running = 0;
+    sqp.rlim = 0;
+    cfm.running = 0;
 }
 /* PLAY: pattern pat round, or (pat SQ_NPAT) the song from place slot; cin: after a bar of count-in */
 static void sqp_begin(uint32_t pat, uint32_t slot, int cin)
 {
     uint32_t i;
     sqp_stop();
-    if (cfl.state == CFL_PLAYING)                /* (one clock: the loop stops) */
-        cfl_stop();
     sqp.song = pat >= SQ_NPAT;
     sqp.slot = (uint8_t)(sqp.song && sq_st.song.n ? slot % sq_st.song.n : 0u);
     sqp.pat = (uint8_t)(sqp.song ? sq_st.song.pat[sqp.slot] % SQ_NPAT : pat);
@@ -618,6 +623,7 @@ static void sqp_rec_stop(void)                   /* REC again: the take ends, th
         sqp.ropen = 0;
     }
     sqp.rec = 0xFF;
+    sqp.rlim = 0;
     sqp.click = 0;
 }
 

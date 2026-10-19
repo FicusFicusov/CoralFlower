@@ -10,7 +10,7 @@
  * says); the flash erased and everything restored (PUT): LIST and the bytes identical, the sound back in its list, the
  * patterns and song read in at the restart; refusals with nothing written: a CRC error, a settings record of another
  * magic, an unsorted loop, a sequencer head of another magic or a part of another length, ChoralRoot's ids 1 and 40, a
- * begin while the loop plays (busy); stale sessions; the lock after a restore (settings, sequencer); RESTART. */
+ * loop restored while the sequencer plays (never busy since 0.4), a loop becoming a pattern at power-on; stale sessions; the lock after a restore (settings, sequencer); RESTART. */
 #include <os/lock.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -311,12 +311,48 @@ int main(void)
         CHECK(t_put(1, z, sizeof z, st_crc32(z, sizeof z)) == 1, "ChoralRoot's settings (id 1): 1");
         CHECK(t_put(40, z, sizeof z, st_crc32(z, sizeof z)) == 1, "ChoralRoot's loop slot (id 40): 1");
     }
-    {
+    {                                                /* (0.4: no looper, never busy; the sequencer plays from RAM) */
         obj_t *s = t_find(31);
-        cf_sn.loop_state = CFL_PLAYING;
-        CHECK(t_put(31, s->bytes, s->size, s->crc) == 3, "a begin while the loop plays: 3 (busy)");
-        cf_sn.loop_state = CFL_STOPPED;
-        CHECK(t_put(31, s->bytes, s->size, s->crc) == 0, "the same once it stops: 0");
+        cf_sn.sq_on = 1;
+        CHECK(t_put(31, s->bytes, s->size, s->crc) == 0, "a loop restored while the sequencer plays: 0 (never busy)");
+        cf_sn.sq_on = 0;
+    }
+    {                                                /* 0.4: a loop in flash (kept by 0.3.1, or restored) becomes the
+                                                      * first free pattern's CHORDS at power-on, and leaves flash */
+        static cfl_data_t d;
+        static const cfl_ev_t EV[] = {{0, 15, CFL_DOWN}, {1, 15, 0}, {2, 7, CFL_DOWN}, {380, 7, 0}, {384, 4, CFL_DOWN},
+                                      {760, 4, 0}};   /* (Top Lock: m7 tapped, then C and A, a bar each) */
+        uint8_t z[16];
+        uint32_t i, nchords = 0;
+        int free0;
+        memset(&d, 0, sizeof d);
+        d.magic = CFL_MAGIC;
+        d.len = 2u * 4u * CFL_PPQN;
+        d.nlayers = 1;
+        d.algo = CF_ALG_TOP_LOCK;
+        d.beats = 4;
+        d.nev = (uint16_t)(sizeof EV / sizeof EV[0]);
+        memcpy(d.ev, EV, sizeof EV);
+        CHECK(st_save(OBJ_CFLOOP, &d, (uint32_t)__builtin_offsetof(cfl_data_t, ev) + d.nev * (uint32_t)sizeof(cfl_ev_t)) == 0,
+              "a 0.3.1 loop in flash");
+        cs.beats = 4;
+        free0 = sq_home_free();
+        sq_from_loop();
+        CHECK(free0 >= 0 && sq_has((uint32_t)free0), "the loop is pattern %c now", 'A' + free0);
+        if (free0 >= 0) {
+            const sq_pat_t *p = &sq_st.pat[free0];
+            for (i = 0; i < p->nev; i++)
+                if (p->ev[i].trk == SQ_CHORDS) {
+                    nchords++;
+                    CHECK(p->ev[i].n >= 3 && p->ev[i].bar == nchords - 1u && p->ev[i].len >= 90u,
+                          "chord %u: %u notes, bar %u, %u long", nchords, p->ev[i].n, p->ev[i].bar + 1u, p->ev[i].len);
+                }
+            CHECK(nchords == 2 && p->tb[SQ_CHORDS] == 2 && p->follow, "two chords, 2 bars, following the key");
+        }
+        CHECK(st_load(OBJ_CFLOOP, z, sizeof z) == 16 && !z[0] && !z[1] && !z[2] && !z[3], "the loop left flash");
+        memset(&sq_st, 0, sizeof sq_st);
+        sq_load();
+        CHECK(free0 >= 0 && sq_has((uint32_t)free0), "the pattern was written to flash before the loop went");
     }
     {                                                /* a stale session: a data packet without a begin */
         static uint8_t z[16];

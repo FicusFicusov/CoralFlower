@@ -264,7 +264,7 @@
     kv("readonly", (s) => s.get("flash")).catch(() => null), new Promise((ok) => setTimeout(() => ok(null), 1500))]);
   const flashSave = (buf) => kv("readwrite", (s) => s.put(buf, "flash")).catch((e) => status("Couldn’t save your data in this browser: " + e));
   $("reset").onclick = async () => {
-    if (!confirm("Forget the settings, sounds and loops saved in this browser?")) return;
+    if (!confirm("Forget the settings, sounds and patterns saved in this browser?")) return;
     await kv("readwrite", (s) => s.delete("flash")).catch(() => {});
     location.reload();
   };

@@ -47,9 +47,9 @@ typedef struct {
     uint8_t bars;                                /* 0: empty (never written); else its first count of bars (how long
                                                   * it plays: sq_len, its longest track's) */
     uint8_t ts[SQ_NTRK];                         /* each track's first bar: its bars ts .. ts + tb - 1 play, the others
-                                                  * keep their steps (the screen's green side bars; K4 PLAYS moves them
+                                                  * keep their steps (the screen's green side bars; K4 POSITION moves them
                                                   * up and down, the owner's mock-up). A track's own (the owner,
-                                                  * 2026-10-19: PLAYS turned on the drums moved the chords too) */
+                                                  * 2026-10-19: PLAYS, now POSITION, turned on the drums moved the chords too) */
     uint8_t tb[SQ_NTRK];                         /* each track's own bars from its ts (BARS in its editor): a shorter
                                                   * track plays round under the longer ones, from start each time,
                                                   * and an empty bar of it is silence (the owner, 2026-10-19: a bar of
@@ -335,7 +335,7 @@ static uint32_t sq_len_steps(const sq_pat_t *p, const sq_ev_t *e)
  * steps written next go by the new grid; a step off it stands between its marks) */
 static void sq_set_steps(sq_pat_t *p, uint32_t trk, uint32_t b, uint32_t k) { p->steps[trk][b] = (uint8_t)k; }
 
-/* track trk's first bar (K4 PLAYS) */
+/* track trk's first bar (K4 POSITION) */
 static uint32_t sq_ts(const sq_pat_t *p, uint32_t trk)
 {
     uint32_t s = p->ts[trk % SQ_NTRK];

@@ -383,40 +383,18 @@ static void draw_generic(void)
         draw_hints(H, 1);
         break;
     }
-    case SCR_SAVE: {                             /* the name being given, its letter under edit; Chord / Bass / Loop */
-        static const char *const PG[4] = {"Chord", "Bass", "Layer", "Loop"};
+    case SCR_SAVE: {                             /* the name being given, its letter under edit; Chord / Bass / Layer */
+        static const char *const PG[3] = {"Chord", "Bass", "Layer"};
         static const char *const H[4] = {"SELECT", "part", "SAVE", "hold"};
         uint32_t part = cf_save_part();
         char pre[13];
-        if (cu.page[SCR_SAVE] == CF_SAVE_LOOP) {   /* the loop */
-            char b[24];
-            cv_loop_note(b);
-            draw_head(cf_sn.loop_len ? "Loop" : "No loop");
-            draw_pager(3, 4, 1, PG[3]);
-            if (cf_sn.loop_len && cf_sn.loop_gen != cu.loop_saved_gen)
-                fb_text_r(&CF_FONT_UI, 234, HEAD_LINE, "not saved", C_ACC(1), 1);
-            else if (b[0])
-                fb_text_r(&CF_FONT_UI, 234, HEAD_LINE, b, FL_INK3, 1);
-            draw_view(view_save_loop);
-            draw_hints(H, 2);
-            break;
-        }
         draw_head(cu.save_name[0] ? cu.save_name : " ");
         str_cpy(pre, cu.save_name, (uint32_t)cu.save_cur + 1u);
         fb_rect(6 + fb_text_w(&CF_FONT_UI, pre, 2), HEAD_Y + 25, 13, 2, C_ACC(0));   /* (under the letter K3 sets) */
-        draw_pager((int)part, 4, 1, PG[part]);
+        draw_pager((int)part, 3, 1, PG[part]);
         if (cu.edited[part])
             fb_text_r(&CF_FONT_UI, 234, HEAD_LINE, "edited", C_ACC(1), 1);
         draw_view(view_save);
-        draw_hints(H, 2);
-        break;
-    }
-    case SCR_LOOP: {                             /* the loop's state; how long, how many layers; the timeline */
-        static const char *const H[4] = {"REC", "record", "PLAY", "play"};
-        char b[24];
-        cv_loop_note(b);
-        draw_title(cv_loop_state(), b);
-        draw_view(view_loop);
         draw_hints(H, 2);
         break;
     }
@@ -489,10 +467,38 @@ static void draw_popup(void)
         fb_text_c(&CF_FONT_UI, 120, Y_VIEW + 61, b, FL_INK, 2);
         break;
     }
-    case POP_MSG:
-        draw_panel(20, Y_VIEW + 56, 200, 36);
-        fb_text_c(&CF_FONT_UI, 120, Y_VIEW + 67, cu.msg, FL_INK, 1);
+    case POP_MSG: {                              /* one line, or two (a '\n'); a button's name as a chip */
+        char a[64];
+        int i;
+        str_cpy(a, cu.msg, sizeof a);
+        for (i = 0; a[i] && a[i] != '\n'; i++)
+            ;
+        if (a[i]) {
+            a[i] = 0;
+            draw_panel(14, Y_VIEW + 50, 212, 48);
+            draw_chip_text_c(Y_VIEW + 59, a, FL_INK);
+            draw_chip_text_c(Y_VIEW + 75, a + i + 1, FL_INK);
+        } else {
+            draw_panel(20, Y_VIEW + 56, 200, 36);
+            draw_chip_text_c(Y_VIEW + 67, a, FL_INK);
+        }
         break;
+    }
+    case POP_SEQHINT: {                          /* the first take from HOME: it is a pattern of the SEQUENCER, and
+                                                  * how to get to it (the owner, 2026-10-19: "давал бы как-то понять что
+                                                  * это секвенсор и как его открывать после первой записи") */
+        char t[24];
+        str_cpy(t, "Saved as Pattern X", sizeof t);
+        t[17] = (char)('A' + sqk.last % SQ_NPAT);
+        draw_panel(12, Y_VIEW + 6, 216, 110);
+        fb_text_c(&CF_FONT_UI, 120, Y_VIEW + 13, t, C_ACC(0), 1);
+        fb_text_c(&CF_FONT_UI, 120, Y_VIEW + 27, "in the SEQUENCER", FL_INK, 1);
+        draw_chip_text(26, Y_VIEW + 47, "[SEQ] [SEQ]: open it", FL_INK2);
+        draw_chip_text(26, Y_VIEW + 63, "[PLAY]: play, stop", FL_INK2);
+        draw_chip_text(26, Y_VIEW + 79, "[REC]: a new pattern", FL_INK2);
+        draw_chip_text(26, Y_VIEW + 95, "hold [REC]: undo it", FL_INK2);
+        break;
+    }
     default: break;
     }
 }
@@ -523,7 +529,7 @@ static void cf_ui_draw(void)
                 fb_text(&CF_FONT_UI, x + 3, Y_TOP + 1, "ARP", FL_BG, 1);
                 x -= 4;
             }
-            if (cf_sn.sq_on) {                   /* the sequencer plays: its pattern (the song's) and bar */
+            if (cf_sn.sq_on && !sqk.on) {        /* the sequencer plays: its pattern (the song's) and bar */
                 char b[12];
                 int w;
                 str_cpy(b, cf_sn.sq_song ? "SONG " : "SEQ ", sizeof b);
@@ -536,22 +542,21 @@ static void cf_ui_draw(void)
                 fb_text(&CF_FONT_UI, x + 9, Y_TOP + 1, b, FL_INK, 1);
                 x -= 4;
             }
-            if (cf_sn.loop_cap != CFL_CAP_NONE || cf_sn.loop_state != CFL_EMPTY) {   /* the loop: REC / where */
+            if (sqk.on) {                        /* a take from HOME: its count-in, then its bar of 8 */
                 char b[12];
-                int rec = cf_sn.loop_cap == CFL_CAP_REC || cf_sn.loop_cap == CFL_CAP_OD ||
-                          cf_sn.loop_cap == CFL_CAP_COUNTIN, w;
-                if (cf_sn.loop_cap == CFL_CAP_REC)
-                    cv_loop_place(b, cf_sn.loop_rec);
-                else if (cf_sn.loop_state == CFL_PLAYING)
-                    cv_loop_place(b, cf_sn.loop_pos);
-                else
-                    str_cpy(b, cf_sn.loop_cap == CFL_CAP_NONE ? "LOOP" : "REC", sizeof b);
+                int w, rec = sqk.rolled;
+                if (rec) {
+                    str_cpy(b, "REC ", sizeof b);
+                    kint(b + 4, (int)(sqk.nbar % SQ_BARS) + 1, "/8");
+                } else {
+                    str_cpy(b, "REC in ", sizeof b);
+                    b[7] = (char)('0' + (cf_sn.sq_cin + SQ_PPQN - 1u) / SQ_PPQN % 10u);
+                    b[8] = 0;
+                }
                 w = fb_text_w(&CF_FONT_UI, b, 1) + 12;
                 x -= w;
-                fb_rbox(x, Y_TOP + 2, w, 11, 2, rec ? FL_C(FL_R_FIRE, 2) : cf_sn.loop_state == CFL_PLAYING ?
-                        cf_panel(2) : FL_BG2);
-                fb_rect(x + 3, Y_TOP + 5, 4, 4, rec ? FL_INK : cf_sn.loop_cap != CFL_CAP_NONE ?
-                        FL_C(FL_R_FIRE, 1) : cf_sn.loop_state == CFL_PLAYING ? C_ACC(0) : FL_INK3);
+                fb_rbox(x, Y_TOP + 2, w, 11, 2, rec ? FL_C(FL_R_FIRE, 2) : FL_BG2);
+                fb_rect(x + 3, Y_TOP + 5, 4, 4, rec ? FL_INK : FL_C(FL_R_FIRE, 1));
                 fb_text(&CF_FONT_UI, x + 9, Y_TOP + 1, b, FL_INK, 1);
             }
         }

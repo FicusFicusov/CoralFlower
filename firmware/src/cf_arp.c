@@ -49,8 +49,8 @@ typedef struct {
 static cfa_t cfa_k = {.part = 0xFF}, cfa_sq[2] = {{.part = 0}, {.part = 2}};
 static cfa_t *cfa_at = &cfa_k;
 #define cfa (*cfa_at)
-static void sqp_off(uint32_t part, uint32_t note);   /* (cf_seqp.c: a note of the sequencer's let go, unless the keys or
-                                                     * the loop sound it) */
+static void sqp_off(uint32_t part, uint32_t note);   /* (cf_seqp.c: a note of the sequencer's let go, unless the keys
+                                                     * sound it) */
 static uint32_t cfa_part(void) { return cfa.part == 0xFFu ? cfp_cp : cfa.part; }
 
 static uint32_t cfa_bpm(void) { return cfp_cfg.bpm >= 30u && cfp_cfg.bpm <= 300u ? cfp_cfg.bpm : 120u; }
@@ -134,8 +134,8 @@ static void cfa_play(uint32_t note)
 #ifdef CF_TRACE
     fprintf(stderr, "%6u arp %u\n", (unsigned)cf_now_ms, (unsigned)note);
 #endif
-    if (cfa_at == &cfa_k || (!cfp_holds(cfa_part(), note) && !cfl_holds(cfa_part(), note)))
-        cfp_on(cfa_part(), note, cfp_cfg.vel);       /* (the sequencer's: not over a note the keys or the loop hold) */
+    if (cfa_at == &cfa_k || !cfp_holds(cfa_part(), note))
+        cfp_on(cfa_part(), note, cfp_cfg.vel);       /* (the sequencer's: not over a note the keys hold) */
     cfa.steps++;
     cfa.last_note = (uint8_t)note;
 }

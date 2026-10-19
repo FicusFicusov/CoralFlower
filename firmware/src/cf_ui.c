@@ -8,6 +8,7 @@
  */
 
 static void cf_message(const char *s);
+static void cf_pop(uint32_t kind, uint32_t ms);
 static int cf_editing_part(void);
 static void cf_edited(uint32_t part);
 static void cf_save_open(void);
@@ -129,10 +130,9 @@ static uint32_t env_part(void)
 {
     return cu.env_tgt == 2u ? CF_PART_BASS : cu.env_tgt == 3u ? CF_PART_LAYER : CF_PART_CHORD;
 }
-/* SAVE's pages: the chord's sound, the bass's, the LAYER's (the sequencer's third sound: the owner, 2026-10-19), the
- * loop */
-#define CF_SAVE_LOOP 3u
-static uint32_t cf_save_part(void) { return cu.page[SCR_SAVE] < CF_SAVE_LOOP ? cu.page[SCR_SAVE] : 0u; }
+/* SAVE's pages: the chord's sound, the bass's, the LAYER's (the sequencer's third sound: the owner, 2026-10-19) */
+#define CF_SAVE_NPG 3u
+static uint32_t cf_save_part(void) { return cu.page[SCR_SAVE] < CF_SAVE_NPG ? cu.page[SCR_SAVE] : 0u; }
 
 /* the first chord button SEL can edit: the first that is not Off (Side has no Off) */
 static uint8_t sel_first(void)
@@ -236,35 +236,8 @@ static void ui_knob_info(int k, cf_knob_t *o)
         default: kfmt(o->name, 12, "OCTAVER"); kfmt(o->val, 14, cs.octaver ? "On" : "Off"); break;
         }
         break;
-    case SCR_LOOP:                               /* LENGTH MODE QUANTIZE COUNT-IN */
-        if (k == 0) {
-            kfmt(o->name, 12, "LENGTH");
-            if (cs.loop.bars % CF_LOOP_NBARS)
-                kint(o->val, CF_LOOP_BARS[cs.loop.bars % CF_LOOP_NBARS], cs.loop.bars == 1u ? " bar" : " bars");
-            else
-                kfmt(o->val, 14, "Free");
-        } else if (k == 1) {
-            kfmt(o->name, 12, "MODE");
-            kfmt(o->val, 14, cs.loop.mode ? "Overdub" : "New");   /* (REC over a loop: a new take, or a layer) */
-        } else if (k == 2) {
-            static const char *const Q[3] = {"Off", "1/8", "1/16"};
-            kfmt(o->name, 12, "QUANTIZE");
-            kfmt(o->val, 14, Q[cs.loop.quant % 3u]);
-        } else {
-            kfmt(o->name, 12, "COUNT-IN");
-            kfmt(o->val, 14, cs.loop.count_in ? "On" : "Off");
-            o->dis = !(cs.loop.bars % CF_LOOP_NBARS);   /* (a Free take starts with its first chord) */
-        }
-        break;
     case SCR_SAVE: {
         uint32_t part = cf_save_part();
-        if (cu.page[SCR_SAVE] == CF_SAVE_LOOP) {           /* the loop: only ACTION */
-            if (k == 3) {
-                kfmt(o->name, 12, "ACTION");
-                kfmt(o->val, 14, cu.save_del ? "Delete" : "Save");
-            }
-            break;
-        }
         if (k == 0) {
             kfmt(o->name, 12, "SAVE AS");
             kfmt(o->val, 14, cu.save_new ? "New" : "Replace");
@@ -459,24 +432,8 @@ static void ui_knob_turn(int k, int d)
             cs.octaver = (uint8_t)(d > 0);
         cf_send_config();
         break;
-    case SCR_LOOP:
-        if (k == 0)
-            cs.loop.bars = (uint8_t)clampi(cs.loop.bars + d, 0, (int)CF_LOOP_NBARS - 1);
-        else if (k == 1)
-            cs.loop.mode = (uint8_t)(d > 0);
-        else if (k == 2)
-            cs.loop.quant = (uint8_t)clampi(cs.loop.quant + d, 0, 2);
-        else
-            cs.loop.count_in = (uint8_t)(d > 0);
-        cf_send_config();
-        break;
     case SCR_SAVE: {
         uint32_t part = cf_save_part(), n;
-        if (cu.page[SCR_SAVE] == CF_SAVE_LOOP) {
-            if (k == 3)
-                cu.save_del = (uint8_t)(d > 0);
-            break;
-        }
         if (k == 0 && cf_snd[part].kind != PK_INIT) {
             cu.save_new = (uint8_t)(d > 0);
             cf_save_name_init();
@@ -600,8 +557,11 @@ static void cf_pop(uint32_t kind, uint32_t ms)
 }
 static void cf_message(const char *s)
 {
+    uint32_t i;
     str_cpy(cu.msg, s, sizeof cu.msg);
-    cf_pop(POP_MSG, 1200);
+    for (i = 0; cu.msg[i] && cu.msg[i] != '\n'; i++)
+        ;
+    cf_pop(POP_MSG, cu.msg[i] ? 2500u : 1200u);  /* (two lines: longer to read) */
 }
 /* what the kept files (upreset.c, fm6_store.c) say goes into the message popup */
 static void ui_message(const char *s) { cf_message(s); }
@@ -622,8 +582,8 @@ static uint32_t screen_pages(uint32_t scr)
     if (scr == SCR_ARP)
         return 2u;                               /* Pattern, Feel */
     if (scr == SCR_SAVE)
-        return 4u;                               /* the chord's sound, the bass's, the LAYER's, the loop (a pattern's
-                                                  * copy: OCT+ held on the SEQUENCER, cf_sequi.c) */
+        return CF_SAVE_NPG;                      /* the chord's sound, the bass's, the LAYER's (a pattern's copy: OCT+
+                                                  * held on the SEQUENCER, cf_sequi.c) */
     if (scr == SCR_EDIT)
         return cfe_npages(cu.edit_part, cu.edit_sec);
     return 1u;
@@ -675,7 +635,7 @@ static void ui_select(int d)                     /* SELECT: the bass sound, or a
         cv_turned(d);
         if (cu.scr == SCR_SAVE)
             cf_send_config();                    /* (the LAYER's page: the keys play its sound) */
-        if (cu.scr == SCR_SAVE && cu.page[SCR_SAVE] < CF_SAVE_LOOP) {   /* the other part: its sound, its name */
+        if (cu.scr == SCR_SAVE) {                /* the other part: its sound, its name */
             uint32_t part = cf_save_part();
             cu.save_del = 0;
             cu.save_new = cf_snd[part].kind == PK_INIT || !(cu.edited[part] || cf_snd[part].kind == PK_USER);
@@ -767,8 +727,8 @@ static void ui_open(uint32_t scr)
     squ.help = squ.help_hold = 0;
     if (cu.scr != was) {                         /* a hold begun on one screen does nothing on the next: OCT+ held in a
                                                   * track and let go on the SEQUENCER copied a pattern, SEL held cleared
-                                                  * a track there at once, REC let go on HOME started the looper (a
-                                                  * review, 2026-10-19) */
+                                                  * a track there at once, REC let go on HOME started a take (a review,
+                                                  * 2026-10-19) */
         squ.oct_down = squ.sel_down = 0;
         squ.ocpy = squ.cpy = 0;
         cu.rec_hold = 0;
@@ -831,6 +791,9 @@ static void ui_button(uint32_t b)
 {
     if (cfr.go)                                  /* (erasing: no button any more) */
         return;
+    if (cu.pop == POP_SEQHINT)                   /* (the panel after the first take: any button closes it, and does
+                                                  * what it does: SEQ opens the sequencer at once) */
+        cu.pop_until = 0;
     if (cf_reset_page() && b == B_SAVE) {
         cf_reset_save();
         return;
@@ -916,11 +879,10 @@ static void ui_button(uint32_t b)
             cf_save_open();
         }
         break;
-    case B_PLAY:                                 /* a tap plays / stops, a hold opens the LOOPER (cf_loop_poll) */
-        cu.play_hold = cu.now ? cu.now : 1u;
-        cu.play_fired = 0;
+    case B_PLAY:                                 /* the last pattern plays / stops (cf_sequi.c sq_home_play) */
+        sq_home_play();
         break;
-    case B_REC:                                  /* a tap records, a hold undoes the last layer (cf_loop_poll) */
+    case B_REC:                                  /* a tap records a new pattern, a hold undoes (cf_rec_poll) */
         cu.rec_hold = cu.now ? cu.now : 1u;
         cu.rec_fired = 0;
         break;
@@ -967,53 +929,12 @@ static void cf_save_open(void)
 {
     uint32_t part = cu.scr == SCR_EDIT ? cu.edit_part : cu.scr == SCR_ENV ? env_part() : cu_ctx < 3u ? cu_ctx :
                     (!cu.edited[0] && cu.edited[1]) ? 1u : (!cu.edited[0] && cu.edited[2]) ? 2u : 0u;
-    cu.page[SCR_SAVE] = (uint8_t)(cu.scr == SCR_LOOP ? CF_SAVE_LOOP : part);   /* (from the LOOPER: the loop) */
+    cu.page[SCR_SAVE] = (uint8_t)part;
     cu.save_new = cf_snd[part].kind == PK_INIT || !(cu.edited[part] || cf_snd[part].kind == PK_USER);
     cu.save_hold = 0;
     cu.save_del = 0;
     cf_save_name_init();
     ui_open(SCR_SAVE);
-}
-/* SAVE > Loop: the loop kept in flash (OBJ_CFLOOP), or deleted there and in memory */
-static cfl_data_t cf_loop_buf __attribute__((section(".pool")));
-static void cf_loop_save(int del)
-{
-    uint32_t size;
-    if (cr_safe) {
-        cf_message("Safe mode: no saving");
-        return;
-    }
-    if (cf_sn.loop_cap != CFL_CAP_NONE) {
-        cf_message("Stop recording first");
-        return;
-    }
-    if (del) {
-        memset(&cf_loop_buf, 0, 16u);
-        cf_post(CFE_LOOP, 3, 0, 0);
-        if (st_save(OBJ_CFLOOP, &cf_loop_buf, 16u)) {
-            cf_message("Delete error");
-            return;
-        }
-        cf_message("Loop deleted");
-        cu.loop_saved_gen = (uint8_t)(cf_sn.loop_gen + 1u);
-        ui_open(SCR_HOME);
-        return;
-    }
-    if (cf_sn.loop_state == CFL_EMPTY) {
-        cf_message("No loop to save");
-        return;
-    }
-    fm1_irq_off();                               /* (a still copy: the audio side plays from it) */
-    memcpy(&cf_loop_buf, &cfl.d, sizeof cf_loop_buf);
-    fm1_irq_on();
-    size = (uint32_t)__builtin_offsetof(cfl_data_t, ev) + cf_loop_buf.nev * (uint32_t)sizeof(cfl_ev_t);
-    if (st_save(OBJ_CFLOOP, &cf_loop_buf, size)) {
-        cf_message("Save error");
-        return;
-    }
-    cu.loop_saved_gen = cf_sn.loop_gen;
-    cf_message("Loop saved");
-    ui_open(SCR_HOME);
 }
 static void cf_save_delete(void)
 {
@@ -1066,7 +987,7 @@ static void cf_save_do(void)
 }
 /* every frame: PLAY and REC, a tap (on its release) or a hold. PLAY held 0.6 s: the LOOPER screen; REC tapped: the
  * loop's action and the LOOPER screen; REC held 1 s: the last layer undone (as ChoralRoot's) */
-static void cf_loop_poll(void)
+static void cf_rec_poll(void)
 {
     if (cf_sn.ext_clock && cf_sn.ext_bpm >= 30u && cf_sn.ext_bpm <= 300u && cf_sn.ext_bpm != cs.bpm) {
         cs.bpm = cf_sn.ext_bpm;                  /* (MIDI clock in: the tempo it makes, on the knobs; the audio side
@@ -1074,21 +995,6 @@ static void cf_loop_poll(void)
         fm1_irq_off();
         cfp_cfg.bpm = cs.bpm;
         fm1_irq_on();
-    }
-    if (cu.play_hold) {
-        int held = (fm1_in.buttons >> panel.btn[B_PLAY]) & 1u;
-        if (held && !cu.play_fired && cu.now - cu.play_hold >= 600u) {
-            cu.play_fired = 1;
-            ui_open(cu.scr == SCR_LOOP ? SCR_HOME : SCR_LOOP);
-        } else if (!held) {
-            if (!cu.play_fired) {
-                if (cf_sn.sq_on)                 /* (the sequencer plays: PLAY stops it, wherever) */
-                    cf_post(CFE_SEQ, 0, 0, 0);
-                else
-                    cf_post(CFE_LOOP, 1, 0, 0);
-            }
-            cu.play_hold = 0;
-        }
     }
     if (cu.rec_hold && sq_screen(cu.scr)) {      /* the sequencer: a tap records, held 1 s undoes (as the looper's) */
         int held = (fm1_in.buttons >> panel.btn[B_REC]) & 1u;
@@ -1106,20 +1012,14 @@ static void cf_loop_poll(void)
         }
         return;
     }
-    if (cu.rec_hold) {
+    if (cu.rec_hold) {                           /* away from the sequencer: a tap a new pattern, held 1 s undo */
         int held = (fm1_in.buttons >> panel.btn[B_REC]) & 1u;
         if (held && !cu.rec_fired && cu.now - cu.rec_hold >= 1000u) {
             cu.rec_fired = 1;
-            cf_message(cf_sn.loop_layers > 1u ? "Last layer undone" : cf_sn.loop_state != CFL_EMPTY ||
-                       cf_sn.loop_cap != CFL_CAP_NONE ? "Loop cleared" : "Nothing to undo");
-            cf_post(CFE_LOOP, 2, 0, 0);
+            sq_home_undo();
         } else if (!held) {
-            if (!cu.rec_fired) {
-                cf_post(CFE_LOOP, 0, 0, 0);
-                if (cu.scr != SCR_LOOP)              /* REC tapped: the LOOPER screen opens with it (the owner looked
-                                                      * for it there, 2026-10-15; PLAY held still opens it too) */
-                    ui_open(SCR_LOOP);
-            }
+            if (!cu.rec_fired)
+                sq_home_rec();
             cu.rec_hold = 0;
         }
     }
@@ -1136,9 +1036,7 @@ static void cf_save_poll(void)
         cu.save_hold = 0;
     } else if (held && cu.now - cu.save_hold >= 1000u) {
         cu.save_hold = 0;
-        if (cu.page[SCR_SAVE] == CF_SAVE_LOOP)
-            cf_loop_save(cu.save_del);
-        else if (cu.save_del)
+        if (cu.save_del)
             cf_save_delete();
         else
             cf_save_do();
@@ -1202,11 +1100,12 @@ static void cf_ui_input(void)
 {
     uint32_t rel = 0, pr = fm1_input_edges(&rel), i;
     int32_t d;
+    sq_home_poll();                              /* (a take from HOME ended: its bars, before its undo is kept) */
     sq_undo_poll();                              /* (before the input: the state an edit starts from) */
     cf_ui_pump();
     cf_save_poll();
     cf_reset_poll();
-    cf_loop_poll();
+    cf_rec_poll();
     sq_glo_poll();
     sq_write_poll();
     sq_rec_poll();
@@ -1379,7 +1278,7 @@ static void cf_leds(void)
 {
     uint8_t lit[FM1_NCOL] = {0}, mid[FM1_NCOL] = {0}, dim[FM1_NCOL] = {0}, faint[FM1_NCOL] = {0};
     static const uint8_t SCR_BTN[SCR_N] = {B_HOME, B_SCL, B_ENV, B_LFO, B_EDIT, B_GLO, B_FX, B_ARP, B_SEQ, B_SAVE,
-                                           B_PLAY, B_SEQ, B_SEQ};
+                                           B_SEQ, B_SEQ};
     const cf_chord_out_t *out = &cf_sn.out;
     uint32_t k, blink = (cu.now / 250u) & 1u, sq = sq_screen(cu.scr);
     /* buttons: the open screen lit, the others dim; PLAY with the beat. The sequencer: only what works there is up
@@ -1416,16 +1315,14 @@ static void cf_leds(void)
         else if (squ.pat < SQ_NPAT)
             cf_led(dim, panel.btn[B_REC], 1);
     } else {
-        if (cf_sn.loop_cap == CFL_CAP_ARMED || cf_sn.loop_cap == CFL_CAP_OD_ARMED)   /* REC: armed lit, taking blinks */
-            cf_led(lit, panel.btn[B_REC], 1);
-        else if (cf_sn.loop_cap != CFL_CAP_NONE)
-            cf_led(blink ? lit : faint, panel.btn[B_REC], 1);
+        if (sqk.on)                              /* REC: a take from here lit, its count-in blinking (as in a track) */
+            cf_led(cf_sn.sq_cin || !sqk.seen ? (blink ? lit : faint) : lit, panel.btn[B_REC], 1);
         else
             cf_led(dim, panel.btn[B_REC], 1);
-        if (cf_sn.running)                       /* PLAY: with the beat while it runs; a loop stopped: mid */
+        if (cf_sn.running)                       /* PLAY: with the beat while it runs; a pattern to play: mid */
             cf_led((int32_t)(cf_sn.now_ms - cf_sn.beat_ms) < 120 ? lit : mid, panel.btn[B_PLAY], 1);
         else
-            cf_led(cf_sn.loop_state == CFL_STOPPED ? mid : dim, panel.btn[B_PLAY], 1);
+            cf_led(sqk.last < SQ_NPAT && sq_has(sqk.last) ? mid : dim, panel.btn[B_PLAY], 1);
         if (cf_sn.sq_on)                         /* the sequencer plays elsewhere: SEQ up, as ARP is */
             cf_led(mid, panel.btn[B_SEQ], 1);
     }
@@ -1546,14 +1443,9 @@ static void cf_ui_init(void)
     cf_palette_build();
     cu_spell_update();
     cf_out_init();
-    if (!cr_safe) {                              /* the loop kept in flash: ready, stopped (the audio side idle) */
-        int n = st_load(OBJ_CFLOOP, &cfl.d, sizeof cfl.d);
-        if (n < (int)__builtin_offsetof(cfl_data_t, ev) ||
-            n < (int)(__builtin_offsetof(cfl_data_t, ev) + cfl.d.nev * sizeof(cfl_ev_t)))
-            cfl.d.magic = 0;
-        cfl_loaded();
-        cu.loop_saved_gen = cfl.gen;
+    if (!cr_safe) {
         sq_load();                               /* the sequencer's patterns and song */
+        sq_from_loop();                          /* (a loop kept by 0.3.1 or before, or restored: a pattern now) */
     } else {
         sq_defaults();
     }

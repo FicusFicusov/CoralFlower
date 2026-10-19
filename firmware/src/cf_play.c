@@ -29,7 +29,8 @@ typedef struct {                /* the arpeggiator's settings (ARP; cf_arp.c) */
 } cf_arp_t;
 #define CF_ARP_DEFAULT {0, 1, 4, 70, 50, 0, 40}
 
-typedef struct {                /* the looper's settings (the LOOPER screen; cf_loop.c) */
+typedef struct {                /* the looper's settings up to 0.3.1: unused since 0.4 has no looper, kept so the
+                                 * settings record keeps its layout */
     uint8_t bars;               /* the take's length: 0 Free, else CF_LOOP_BARS[bars] bars after a count-in */
     uint8_t mode;               /* REC over a loop: 0 Overwrite (a new take), 1 Overdub (a layer on top) */
     uint8_t quant;              /* 0 off, 1 a 1/8, 2 a 1/16: the chords' starts as they are recorded */
@@ -37,10 +38,8 @@ typedef struct {                /* the looper's settings (the LOOPER screen; cf_
 } cf_loop_t;
 #define CF_LOOP_DEFAULT {0, 0, 0, 1}
 
-/* the looper (cf_loop.c, in cf_out.c): a note it sounds (the keys' player leaves such a note sounding when it lets
- * it go: the last of the two lets it go); its chord now (n: its notes, 0 none) */
-static int cfl_holds(uint32_t part, uint32_t note);
-static const cf_chord_out_t *cfl_chord(int *n);
+/* a note the keys' player sounds, a note the sequencer sounds (each leaves such a note sounding when it lets it go:
+ * the last of the two lets it go) */
 static int cfp_holds(uint32_t part, uint32_t note);   /* (below: a note the keys' player sounds) */
 static int sqp_holds(uint32_t part, uint32_t note);   /* (cf_seqp.c: a note the sequencer sounds) */
 
@@ -117,8 +116,7 @@ static void cfp_on(uint32_t part, uint32_t note, uint32_t vel)
 }
 static void cfp_off(uint32_t part, uint32_t note)
 {
-    if (cfl_holds(part, note) || sqp_holds(part, note))   /* (the loop or the sequencer sounds it too: it goes when
-                                                              * they let go) */
+    if (sqp_holds(part, note))                   /* (the sequencer sounds it too: it goes when it lets go) */
         return;
     trk_note_off(&trk[part], note);
     cfp_midi(0x80u, cfp_ch(part), note, 0);
@@ -341,7 +339,7 @@ static void cfp_change(uint32_t part, uint8_t *old, uint8_t *pn, const uint8_t *
 
 #include "cf_arp.c"                                  /* (the arpeggiator: cfa_chord, cfa_tick, cfa_config) */
 
-/* the bass notes of a chord (the keys' model's, or the loop's) */
+/* the bass notes of a chord (the keys' model's, or a sequencer step's) */
 static int cfp_bass_notes_of(const cf_chord_out_t *o, uint8_t out[2])
 {
     int n = 0, b;
@@ -362,7 +360,7 @@ static int cfp_bass_notes_of(const cf_chord_out_t *o, uint8_t out[2])
 }
 static int cfp_bass_notes(uint8_t out[2]) { return cfp_bass_notes_of(&cfc.out, out); }
 
-/* a note the keys' player sounds (the looper lets such a note go only when the keys let it go) */
+/* a note the keys' player sounds (the sequencer lets such a note go only when the keys let it go) */
 static int cfp_holds(uint32_t part, uint32_t note)
 {
     uint32_t i;
@@ -406,8 +404,7 @@ static void cfp_sync(int how)
 {
     const cf_chord_out_t *o = &cfc.out;
     uint8_t nb[2];
-    int m = o->sounding ? o->n : 0, mb = cfp_cp ? 0 : cfp_bass_notes(nb), lm = 0;   /* (the LAYER: no bass) */
-    const cf_chord_out_t *lo = 0;
+    int m = o->sounding ? o->n : 0, mb = cfp_cp ? 0 : cfp_bass_notes(nb);   /* (the LAYER: no bass) */
     /* RETRIG Off: a chord changed while the last one still sounds under held keys (another chord button, another
      * root) moves its voices there with no new attack, at the Glide time (0: at once) */
     int glide = (cfp_cfg.glide_ms || cfp_cfg.retrig != CF_RT_STRIKE) && cfp.n && m;
@@ -441,12 +438,7 @@ static void cfp_sync(int how)
         fprintf(stderr, "\n");
     }
 #endif
-    if (cfa.on && !m && !(cfp_cfg.arp.latch && cfa.n))
-        lo = cfl_chord(&lm);                         /* ARP, the keys let go (no LATCH): the loop's chord, if one plays */
-    if (lm) {
-        cfa_chord(lo, lm);
-        cfp.n = 0;
-    } else if (cfa_chord(o, m)) {                    /* ARP: the arpeggiator plays part 0; its notes are the chord */
+    if (cfa_chord(o, m)) {                    /* ARP: the arpeggiator plays part 0; its notes are the chord */
         int i;
         for (i = 0; i < m; i++)
             cfp.note[i] = o->note[i];

@@ -12,7 +12,7 @@
 #define VIEW_Y (Y_VIEW + 54)                     /* the picture: VIEW_Y .. VIEW_Y + VIEW_H */
 #define VIEW_H 82
 
-/* the beat runs (the metronome's clock: PLAY, a loop, SEQ open, MIDI clock in): the arpeggiator is locked to it */
+/* the beat runs (the metronome's clock: PLAY, the sequencer, SEQ open, MIDI clock in): the arpeggiator is locked to it */
 static int cf_grid_shown(void) { return cf_sn.running || cf_sn.metro_on || cf_sn.ext_clock; }
 
 /* ------------------------------------------------------------- icons --- */
@@ -31,7 +31,6 @@ static const cf_icon_t CF_ICON[SCR_N] = {
     [SCR_ARP] = {8, 7, {".......#", ".......#", ".....###", ".....#..", "...###..", "...#....", "####...."}},
     [SCR_SEQ] = {7, 7, {"...#...", "...#.#.", "..#.#..", "..##...", ".#...#.", ".#...#.", "#######"}},
     [SCR_SAVE] = {7, 7, {"######.", "#.##.##", "#.##..#", "#.....#", "#.###.#", "#.###.#", "#######"}},
-    [SCR_LOOP] = {7, 7, {"..###.#", ".#...##", "#...###", "#......", "#.....#", ".#...#.", "..###.."}},
 };
 static void draw_icon(int xr, int ymid, uint32_t scr, uint8_t c)   /* xr: its right edge */
 {
@@ -319,21 +318,20 @@ static uint8_t cv_play_mark(int n)               /* (draw_keyline's marks: the s
         sc = cf_scale_step(cs.chord.scale, i) % 12 == pc;
     return sc ? FL_INK3 : 0;
 }
-/* GLOBAL > Reset: what goes (the sounds, the patterns, the loop, the settings), four pictures; under them the step
+/* GLOBAL > Reset: what goes (the sounds, the patterns, the settings), three pictures; under them the step
  * the reset is at (cf_ui.c cfr): how to begin, the hold's bar, the last question with its seconds, the erase */
 static void view_reset(int x0)
 {
-    static const char *const IC[4][7] = {
+    static const char *const IC[3][7] = {
         {"...##..", "...#.#.", "...#...", "...#...", ".###...", "####...", ".##...."},   /* a note: the sounds */
         {"..#.#..", ".#####.", "..###..", "...#...", ".#.#...", "..##...", "...#..."},   /* a flower: the patterns */
-        {"..###..", ".#...#.", "#.....#", "#...###", "#....#.", ".#.....", "..###.."},   /* round: the loop */
         {"..#.#..", ".#####.", "##...##", ".#...#.", "##...##", ".#####.", "..#.#.."},   /* a gear: the settings */
     };
-    static const char *const NM[4] = {"sounds", "patterns", "loop", "settings"};
+    static const char *const NM[3] = {"sounds", "patterns", "settings"};
     uint8_t warn = FL_C(FL_R_FIRE, 1), ink = cfr.arm || cfr.fin || cfr.go ? warn : FL_INK2;
     int i, j, k;
-    for (k = 0; k < 4; k++) {
-        int cx = x0 + 28 + k * 54, y = VIEW_Y - 4;   /* (54 apart: "patterns" and "settings" fit) */
+    for (k = 0; k < 3; k++) {
+        int cx = x0 + 44 + k * 64, y = VIEW_Y - 4;   /* (64 apart, centred in the view) */
         for (j = 0; j < 7; j++)
             for (i = 0; i < 7; i++)
                 if (IC[k][j][i] == '#')
@@ -1348,151 +1346,3 @@ static void view_save(int x0)
     }
 }
 
-/* ------------------------------------------------------------- LOOPER --- */
-/* the loop on a timeline: its bars and beats, a row a layer, each chord a block from its root going down to it going
- * up (the layer being taken lit), the playhead; a take growing as it is played; the count-in counting down */
-static const char *cv_loop_state(void)
-{
-    switch (cf_sn.loop_cap) {
-    case CFL_CAP_ARMED: return "Armed";
-    case CFL_CAP_COUNTIN: return "Count-in";
-    case CFL_CAP_REC: return "Recording";
-    case CFL_CAP_OD_ARMED: return "Overdub armed";
-    case CFL_CAP_OD: return "Overdubbing";
-    default: return cf_sn.loop_state == CFL_PLAYING ? "Playing" : cf_sn.loop_state == CFL_STOPPED ? "Stopped" : "No loop";
-    }
-}
-static void cv_loop_place(char *b, uint32_t t)       /* "2.3": bar and beat */
-{
-    uint32_t beats = cfl.d.beats ? cfl.d.beats : 4u;
-    kint(b, (int)(t / (beats * CFL_PPQN) + 1u), 0);
-    str_cpy(b + str_len(b), ".", 2);
-    kint(b + str_len(b), (int)((t / CFL_PPQN) % beats + 1u), 0);
-}
-static void cv_loop_note(char *b)                    /* "4 bars  2 layers" */
-{
-    uint32_t beats = cfl.d.beats ? cfl.d.beats : 4u, bars = (cf_sn.loop_len + beats * CFL_PPQN - 1u) / (beats * CFL_PPQN);
-    b[0] = 0;
-    if (!cf_sn.loop_len)
-        return;
-    if (cf_sn.loop_len % (beats * CFL_PPQN))     /* (not whole bars: its beats) */
-        kint(b, (int)(cf_sn.loop_len / CFL_PPQN), " beats");
-    else
-        kint(b, (int)bars, bars == 1u ? " bar" : " bars");
-    if (cf_sn.loop_layers > 1u) {
-        str_cpy(b + str_len(b), "  ", 3);
-        kint(b + str_len(b), cf_sn.loop_layers, " layers");
-    }
-}
-static void draw_loop_timeline(int x, int y, int w, int rows_h, int small)
-{
-    uint32_t len = cf_sn.loop_len, beats = cfl.d.beats ? cfl.d.beats : 4u, bar = beats * CFL_PPQN, t, i, j;
-    uint32_t nl = cf_sn.loop_layers + (cf_sn.loop_cap == CFL_CAP_OD ? 1u : 0u), rh, nth = 0;
-    int rec = cf_sn.loop_cap == CFL_CAP_REC;
-    if (rec)                                     /* a take: its length if set, else as far as it got, whole bars */
-        len = cf_sn.loop_rec_len ? cf_sn.loop_rec_len : ((cf_sn.loop_rec + bar) / bar) * bar;
-    if (!len)
-        return;
-    if (!nl)
-        nl = 1u;
-    rh = (uint32_t)rows_h / (nl > 6u ? 6u : nl);
-    if (rh > 10u)
-        rh = 10u;
-    for (t = 0; t <= len; t += CFL_PPQN) {       /* the beats, the bars taller */
-        int bx = x + (int)(t * (uint32_t)w / len);   /* (32 bits: a loop's ticks x 220 px stay far below 2^32) */
-        if (t % bar == 0u)
-            fb_vline(bx, y - 3, (int)(rh * (nl > 6u ? 6u : nl)) + 5, FL_BG3);
-        else if (!small)
-            fb_vline(bx, y - 2, 2, FL_BG3);
-    }
-    for (i = 0; i < cf_sn.loop_nev && i < CFL_MAX_EV; i++) {   /* the chords: a root's down to its up */
-        const cfl_ev_t *e = &cfl.d.ev[i];
-        uint32_t layer = e->f & 0x1Fu, t1 = len, row;
-        int idx, lit = (rec && layer == 0u) || (cf_sn.loop_cap == CFL_CAP_OD && layer == cf_sn.loop_layers);
-        if (!(e->f & CFL_DOWN) || cf_key_role(cfl.d.algo, e->key, &idx) != CF_ROLE_ROOT)
-            continue;
-        for (j = i + 1u; j < cf_sn.loop_nev && j < CFL_MAX_EV; j++)
-            if (cfl.d.ev[j].key == e->key && !(cfl.d.ev[j].f & CFL_DOWN) && (cfl.d.ev[j].f & 0x1Fu) == layer) {
-                t1 = cfl.d.ev[j].t;
-                break;
-            }
-        if (rec && j >= cf_sn.loop_nev)          /* (still held: as far as the take got) */
-            t1 = cf_sn.loop_rec;
-        if (t1 <= e->t)
-            t1 = e->t + CFL_PPQN / 4u;
-        row = layer < 6u ? layer : 5u;
-        {                                        /* (one chord after another a shade apart; its root named in it) */
-            int x0 = x + (int)(e->t * (uint32_t)w / len), x1 = x + (int)(t1 * (uint32_t)w / len);
-            uint8_t c = lit ? C_ACC(0) : (nth++ & 1u) ? C_ACC(2) : C_ACC(1);
-            fb_rect(x0, y + (int)(row * rh), x1 - x0 > 1 ? x1 - x0 - 1 : 1, (int)rh - 2, c);
-            if (!small && rh >= 9u && x1 - x0 >= 12) {
-                cf_chord_cfg_t g = cs.chord;
-                int nt;
-                g.algo = cfl.d.algo;
-                nt = cf_key_root_note(&g, e->key);
-                if (nt >= 0) {
-                    char a[4];
-                    cf_pc_name(nt % 12, &cu_spell, a);
-                    fb_text(&CF_FONT_MICRO, x0 + 2, y + (int)(row * rh) + 1, a, FL_BG, 1);
-                }
-            }
-        }
-    }
-    {                                            /* the playhead (a take: its front) */
-        uint32_t p = rec ? cf_sn.loop_rec : cf_sn.loop_pos;
-        if (rec || cf_sn.loop_state == CFL_PLAYING) {
-            int px = x + (int)((p > len ? len : p) * (uint32_t)w / len);
-            fb_vline(px, y - 4, (int)(rh * (nl > 6u ? 6u : nl)) + 7, rec ? FL_C(FL_R_FIRE, 1) : FL_INK);
-        }
-    }
-}
-static void view_loop(int x0)
-{
-    char b[24];
-    if (cf_sn.loop_cap == CFL_CAP_COUNTIN) {     /* the beats left, big */
-        uint32_t left = (cf_sn.loop_cin_len - cf_sn.loop_cin + CFL_PPQN - 1u) / CFL_PPQN;
-        kint(b, (int)left, 0);
-        fb_text_c(&CF_FONT_UI, x0 + 108, VIEW_Y + 14, b, FL_C(FL_R_FIRE, 1), 3);
-        fb_text_halo(&CF_FONT_UI, x0 + 6, VIEW_Y + 62, "the take starts on beat 1", FL_INK3, FL_BG, 1);
-        return;
-    }
-    if (!cf_sn.loop_len && cf_sn.loop_cap != CFL_CAP_REC) {
-        draw_chip_text(x0 + 6, VIEW_Y + 20, cf_sn.loop_cap == CFL_CAP_ARMED ? "play a chord: it starts" :
-                       "tap [REC], then play", FL_INK2);
-        draw_chip_text(x0 + 6, VIEW_Y + 34, "hold [REC]: undo a layer", FL_INK3);
-        draw_chip_text(x0 + 6, VIEW_Y + 48, "hold [PLAY]: this screen", FL_INK3);
-        return;
-    }
-    draw_loop_timeline(x0 + 8, VIEW_Y + 8, 200, 44, 0);
-    b[0] = 0;
-    if (cf_sn.loop_cap == CFL_CAP_REC)
-        cv_loop_place(b, cf_sn.loop_rec);
-    else if (cf_sn.loop_state == CFL_PLAYING)
-        cv_loop_place(b, cf_sn.loop_pos);
-    draw_chip_text(x0 + 6, VIEW_Y + 62, cf_sn.loop_cap == CFL_CAP_OD_ARMED ? "play: a new layer" :
-                   cf_sn.loop_cap == CFL_CAP_REC ? "[REC] ends the take" : cf_sn.loop_cap == CFL_CAP_OD ?
-                   "[REC] ends the layer" : "[PLAY] plays, stops", FL_INK3);
-    if (b[0])
-        fb_text_r(&CF_FONT_UI, x0 + 208, VIEW_Y + 62, b, FL_INK2, 1);
-}
-
-/* SAVE > Loop: the loop as it is, what holding SAVE does to it, the hold's bar */
-static void view_save_loop(int x0)
-{
-    int del = cu.save_del;
-    uint8_t warn = FL_C(FL_R_FIRE, 1);
-    if (cf_sn.loop_len)
-        draw_loop_timeline(x0 + 8, VIEW_Y + 8, 200, 30, 1);
-    else
-        fb_text_halo(&CF_FONT_UI, x0 + 8, VIEW_Y + 14, "no loop: REC, then play", FL_INK3, FL_BG, 1);
-    fb_text_halo(&CF_FONT_UI, x0 + 8, VIEW_Y + 44, del ? "the loop goes, saved and all" :
-                 "kept over a power-off", del ? warn : FL_INK3, FL_BG, 1);
-    if (cu.save_hold) {
-        uint32_t t = cu.now - cu.save_hold;
-        fb_rect(x0 + 8, VIEW_Y + 64, 200, 6, FL_BG1);
-        fb_rect(x0 + 8, VIEW_Y + 64, (int)(t >= 1000u ? 200u : t * 200u / 1000u), 6, del ? warn : C_ACC(0));
-    } else {
-        draw_chip_text(x0 + 8, VIEW_Y + 62, del ? "hold [SAVE] to delete it" : "hold [SAVE] to keep it",
-                       del ? warn : FL_INK2);
-    }
-}

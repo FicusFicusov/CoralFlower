@@ -16,7 +16,7 @@
  * (fm6_bank.c; Felucca 1.0's and Melodee's older banks too, converted at the next boot), 9 the VA patch store
  * (va_store.c), 10, 11 the FM6 patch store (fm6_ustore.c, slots 1..16, 17..32). CoralFlower's own have ids of their
  * own, so a ChoralRoot record never lands in them: 30 the settings (cf_settings.c cf_rec_t, "CFS1"), 31 the loop
- * (cf_loop.c cfl_data_t, "CFL1"), 50..55 the sequencer's patterns and song (cf_sequi.c sq_store_t, "CFQ6", in its six
+ * (cf_loop.c cfl_data_t, "CFL1": 0.4 has no looper, a loop restored becomes a pattern at the next power-on), 50..55 the sequencer's patterns and song (cf_sequi.c sq_store_t, "CFQ6", in its six
  * objects as flash keeps them; 0.3.1). ChoralRoot's 1 (its settings) and 40..49 (its loops) are refused (rc 1: the page
  * reports them skipped).
  *
@@ -206,8 +206,9 @@ static int crb_current(uint32_t id, st_hdr_t *h)    /* storage.c st_current's ch
     }
     return -1;
 }
-/* a flash erase now would cut the loop: it plays or records */
-static int crb_busy(void) { return cf_sn.loop_state == CFL_PLAYING || cf_sn.loop_cap != CFL_CAP_NONE; }
+/* busy: never since 0.4 (it was the looper playing or recording: a flash erase cut it). The sequencer plays from RAM;
+ * a restore ends in a restart anyway */
+static int crb_busy(void) { return 0; }
 
 /* ------------------------------------------------------------------ LIST / GET --- */
 static void crb_list(void)
