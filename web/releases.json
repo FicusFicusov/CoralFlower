@@ -1,6 +1,19 @@
 {
  "releases": [
   {
+   "version": "0.3",
+   "tag": "v0.3",
+   "sha256": "b4220d95cc1088b9ca57d93e359fe2a4817c01981bc2363bfe32a7892c84d1bb",
+   "pkg": "coralflower-0.3.fwsc",
+   "date": "2026-10-19",
+   "title": "A sequencer for chords, bass and drums",
+   "notes": [
+    "A sequencer: eight patterns and a song, each pattern with Chords, Bass, Layer and Drums tracks.",
+    "Eleven drums in eight kits you can mix, each drum with its own level.",
+    "An arpeggio or a strum can play a track, and single notes glide too."
+   ]
+  },
+  {
    "version": "0.2",
    "tag": "v0.2",
    "sha256": "8b2eb5131ea31738d96a62e45b3d9873d3aa0e2b27ca821df816e7cc6feee039",
