@@ -1,25 +1,75 @@
-# FM-1 emulator (macOS)
+# FM-1 emulator
 
-The FM-1 firmware built for the Mac: the 240x240 LCD, the panel with its LEDs, the firmware's audio
-callback at 44.1 kHz and CoreMIDI ports. It runs the same sources as the device (`firmware/src`, the DSP
-through `tests/hostsim.c`'s sound side), with a HAL in `emu_hal_fw.h`. The instrument is ChoralRoot (`emu_firmware.h`:
-`cr_engine.c` ticking in the audio ISR, `cr_out.c`, `cr_ui.c` on `cr_draw.c`; docs/INTEGRATION.md), with the device's
-all-synth flags: no Felucca sequencer, no SAMPLE / GRAIN / DRUM, no keycaps (only the SLICER differs: on here).
+CoralFlower's firmware built for the computer. `emu_fw.c` is the firmware side: the sources `emu_firmware.h` lists
+(the `cf_*` units, the DSP through `tests/hostsim.c`'s sound side), the HAL of `emu_hal_fw.h` and the `emu_fw_*`
+hooks of `emu_hooks.h`. Three programs run it:
+
+| program | files | what for |
+|---|---|---|
+| the browser emulator | `web/`, built into `build/emu-web` | the site's `/play/`: CoralFlower with sound, no unit needed |
+| the headless runner | `cf_headless.c`, `cf_headless.sh` | scripts of presses with screenshots, dumps and a WAV; `tests/stuck_notes.py` |
+| the window app | `emu.c` and the files below, `build.sh` | ChoralRoot's, inherited (below); needs SDL2 |
+
+```sh
+sh tools/emu/web/build_web.sh                 # -> build/emu-web/{index.html, emu.js, keymap.js, worklet.js, coralflower.wasm}
+node tools/emu/web/test_web_emu.mjs           # the browser build's checks, against cf_headless.sh: PASS / FAIL
+sh tools/emu/cf_headless.sh SCRIPT [OUTDIR]   # a script natively: OUTDIR/*.ppm (and .png with Pillow), out.wav
+node tools/emu/web/cf_run.mjs SCRIPT [OUTDIR] # a script on the wasm
+```
+
+## The headless runner
+
+`cf_headless.c` builds `web/emu_web.c` with `cc` (no SDL, no window) and plays a script through its `web_*` exports:
+the browser's unit, so the same input at the same millisecond gives the same samples. Its header holds the script
+grammar: `wait`, `key` / `keyq`, `btn`, `hold`, `turn`, `clock`, `midi`, `shot`, `dump`, `wav on|off`. `CF_BOOT_MS`
+(default 1600) runs before the script (0: the script sees the intro); `CF_FLASH=PATH` reads a flash image before
+power-on and writes it back after the script, so a second run sees what the first one saved. `cf_headless.sh`
+builds it each time, as "CoralFlower dev" (a few seconds).
+
+## Browser build
+
+`tools/emu/web/` builds the same firmware side (`emu_fw.c` through `emu_firmware.h`) into a standalone WebAssembly
+module played from a web page (no Emscripten JS runtime, no COOP/COEP headers: it runs on GitHub Pages).
+`tools/make_site.sh` puts the page in the site's `/play/`, and the page takes its look from the site's `../site.css`.
+
+Needs `emcc` (the Emscripten SDK; `~/emsdk/emsdk_env.sh` is sourced when it is not on the PATH); `CR_VERSION=1.0`
+sets the version shown (else the newest release in `web/releases.json`). `emu_web.c` runs the device clock exactly
+as the headless loop (tick, frame / idle, the audio blocks due, per millisecond) inside an AudioWorklet
+(`worklet.js`), so a script's input gives `cf_headless`'s samples bit for bit. The CPU lock is a no-op
+(`web/compat/os/lock.h`: one thread); the flash file is the page's IndexedDB copy (loaded before power-on, saved a
+second after the last erase / program). The page (`index.html`, `emu.js`): the LCD, the panel with its LEDs
+(pointer, multi-touch, right-click latches, wheel / drag on the knobs), the computer keyboard of `web/keymap.js` (a
+tracker's piano: its own map, not `keymap.c`'s), Web MIDI in and out, Clear saved data, a load meter.
+
+`test_web_emu.mjs` (`--no-native` and `--no-page` skip its second and third parts):
+1. the wasm in node plays the test's own script (Top + Lock, the default layout: M + C4, then M7 + C4) and checks the
+   LEDs, the sound, the chord's name on the screen, the dump's notes, the MIDI out, the settings saved by
+   themselves and read back by a second module booted from the flash image;
+2. the same script through `cf_headless.sh`, compared sample for sample and dump for dump;
+3. the site from `make_site.sh` in `build/emu-web-test/site`, its `/play/?demo` in headless Chromium or Chrome
+   (`CHROME=path`): the page's status line must say Ready, then a screenshot.
+
+## ChoralRoot's window app (inherited)
+
+Everything below describes ChoralRoot's SDL emulator as CoralFlower inherited it. `build.sh` still builds it, with
+CoralFlower's firmware and version, where SDL2 is installed (Homebrew; not on every Mac). Its scripts are gone
+(`tools/emu/scripts/`, `test_cr.sh`), so `test.sh`, `perf.sh` and `keylat.py` have nothing to run, and the screens,
+layers, button roles and dump lines named below are ChoralRoot's: CoralFlower's are in docs/SPEC.md. The docs it
+cites (docs/INTEGRATION.md, LOOPER.md, SETTINGS.md and the rest) stayed in ChoralRoot's repository.
+
+The window app: the 240x240 LCD, the panel with its LEDs, the firmware's audio callback at 44.1 kHz and CoreMIDI
+ports, around the firmware side above.
 
 ```sh
 sh tools/emu/build.sh          # -> build/host/emu  (clang, SDL2 from /opt/homebrew, CoreMIDI, zlib)
-sh tools/emu/test.sh           # headless acceptance (runs test_cr.sh too), prints PASS / FAIL
-sh tools/emu/test_cr.sh        # ChoralRoot's: tools/emu/scripts/cr_*.txt, screenshots build/emu/test/cr_*.ppm
 build/host/emu --help          # options and the key map
 ```
 
-`build.sh` runs the generate step (`python3 tools/build.py`) when `build/gen` is missing; it sets
+`build.sh` runs the generate step (`tools/build.py`'s) when `build/gen` is missing; it sets
 `DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib` for Pillow. It compiles its five units side by side through
 `tests/hostcc.sh`: a unit is compiled again only when its command (the version and every flag) or a file it was
 compiled from has changed (hashes, not dates), so a second `build.sh` takes a fraction of a second;
 `HOSTCC_FORCE=1 sh tools/emu/build.sh` compiles everything. `web/build_web.sh` does the same for the wasm module.
-`test_cr.sh` starts its longest script (`cr_screen_off`) in the background at its start and reads its result at
-the script's place. All of it with the rest of the verification: `sh tests/run_all.sh` (docs/HANDOFF.md).
 
 ## Files
 
@@ -103,7 +153,7 @@ No computer key is mapped twice: the emulator checks the table at start-up and e
 On a Mac keyboard the F keys may need `fn`. Cmd shortcuts stay the system's; losing the focus releases
 every held key (no stuck notes).
 
-## Headless mode (what every automated check uses)
+## Headless mode (`build/host/emu --headless`)
 
 ```sh
 build/host/emu --headless --script FILE [--frames N] [--shot build/emu/x.ppm] [--wav out.wav]
@@ -228,21 +278,3 @@ SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy build/host/emu --no-midi --demo --qu
   deletes, OCT- (`Z`) cancels, OCT+ (`X`) saves). User sounds go to the flash file (above).
 - ChoralRoot's looper and metronome run as on the device (`cr_loop.c` ticked with the engine, the click mixed in
   `emu_firmware.h`; docs/LOOPER.md); the loop slots go to the flash file (above).
-
-## Browser build
-
-`tools/emu/web/` builds the same firmware side (`emu_fw.c` through `emu_firmware.h`) into a standalone WebAssembly
-module played from a web page (no Emscripten JS runtime, no COOP/COEP headers: it runs on GitHub Pages):
-
-```sh
-sh tools/emu/web/build_web.sh          # -> build/emu-web/{index.html, emu.js, keymap.js, worklet.js, choralroot.wasm}
-node tools/emu/web/test_web_emu.mjs    # boots the wasm in node, plays scripts/cr_dmaj.txt, compares with build/host/emu
-```
-
-Needs `emcc` (the Emscripten SDK; `~/emsdk/emsdk_env.sh` is sourced when it is not on the PATH); `CR_VERSION=1.0`
-sets the version shown. `emu_web.c` runs the device clock exactly as the headless loop (tick, frame / idle, the audio
-blocks due, per millisecond) inside an AudioWorklet (`worklet.js`), so a script's input gives the native emulator's
-samples bit for bit (the test checks it). The CPU lock is a no-op (`web/compat/os/lock.h`: one thread); the flash
-file is the page's IndexedDB copy (loaded before power-on, saved a second after the last erase / program). The page
-(`index.html`, `emu.js`): the LCD, the panel with its LEDs (pointer, multi-touch, right-click latches, wheel / drag
-on the knobs), the key map of `keymap.c` (`web/keymap.js`), Web MIDI in and out, Reset flash, a load meter.
