@@ -87,6 +87,8 @@ static struct {
     uint32_t root_ms;                                /* when a root key last went down (cf_now_ms) */
     uint8_t slast;                                   /* single notes: the last one struck (a new one slides from it with a
                                                      * Glide time; 0: none, or a chord sounded since) */
+    uint8_t sfrom;                                   /* .. the note the last slide left (its tail fades if it is let go */
+    uint32_t sms;                                    /* .. while the slide runs), and when it began (cf_now_ms) */
 } cfp;
 
 static uint32_t cfp_ticks(void)                      /* Glide in control blocks (CTL samples) */
@@ -176,26 +178,46 @@ static void cfp_fade_released(uint32_t part)
             v->stage = 4;
     }
 }
+static void cfp_fade_note(uint32_t part, uint32_t note)   /* .. one note's, let go */
+{
+    uint32_t i;
+    for (i = 0; i < NVOICE; i++) {
+        voice_t *v = &trk[part].v[i];
+        if (v->active && !v->gate && v->note == note && v->stage != 4u)
+            v->stage = 4;
+    }
+}
 
 /* part's notes old[n] -> new[m]: restart, keep the shared ones, or glide */
 static void cfp_change(uint32_t part, uint8_t *old, uint8_t *pn, const uint8_t *nw, int m, int mode)
 {
-    int n = *pn, i;
+    int n = *pn, i, bass = part == 1u;           /* (the bass part: part 2 is the LAYER, a chord sound) */
     uint32_t vel = cfp_cfg.vel, ticks = cfp_ticks();
-    if (part && m)                                   /* the tails of bass notes let go before */
+    if (bass && m)                                   /* the tails of bass notes let go before */
         cfp_bass_mono();
     if (mode == 6) {                                 /* single notes, a Glide time: the held ones stay where they are, a
                                                       * new one slides from the last note struck */
+        int adds = 0;
+        for (i = 0; i < m; i++)
+            adds |= !has(old, n, nw[i]);
         for (i = 0; i < n; i++)
-            if (!has(nw, m, old[i]))
+            if (!has(nw, m, old[i])) {
                 cfp_off(part, old[i]);
-        cfp_fade_released(part);                     /* (the notes let go fade: a tail at the old pitch hid the slide) */
+                if (old[i] == cfp.sfrom && cf_now_ms - cfp.sms < cfp_cfg.glide_ms)
+                    cfp_fade_note(part, old[i]);     /* (the note a slide is leaving: its tail at the old pitch hid the
+                                                      * slide; one of two held notes let go later rings out) */
+            }
+        if (adds) {
+            cfp_fade_note(part, cfp.slast);          /* (Always: the last note's tail, let go before) */
+            cfp.sfrom = cfp.slast;
+            cfp.sms = cf_now_ms;
+        }
         for (i = 0; i < m; i++)
             if (!has(old, n, nw[i]))
                 cfp_on_from(part, nw[i], vel, cfp.slast, ticks);
     } else if (!m || mode == 0 || mode == 3 || mode == 4) {   /* silence, or a fresh strike: everything restarts */
-        uint8_t *prev = part ? cfp.lastb : cfp.last, was[CF_MAX_NOTES];
-        int np = part ? cfp.nlb : cfp.nl;
+        uint8_t *prev = bass ? cfp.lastb : cfp.last, was[CF_MAX_NOTES];
+        int np = bass ? cfp.nlb : cfp.nl;
         if (mode == 4) {                             /* RETRIG Chord: the whole chord strikes, out of the one sounding */
             for (i = 0; i < n; i++)
                 was[i] = old[i];
@@ -204,7 +226,7 @@ static void cfp_change(uint32_t part, uint8_t *old, uint8_t *pn, const uint8_t *
         }
         for (i = 0; i < n; i++)
             cfp_off(part, old[i]);
-        if ((part && m) || (mode == 4 && m && ticks))   /* the old notes just let go: they too (Chord: gliding) */
+        if ((bass && m) || (mode == 4 && m && ticks))   /* the old notes just let go: they too (Chord: gliding) */
             cfp_fade_released(part);
         if (m && (mode == 3 || mode == 4) && np && ticks) {   /* Always, Chord: the new notes come out of the last chord's */
             uint8_t pi[24], qj[24], done[CF_MAX_NOTES] = {0};
@@ -267,7 +289,7 @@ static void cfp_change(uint32_t part, uint8_t *old, uint8_t *pn, const uint8_t *
         for (i = 0; i < n; i++)                      /* merged away: the extra old voices let go */
             if (!used_p[i]) {
                 if (vv[i])
-                    vv[i]->gate = 0, vv[i]->stage = part ? 4 : 3;   /* (the bass: at once, it is monophonic) */
+                    vv[i]->gate = 0, vv[i]->stage = bass ? 4 : 3;   /* (the bass: at once, it is monophonic) */
                 else
                     trk_note_off(&trk[part], from[i]);  /* (still waiting to start: it must not start now) */
                 cfp_midi(0x80u, cfp_ch(part), from[i], 0);
@@ -279,18 +301,18 @@ static void cfp_change(uint32_t part, uint8_t *old, uint8_t *pn, const uint8_t *
         for (i = 0; i < n; i++)
             if (!has(nw, m, old[i]))
                 cfp_off(part, old[i]);
-        if (part && m)
+        if (bass && m)
             cfp_bass_mono();
         for (i = 0; i < m; i++)
             if (!has(old, n, nw[i]))
                 cfp_on(part, nw[i], vel);
     }
     if (n && !m) {                                   /* let go: remember what sounded, for Always */
-        uint8_t *prev = part ? cfp.lastb : cfp.last;
-        int lim = part ? 2 : CF_MAX_NOTES;
+        uint8_t *prev = bass ? cfp.lastb : cfp.last;
+        int lim = bass ? 2 : CF_MAX_NOTES;
         for (i = 0; i < n && i < lim; i++)
             prev[i] = old[i];
-        if (part)
+        if (bass)
             cfp.nlb = (uint8_t)(n < 2 ? n : 2);
         else
             cfp.nl = (uint8_t)n;
@@ -384,8 +406,11 @@ static void cfp_sync(int how)
      * all, the chords only) */
     int sglide = o->single && cfp_cfg.glide_ms && m && cfp.slast &&
                  (cfp.n || (cfp_cfg.glide_always && (uint32_t)(cf_now_ms - cfp.last_ms) < 4000u));
-    int mode = sglide ? 6 : strike && cfp.n && m && !o->single ? 4 : glide && !o->single ? notes :
-               always && !o->single ? 3 : how == 0 ? 0 : 1;
+    /* the voices are moved only on a polyphonic sound: a mono, legato or unison one (the LAYER's Glide page) keeps its
+     * notes in voice.c's stack, which moving them went round: notes stuck (a review, 2026-10-19); it glides itself */
+    int mv = trk[cfp_cp].p[P_VOICE] == V_POLY;
+    int mode = sglide && mv ? 6 : strike && cfp.n && m && !o->single && mv ? 4 : glide && !o->single && mv ? notes :
+               always && !o->single && mv ? 3 : how == 0 ? 0 : 1;
     int bmode = strike && cfp.nb && mb ? 4 : glide && cfp.nb && mb ? notes : always && !cfp.nb && mb && cfp.nlb ? 3 :
                 how == 0 ? 0 : 1;
     if (m && (!cfp.n || how == 0))
@@ -454,6 +479,7 @@ static void cfp_config(void)                         /* CFE_CONFIG: the UI's set
         for (i = 0; i < cfp.nb; i++)
             cfp_off(1, cfp.bass[i]);
         cfp.n = cfp.nb = 0;
+        cfp.slast = 0;                               /* (another part: no slide from the old one's note) */
         cfp_cp = (uint8_t)(cfp_cfg.cpart == 2u ? 2u : 0u);
     }
     cfc.keep = cfp_cfg.retrig == CF_RT_WAIT;

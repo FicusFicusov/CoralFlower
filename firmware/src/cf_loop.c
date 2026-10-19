@@ -58,6 +58,9 @@ static struct {
 static int cfl_holds(uint32_t part, uint32_t note)
 {
     uint32_t i;
+    if (part > 1u)                                   /* (the loop plays the chords and the bass, never the LAYER: it
+                                                      * read the LAYER's notes as its bass, and kept one held) */
+        return 0;
     if (part) {
         for (i = 0; i < cfl.nb; i++)
             if (cfl.bass[i] == note)
