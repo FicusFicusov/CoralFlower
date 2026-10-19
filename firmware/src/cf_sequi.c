@@ -216,13 +216,10 @@ static void sq_load(void)                        /* power-on */
             sq_saved[k] = ~sq_saved[k];
     }
 }
-static void sq_save_poll(void)                   /* every frame */
+static void sq_save_write(void)                  /* the objects that changed, now (cf_backup.c's LIST too) */
 {
     uint32_t k, now = cu.now;
     int err = 0;
-    if (!sq_dirty || cr_safe || cfs_restore_lock || !cu.booted || now - sq_changed_ms < CF_SET_QUIET_MS || cf_sn.sq_on ||
-        now - cfs_sound_ms < CF_SET_SILENT_MS || (sq_retry_ms && (int32_t)(now - sq_retry_ms) < 0))
-        return;
     sq_st.magic = SQ_MAGIC;
     sq_st.size = sizeof sq_st;
     sq_st.check = cfs_fnv(&sq_st.song, sizeof sq_st - __builtin_offsetof(sq_store_t, song));
@@ -237,6 +234,14 @@ static void sq_save_poll(void)                   /* every frame */
     }
     sq_dirty = (uint8_t)err;
     sq_retry_ms = err ? now + 1000u : 0u;        /* (a flash error: once more a second later) */
+}
+static void sq_save_poll(void)                   /* every frame */
+{
+    uint32_t now = cu.now;
+    if (!sq_dirty || cr_safe || cfs_restore_lock || !cu.booted || now - sq_changed_ms < CF_SET_QUIET_MS || cf_sn.sq_on ||
+        now - cfs_sound_ms < CF_SET_SILENT_MS || (sq_retry_ms && (int32_t)(now - sq_retry_ms) < 0))
+        return;
+    sq_save_write();
 }
 
 /* where the keys' chords sound: the LAYER's part while the LAYER is open, else the chord part */

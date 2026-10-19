@@ -25,7 +25,7 @@ import { spawnSync } from "node:child_process";
 import vm from "node:vm";
 import { Package, logicalImage, productOf, crc16, STOCK_V15_SIZE } from "./fm1pkg.js";
 import { pack7, unpack7, classifyFirmware, refusalText, CF_EARLY } from "./fm1ota.js";
-import { bkU32, bkR32, bkPack, bkUnpack, bkCrc, CR_BACKUP_IDS, BACKUP_IDS, backupFamily, backupFileName } from "./fm1backup.js";
+import { bkU32, bkR32, bkPack, bkUnpack, bkCrc, CR_BACKUP_IDS, CF_BACKUP_IDS, BACKUP_IDS, backupFamily, backupFileName, objectNames, readBackup } from "./fm1backup.js";
 
 let failed = 0;
 const ok = (cond, what) => { console.log(`${what.padEnd(100)} ${cond ? "ok" : "FAIL"}`); if (!cond) failed++; };
@@ -389,6 +389,9 @@ const fill = (n, seed) => Uint8Array.from({ length: n }, (_, i) => (i * 31 + see
 const per = (n, magic, seed) => { const v = fill(n, seed); new DataView(v.buffer).setUint32(0, magic, true); return v; };
 const feluccaData = () => [[0, fill(3584, 1)], [1, per(572, 0x50455234, 2)], [2, fill(3584, 3)], [6, fill(3080, 4)], [8, fill(3472, 5)]];
 const crData = () => [[1, per(764, 0x50455235, 6)], [6, fill(3080, 7)], [9, fill(3536, 8)], [40, fill(46, 9)]];
+// CoralFlower 0.3.1: a sound bank, the settings, the loop and the sequencer's store in its six parts (5 x 3840 + 1136 B)
+const cfData = () => [[6, fill(3080, 10)], [30, fill(200, 11)], [31, fill(64, 12)],
+  ...[50, 51, 52, 53, 54, 55].map((id, k) => [id, fill(k < 5 ? 3840 : 1136, 13 + k)])];
 const midiOf = (dev) => ({ requestMIDIAccess: async () => dev.access });
 const image = logicalImage(good);
 // a page with a checked file, ready to install (the default: the well-formed package)
@@ -467,15 +470,17 @@ async function readyPage(dev, opts = {}) {
 }
 {
   // CoralFlower over CoralFlower: backed up (coralflower-backup-*.json), no restore offered, the new version read back
-  const before = backupSide("CoralFlower 0.1", CR_BACKUP_IDS, crData()), after = backupSide("CoralFlower 0.2", CR_BACKUP_IDS, crData());
+  const before = backupSide("CoralFlower 0.3.1", CF_BACKUP_IDS, cfData()), after = backupSide("CoralFlower 0.2", CR_BACKUP_IDS, crData());
   const dev = new FakeFM1(image, { identity: "FM-1_930", bk: (id, boots) => (id.startsWith("ota-") ? null : boots < 3 ? before : after) });
   const p = await readyPage(dev);
   await p.$.go.fire("click");
   ok(p.downloads.length === 1 && /^coralflower-backup-\d{8}\.json$/.test(p.downloads[0].name) && !p.confirms.length && !before.log.length && !after.log.length,
     `CoralFlower over CoralFlower: backed up first (${p.downloads[0]?.name}), no question, no restore`);
+  ok(/^backup CoralFlower 0\.3\.1: user sounds 1-16, CoralFlower settings, CoralFlower loop, CoralFlower patterns and song$/m.test(p.$.log.textContent),
+    "CoralFlower over CoralFlower: the backup holds the sequencer's six parts, named once in the log");
   ok(p.$.status.textContent === en.done && dev.identity === "FM-1_930" && dev.bad === 0 && p.$["done-line"].textContent === "Done. Your FM-1 now runs CoralFlower 0.2.",
     "CoralFlower over CoralFlower: installed, and the new version read back (\"now runs CoralFlower 0.2\")");
-  ok(/running: FM-1_930 CoralFlower 0\.1 -> allow \(coralflower\)/.test(p.$.log.textContent), "CoralFlower over CoralFlower: classified allow (coralflower) in the log");
+  ok(/running: FM-1_930 CoralFlower 0\.3\.1 -> allow \(coralflower\)/.test(p.$.log.textContent), "CoralFlower over CoralFlower: classified allow (coralflower) in the log");
 }
 {
   // over ChoralRoot: allowed, backed up, no restore offered (its data stays in the flash, CoralFlower uses it)
@@ -711,6 +716,36 @@ async function readyPage(dev, opts = {}) {
   await p.$["restore-go"].fire("click");
   ok(p.confirms.at(-1) === en.restoreConfirm && blank.log.at(-1) === 1 && crData().every(([id, v]) => blank.objs.get(id)?.every((b, i) => b === v[i])) &&
      blank.restarts === 1 && p.$["backup-status"].textContent.startsWith(en.restored), "Restore: confirmed, every object back, the settings last, RESTART (CoralFlower restarts)");
+}
+{
+  // CoralFlower 0.3.1: the sequencer's patterns and song in the file and back; on 0.3 (no such objects) kept in the file
+  const cf = backupSide("CoralFlower 0.3.1", CF_BACKUP_IDS, cfData());
+  const dev = new FakeFM1(image, { identity: "FM-1_930", bk: () => cf });
+  const p = runPage({ navigator: midiOf(dev) });
+  await p.ready;
+  let blobText = null;
+  const realCreate = URL.createObjectURL;
+  URL.createObjectURL = (b) => { b.text().then((x) => { blobText = x; }); return "blob:test"; };
+  await p.$["backup-go"].fire("click");
+  await until(() => blobText);
+  URL.createObjectURL = realCreate;
+  const file = blobText && JSON.parse(blobText);
+  ok(file && file.objects.length === CF_BACKUP_IDS.length && [50, 51, 52, 53, 54, 55].every((id) => file.objects.find((o) => o.id === id)?.size) &&
+     readBackup(blobText).objects.length === CF_BACKUP_IDS.length, "Back up on 0.3.1: the sequencer's six parts in the file (3840 B each at most: accepted)");
+  const blank = backupSide("CoralFlower 0.3.1", CF_BACKUP_IDS);
+  dev.bk = () => blank;
+  p.$["restore-file"].files = [{ text: async () => blobText }];
+  await p.$["restore-file"].fire("change");
+  await p.$["restore-go"].fire("click");
+  ok(cfData().every(([id, v]) => blank.objs.get(id)?.every((b, i) => b === v[i])) && blank.restarts === 1 &&
+     p.$["backup-status"].textContent.startsWith(en.restored) && p.$["backup-status"].textContent.endsWith("CoralFlower loop, CoralFlower patterns and song"),
+     "Restore on 0.3.1: the patterns and song back, named once");
+  const old = backupSide("CoralFlower 0.3", CF_BACKUP_IDS.filter((id) => id < 50));
+  dev.bk = () => old;
+  await p.$["restore-go"].fire("click");
+  ok(!old.log.some((id) => id >= 50) && old.objs.get(30) && p.$["backup-status"].textContent.endsWith(en.restoreSkipped + "CoralFlower patterns and song)"),
+     "Restore on 0.3: the rest restored, the patterns kept in the file and named once as not used");
+  ok(objectNames([50, 6, 51, 55]) === "CoralFlower patterns and song, user sounds 1-16", "objectNames: each name once, in order");
 }
 
 // the return to the official V15 (validateStockPackage stands in for the real file, which is not in the repo)

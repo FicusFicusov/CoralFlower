@@ -5,11 +5,12 @@
  * requests fed to crb_handle as the main loop would, the replies taken at CRB_SEND.
  *   cc -std=gnu11 -O1 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/cf_backup_test tests/cf_backup_test.c -lm
  *   ./build/host/cf_backup_test
- * Checks: INFO (the version, the tags); LIST of the 8 objects; a sound, the settings and a loop saved, then backed up
- * whole (GET in 256-byte pieces, every CRC as LIST says); the flash erased and everything restored (PUT): LIST and the
- * bytes identical, the sound back in its list; refusals with nothing written: a CRC error, a settings record of
- * another magic, an unsorted loop, ChoralRoot's ids 1 and 40, a begin while the loop plays (busy); stale sessions;
- * the settings lock after a restore; RESTART. */
+ * Checks: INFO (the version, the tags); LIST of the 14 objects; a sound, the settings, a loop and sequencer patterns
+ * (a change not yet saved: LIST writes it) saved, then backed up whole (GET in 256-byte pieces, every CRC as LIST
+ * says); the flash erased and everything restored (PUT): LIST and the bytes identical, the sound back in its list, the
+ * patterns and song read in at the restart; refusals with nothing written: a CRC error, a settings record of another
+ * magic, an unsorted loop, a sequencer head of another magic or a part of another length, ChoralRoot's ids 1 and 40, a
+ * begin while the loop plays (busy); stale sessions; the lock after a restore (settings, sequencer); RESTART. */
 #include <os/lock.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -205,16 +206,24 @@ int main(void)
     CHECK(a && a[1] == 5, "GET before LIST: 5");
 
     /* ---- a fresh device: the 8 objects, nothing stored but what the boot wrote ---- */
-    CHECK(t_list() == 0 && nman == 8, "LIST on a fresh flash: 8 objects (%u)", nman);
+    CHECK(t_list() == 0 && nman == 14, "LIST on a fresh flash: 14 objects (%u)", nman);
+    CHECK(t_find(50) && !t_find(50)->size && t_find(55) && !t_find(55)->size, "LIST: no patterns stored yet");
 
     /* ---- content: a user sound, the settings, a loop ---- */
     CHECK(cf_snd_save(CF_PART_CHORD, 1, "BACKUP TEST") == 0, "a chord sound saved as new");
     cs.bpm = 97;
     CHECK(cf_settings_write() == 1, "the settings written");
     make_loop(40, 1);
+    sq_st.song.n = 3;                                /* patterns and a song, not saved yet (LIST writes them) */
+    sq_st.song.pat[0] = 2, sq_st.song.pat[1] = 7, sq_st.song.pat[2] = 2;
+    sq_st.pat[2].hit[0][1] = 0x1111u;
+    sq_st.pat[7].dlev[3] = 42;                       /* (in the last object) */
+    sq_dirty = 1;
     CHECK(t_list() == 0, "LIST");
     for (i = 0, k = 0; i < nman; i++) k += man[i].size != 0;
     CHECK(t_find(6)->size && t_find(30)->size && t_find(31)->size, "LIST: the bank, the settings and the loop hold data");
+    CHECK(!sq_dirty && t_find(50)->size == SQ_CHUNK && t_find(55)->size == sq_chunk_len(5) && sq_chunk_len(5),
+          "LIST wrote the sequencer's change: its six objects hold the store (%u .. %u B)", t_find(50)->size, t_find(55)->size);
     for (i = 0; i < nman; i++)
         CHECK(t_get_all(&man[i]) == 0, "GET of object %u (%u B): every byte, the CRC as LIST says", man[i].id, man[i].size);
     memcpy(ref, man, sizeof man);
@@ -252,6 +261,10 @@ int main(void)
         cf_rec_t r;
         CHECK(st_load(CF_SET_OBJ, &r, sizeof r) > 0 && r.s.bpm == 97, "the restored settings hold the tempo 97");
     }
+    memset(&sq_st, 0, sizeof sq_st);                 /* the restart: the sequencer read in from flash */
+    sq_load();
+    CHECK(sq_st.magic == SQ_MAGIC && sq_st.song.n == 3 && sq_st.song.pat[1] == 7 && sq_st.pat[2].hit[0][1] == 0x1111u &&
+          sq_st.pat[7].dlev[3] == 42 && sq_st.pat[0].dlev[0] == 0, "the restored patterns and song read in whole (sq_load's checks)");
 
     /* ---- refusals: nothing written ---- */
     {
@@ -266,6 +279,32 @@ int main(void)
     {
         uint32_t len = make_loop(10, 0);
         CHECK(t_put(31, cfb_raw, len, st_crc32(cfb_raw, len)) == 2, "a loop out of time order: 2");
+    }
+    {
+        obj_t *q = t_find(50);
+        uint32_t crc_before = q->crc;
+        q->bytes[0] ^= 0x55;
+        CHECK(t_put(50, q->bytes, q->size, st_crc32(q->bytes, q->size)) == 2, "a sequencer head of another magic: 2");
+        q->bytes[0] ^= 0x55;
+        CHECK(t_put(51, q->bytes, 1000, st_crc32(q->bytes, 1000)) == 1, "a sequencer part of another length: 1");
+        CHECK(t_put(56, q->bytes, 16, st_crc32(q->bytes, 16)) == 1, "an id past the sequencer's (56): 1");
+        CHECK(t_list() == 0 && t_find(50)->crc == crc_before, "nothing written by the refused sequencer PUTs");
+    }
+    {                                                /* a sequencer restore alone locks too: RAM does not go over it */
+        obj_t *q = t_find(55);
+        uint32_t crc_before = q->crc;
+        cfs_restore_lock = 0;
+        sq_st.pat[7].dlev[3] = 99;
+        sq_dirty = 1;
+        CHECK(t_put(55, q->bytes, q->size, q->crc) == 0 && cfs_restore_lock == 1 && !sq_dirty,
+              "a sequencer part restored: the lock on, the change in RAM dropped");
+        sq_dirty = 1;
+        cu.booted = 1;
+        sq_changed_ms = cfs_sound_ms = cu.now - 60000u;
+        sq_retry_ms = 0;
+        cf_sn.sq_on = 0;
+        sq_save_poll();
+        CHECK(t_list() == 0 && t_find(55)->crc == crc_before, "locked: the sequencer's save writes nothing");
     }
     {
         static uint8_t z[64];

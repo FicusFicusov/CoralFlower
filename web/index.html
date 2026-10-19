@@ -426,7 +426,7 @@
 <script type="module">
 import { Package, productOf, logicalImage, sha256hex, crc16, validateStockPackage, STOCK_V15_SIZE, STOCK_APP_SIZE } from "./fm1pkg.js";
 import { Updater, classifyFirmware, refusalText } from "./fm1ota.js";
-import { BackupConnection, captureBackup, restoreBackup, deviceInfo, restartDevice, readBackup, backupFamily, backupFileName, objectName } from "./fm1backup.js";
+import { BackupConnection, captureBackup, restoreBackup, deviceInfo, restartDevice, readBackup, backupFamily, backupFileName, objectNames } from "./fm1backup.js";
 
 const $ = (id) => document.getElementById(id);
 const PRODUCT = "FM-1_930";                      // CoralFlower's identity (tools/build.py PRODUCT): every package, every version
@@ -577,7 +577,7 @@ async function takeBackup(up) {                 // -> the archive, saved to a fi
     try { archive = await captureBackup(req, info.version, (d, total) => sayK("backup", pct(d, total))); }
     catch (e) { throw /timed out/i.test(e.message) && !e.rc ? coded("noBackup", e.message) : e; }
     sayK("backupSaved", saveArchive(archive));
-    log(`backup ${archive.firmware}: ${archive.objects.filter((o) => o.size).map((o) => objectName(o.id)).join(", ")}`);
+    log(`backup ${archive.firmware}: ${objectNames(archive.objects.filter((o) => o.size).map((o) => o.id))}`);
     return archive;
   } finally { link.close(); }
 }
@@ -588,7 +588,7 @@ async function restoreArchive(up, archive) {
     if (!info) throw coded("noBackup");
     const r = await restoreBackup(req, archive, (d, total) => sayK("restoring", pct(d, total)), { onBusy: () => sayK("restoreBusy") });
     if (KEEPS_DATA.includes(info.family)) await restartDevice(req).catch((e) => log(`restart: ${e.message}`));
-    const names = (ids) => ids.map(objectName).join(", ");
+    const names = objectNames;
     sayK("restored", names(r.restored) + (r.skipped.length ? t("restoreSkipped") + names(r.skipped) + ")" : ""));
     log(`restored ${r.restored.join(" ")}; skipped ${r.skipped.join(" ") || "none"}`);
   } finally { link.close(); }
@@ -887,7 +887,7 @@ $("restore-file").addEventListener("change", async () => {
     const arc = readBackup(await file.text());
     if (epoch !== restoreEpoch) return;
     restoreArc = arc; lockInstaller(writing);
-    sayAt(OUT_BACKUP, () => say(`${arc.firmware || "?"} · ${arc.created || ""} · ${arc.objects.filter((o) => o.size).map((o) => objectName(o.id)).join(", ")}`));
+    sayAt(OUT_BACKUP, () => say(`${arc.firmware || "?"} · ${arc.created || ""} · ${objectNames(arc.objects.filter((o) => o.size).map((o) => o.id))}`));
   } catch (e) { if (epoch === restoreEpoch) sayAt(OUT_BACKUP, () => sayK("badBackup", e.message)); }
 });
 $("restore-go").addEventListener("click", async () => {

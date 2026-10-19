@@ -955,7 +955,10 @@ FELUCCA_IDS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 32, 33, 34]
 CR_IDS = [1, 6, 7, 8, 9, 10, 11, 12, 13] + list(range(14, 22)) + [22] + list(range(40, 50))   # fm1backup.js CR_BACKUP_IDS
 # (9 the VA patches, 10 11 the FM6 patches, 12 13 the CZ-1 tones, 14..21 the CZ-1 banks, 22 the FM TONE patches, 40..49
 # loops; no samples)
-KNOWN_IDS = set(FELUCCA_IDS) | set(CR_IDS)
+CF_SEQ_IDS = list(range(50, 56))
+CF_IDS = [6, 7, 8, 9, 10, 11, 30, 31] + CF_SEQ_IDS   # fm1backup.js CF_BACKUP_IDS (30 settings, 31 the loop, 50..55
+# the sequencer's patterns and song: the six parts of one store, 0.3.1)
+KNOWN_IDS = set(FELUCCA_IDS) | set(CR_IDS) | set(CF_IDS)
 BK_RC = {1: "invalid object, size or request", 2: "the data failed validation", 3: "busy: stop the loop on the FM-1",
          4: "flash write failed", 5: "stale session: start again"}
 PER4, PER5, CR_BLOCK = 0x50455234, 0x50455235, 192
@@ -1044,7 +1047,17 @@ def object_name(i):
         return f"sample slot {i - 31}"
     if 40 <= i <= 49:
         return f"loop slot {i - 39}"
+    if i == 30:
+        return "CoralFlower settings"
+    if i == 31:
+        return "CoralFlower loop"
+    if i in CF_SEQ_IDS:
+        return "CoralFlower patterns and song"
     return f"object {i}"
+
+
+def object_names(ids):                                 # each name once (the sequencer's six parts read as one)
+    return list(dict.fromkeys(object_name(i) for i in ids))
 
 
 def family(firmware):
@@ -1315,7 +1328,7 @@ def run_backup(up, path, out):
         path = os.path.join(path, backup_name(version))
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(f, fh)
-    held = [object_name(o["id"]) for o in f["objects"] if o["size"]]
+    held = object_names(o["id"] for o in f["objects"] if o["size"])
     print(f"backup of {version} saved: {path}\n  holds: {', '.join(held) or 'nothing'}", file=out)
     return path
 
@@ -1328,7 +1341,7 @@ def run_restore(up, path, out, ask, yes):
     objs = read_backup(text)
     bl, (version, fam) = open_backup(up)
     try:
-        held = [object_name(o["id"]) for o in objs if o["size"]]
+        held = object_names(o["id"] for o in objs if o["size"])
         print(f"restore onto {version}: {', '.join(held)}", file=out)
         if not yes and not ask("Restore? What the backup holds replaces what is stored on the FM-1. [y/N] "):
             print("cancelled", file=out)
