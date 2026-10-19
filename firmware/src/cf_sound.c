@@ -370,7 +370,9 @@ static int cf_snd_save(uint32_t part, int as_new, const char *name)
     }
     if (k >= UP_SLOTS)
         return -1;
+    up_src = (int8_t)part;                       /* (its VA / FM6 patch is the one stored) */
     res = cb_store(t, part, k, name, f != PF_NONE ? f + 1u : 0u);
+    up_src = -1;
     if (res != 0 && res != 3)                        /* (3: kept in RAM only, the emulator without flash) */
         return 2;
     t->user = (uint8_t)(k + 1u);

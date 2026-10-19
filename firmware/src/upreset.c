@@ -206,6 +206,8 @@ static int up_parse(const uint8_t *a, uint32_t na, up_rec_t *r, uint32_t *slot)
 
 #ifndef UP_HOST
 #if FELUCCA_VA
+static int8_t up_src = -1;                     /* CoralFlower: the part a sound is saved from (its VA / FM6 patch is the
+                                                * one stored: the LAYER's was never looked at), -1: the selected one */
 #include "va_store.c"                          /* ChoralRoot: the VA patches, one per slot (the hooks below) */
 #include "fm6_ustore.c"                        /* ChoralRoot: the FM6 patches (voice + functions), one per slot */
 #if FELUCCA_CZ

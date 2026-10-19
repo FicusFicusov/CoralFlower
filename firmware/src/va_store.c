@@ -181,7 +181,8 @@ static void va_store_saved(uint32_t k, const up_rec_t *r)
     }
     for (n = 0; n < VA_NPART; n++) {
         const track_t *t;
-        tr = n ? (song.sel ? 0u : 1u) : (song.sel < VA_NPART ? song.sel : 0u);
+        tr = ((up_src >= 0 ? (uint32_t)up_src : song.sel < VA_NPART ? song.sel : 0u) + n) % VA_NPART;   /* (the part
+                                                        * saved from first, then the others in turn) */
         t = &trk[tr];
         if (t->eng_req != ENGI_VA)
             continue;

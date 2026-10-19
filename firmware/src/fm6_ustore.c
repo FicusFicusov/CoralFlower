@@ -129,9 +129,9 @@ static void fm6u_saved(uint32_t k, const up_rec_t *r)
         fm6u_put(k, 0);
         return;
     }
-    for (n = 0; n < 2u; n++) {
+    for (n = 0; n < VA_NPART; n++) {             /* (the parts with a patch of their own: CoralFlower's LAYER too) */
         const track_t *t;
-        tr = n ? (song.sel ? 0u : 1u) : (song.sel < 2u ? song.sel : 0u);
+        tr = ((up_src >= 0 ? (uint32_t)up_src : song.sel < VA_NPART ? song.sel : 0u) + n) % VA_NPART;
         t = &trk[tr];
         if (t->eng_req != ENGI_FM6)
             continue;
