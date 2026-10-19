@@ -560,6 +560,7 @@ static void cf_audio_block(uint32_t n)
         cfx_in.pulses = 0;
         cfx_in.active = cfp_cfg.clock_in && cfx_in.bpm && (uint32_t)(cf_now_ms - cfx_in.last_ms) < 300u;
         cfa_tick(n);                             /* (the arpeggiator: its steps, its strum) */
+        sqp_arp_tick(n);                         /* (the sequencer's tracks' with ARP on) */
         cfl_tick(n, pulses);                     /* (the looper: its takes, its playing) */
         sqp_tick(n, pulses);                     /* (the sequencer) */
         cfm_tick(n, pulses);

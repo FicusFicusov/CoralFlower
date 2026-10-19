@@ -343,6 +343,8 @@ static void draw_sq_track(void)
         b[9] = 0;
     }
     fb_text(&CF_FONT_UI, 8, Y_VIEW + 4, b, squ.cpy || squ.ocpy ? C_ACC(0) : FL_INK2, 1);
+    if (!squ.cpy && !squ.ocpy && !drums && (p->arp >> squ.trk) & 1u)   /* (the track's ARP on: its button named) */
+        draw_chip(8 + fb_text_w(&CF_FONT_UI, b, 1) + 6, Y_VIEW + 4, "ARP");
     c[0] = 0;
     if (drums) {
         str_cpy(c, sq_lane_name(squ.lane), sizeof c);
@@ -688,15 +690,20 @@ static void draw_sq_help(void)
                                      "hold [REC]: undo last change", "[SEQ] home  [GLO] close", 0};
     /* (a gesture says "turn", and the copy where it lands: "copy the bar there" explained it, the owner, 2026-10-19) */
     static const char *const NO[] = {"[SELECT] move the frame", "keys: write in the frame", "[SEL] clear the step",
-                                     "[PRESETS] the track's sound", "hold [SEL], turn [SELECT]: erase",
+                                     "[PRESETS] sound  [ARP] arpeggio", "hold [SEL], turn [SELECT]: erase",
                                      "hold [OCT+], turn [SELECT]:", "   copy the bar there",
                                      "hold [REC]: undo last change", "[SAVE] back  [GLO] close", 0};
+    static const char *const BA[] = {"[SELECT] move the frame", "keys: write in the frame", "[SEL] clear the step",
+                                     "[PRESETS] the track's sound", "hold [SEL], turn [SELECT]: erase",
+                                     "hold [OCT+], turn [SELECT]:", "   copy the bar there",
+                                     "hold [REC]: undo last change", "[SAVE] back  [GLO] close", 0};   /* (no ARP) */
     static const char *const DR[] = {"upper keys: pick a drum", "lower keys: steps on / off",
                                      "[SELECT] bar  [PRESETS] the kit", "hold [SEL], turn [SELECT]: erase",
                                      "hold [OCT+], turn [SELECT]:", "   copy the bar there",
                                      "REC on: upper keys are pads", "hold [REC]: undo last change",
                                      "[SAVE] back  [GLO] close", 0};
-    const char *const *l = cu.scr == SCR_SQ ? (squ.pat == SQ_SONGPG ? SO : TR) : squ.trk == SQ_DRUMS ? DR : NO;
+    const char *const *l = cu.scr == SCR_SQ ? (squ.pat == SQ_SONGPG ? SO : TR) : squ.trk == SQ_DRUMS ? DR :
+                           squ.trk == SQ_BASS ? BA : NO;
     int n = 0, i;
     while (l[n])
         n++;

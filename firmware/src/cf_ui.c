@@ -17,6 +17,7 @@ static const char CF_NAME_CHARS[] = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-.+#/"
 
 /* -------------------------------------------------------- the engine --- */
 static uint8_t sq_live_part(void);              /* (cf_sequi.c) */
+static uint8_t sq_keys_arp(void);               /* (cf_sequi.c: the keys' ARP, a track's own while it is open) */
 static void cf_send_config(void)                 /* the chord settings -> the audio side */
 {
     fm1_irq_off();
@@ -33,7 +34,7 @@ static void cf_send_config(void)                 /* the chord settings -> the au
     cfp_cfg.ch_layer = cs.ch_layer;
     cfp_cfg.ch_drums = cs.ch_drums;
     cfp_cfg.retrig = cs.retrig;
-    cfp_cfg.arp_on = cu.arp_on;
+    cfp_cfg.arp_on = sq_keys_arp();              /* (a track open: the keys play as it plays, its own ARP) */
     cfp_cfg.arp = cs.arp;
     cfp_cfg.bpm = cs.bpm;
     cfp_cfg.loop = cs.loop;
@@ -840,6 +841,10 @@ static void ui_button(uint32_t b)
         return;
     }
     if (sq_screen(cu.scr)) {                     /* the sequencer's own: EDIT / SEL open, SEL clears, SAVE back, GLO */
+        if (cu.scr == SCR_SQED && b == B_ARP) {  /* ARP in a track: its own arpeggiator on / off (CHORDS, LAYER) */
+            sq_arp_toggle();
+            return;
+        }
         if (b == B_FX || b == B_ENV || b == B_LFO || b == B_ARP || (cu.scr == SCR_SQED && b == B_EDIT) ||
             (cu.scr == SCR_SQ && b == B_SAVE))   /* (SAVE: nothing on the SEQUENCER; a pattern's copy is OCT+'s) */
             return;                              /* (no way out to another screen here but HOME and SEQ: the owner,
@@ -1415,6 +1420,8 @@ static void cf_leds(void)
             cf_led(mid, panel.btn[B_SAVE], 1);   /* (EDIT does nothing in a track: dark) */
             if (squ.trk != SQ_DRUMS)
                 cf_led(clear ? mid : faint, panel.btn[B_SCL], 1);
+            if (squ.trk == SQ_CHORDS || squ.trk == SQ_LAYER)   /* (ARP: the track's own, lit while on) */
+                cf_led((p->arp >> squ.trk) & 1u ? lit : dim, panel.btn[B_ARP], 1);
         }
         if (cf_sn.sq_on)
             cf_led((int32_t)(cf_sn.now_ms - cf_sn.beat_ms) < 120 ? lit : mid, panel.btn[B_PLAY], 1);

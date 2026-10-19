@@ -66,6 +66,8 @@ typedef struct {
                                                   * a step, an MPC's 75 %). The drums' K2: their steps a bar stay the
                                                   * metronome's beats x 4, the 16 lower keys (STEPS there was "unusable,
                                                   * no way to tell how to use it": the owner, 2026-10-19) */
+    uint8_t arp;                                 /* bit t: track t (CHORDS, LAYER) is played by an arpeggiator (ARP in its
+                                                  * editor; in what was a padding byte after SWING: CFQ5 kept) */
     uint32_t hit[SQ_NLANE][SQ_BARS];             /* lane l, bar b: bit i, a hit on the drums' step i (sq_dsteps) */
     sq_ev_t ev[SQ_NEV];
 } sq_pat_t;
@@ -75,6 +77,8 @@ typedef struct {
     uint8_t pat[SQ_SONG];                        /* their indices */
     uint8_t mute;                                /* bit t: track t is silent (every pattern) */
 } sq_song_t;
+
+_Static_assert(sizeof(sq_pat_t) == 2524u, "CFQ5's pattern layout (a change: a new magic)");
 
 /* all of it in one block, as flash keeps it (cf_sequi.c: six objects of it) */
 #define SQ_MAGIC 0x35514643u                     /* "CFQ5" (CFQ4: one first bar for every track; CFQ3: one count of
@@ -156,6 +160,7 @@ static void sq_fresh(sq_pat_t *p, uint32_t beats)
     p->nev = 0;
     p->kit = 0;
     p->swing = 0;
+    p->arp = 0;
     for (l = 0; l < SQ_NLANE; l++)
         p->dkit[l] = 0;
     for (b = 0; b < SQ_BARS; b++) {

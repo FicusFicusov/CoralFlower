@@ -358,11 +358,12 @@ static int cfp_holds(uint32_t part, uint32_t note)
                 return 1;
         return 0;
     }
-    if (cfa.on) {                                    /* (the arpeggiator's notes: the ones that sound) */
-        if (cfa.cur == note)
+    if (cfa_k.on) {                                  /* (the keys' arpeggiator's notes: the ones that sound; cfa_k by
+                                                      * name: a sequencer's may be the one in hand) */
+        if (cfa_k.cur == note)
             return 1;
-        for (i = 0; i < cfa.sn; i++)
-            if (cfa.son[i] && cfa.snote[i] == note)
+        for (i = 0; i < cfa_k.sn; i++)
+            if (cfa_k.son[i] && cfa_k.snote[i] == note)
                 return 1;
         return 0;
     }

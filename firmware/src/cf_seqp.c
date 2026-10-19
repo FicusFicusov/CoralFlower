@@ -51,6 +51,7 @@ static struct {
     uint32_t rserial;            /* the chord model's serial last seen in a take */
     uint8_t ropen;               /* a chord of the take still sounds (its off not sent yet) */
     uint32_t rheld;              /* .. the ticks it has sounded (its length: kind 2's dur) */
+    uint8_t aon;                 /* bit t: track t's arpeggiator plays a chord of it (ARP on the track: sqp_arp_on) */
     uint8_t dsk[SQ_NLANE], dskb[SQ_NLANE], dskp[SQ_NLANE];   /* a drum struck in a take just before the step it is
                                   * written on: that step (+ 1), its bar and pattern, not struck again there */
 } sqp = {.next = 0xFF, .rec = 0xFF};
@@ -77,6 +78,16 @@ static int sqp_holds(uint32_t part, uint32_t note)
     uint32_t i;
     if (!sqp.on)
         return 0;
+    if (part == 0u || part == 2u) {              /* (a track's arpeggiator: the notes it sounds) */
+        const cfa_t *a = &cfa_sq[part == 2u];
+        if (a->on && a->n) {
+            if (a->cur == note)
+                return 1;
+            for (i = 0; i < a->sn; i++)
+                if (a->son[i] && a->snote[i] == note)
+                    return 1;
+        }
+    }
     if (part == 1u) {
         for (i = 0; i < sqp.nb; i++)
             if (sqp.bass[i] == note)
@@ -98,6 +109,7 @@ static int sqp_holds(uint32_t part, uint32_t note)
 }
 static void sqp_off(uint32_t part, uint32_t note)
 {
+    /* (also the tracks' arpeggiators' notes: cf_arp.c) */
     if (cfp_holds(part, note) || cfl_holds(part, note))   /* (the keys or the loop sound it too: theirs to let go) */
         return;
     trk_note_off(&trk[part], note);
@@ -152,6 +164,47 @@ static void sqp_lane_kit(uint32_t l, uint32_t k)
     uint32_t i, el = drum_lane(SQ_LANE_NOTE[l % SQ_NLANE]);
     for (i = 0; i < 8u; i++)
         drum_lane_knobs[0][el][i] = (int16_t)SQ_KITS[k % SQ_NKIT].e[i];
+}
+
+/* ARP on a track (CHORDS, LAYER; the ARP button in its editor: the owner, 2026-10-19): its steps are played by an
+ * arpeggiator of its own, cf_arp.c's, with the ARP page's settings (the strum too), on the beat; the chord stays the
+ * step's, so ARP off plays it whole again. While the keys sound on its part they take over (two arpeggios of one chord
+ * ran over each other in a take) */
+static int sqp_arp_trk(const sq_pat_t *p, uint32_t tk) { return (tk == SQ_CHORDS || tk == SQ_LAYER) && (p->arp >> tk) & 1u; }
+static void sqp_arp_on(uint32_t tk, const sq_ev_t *e)
+{
+    cf_chord_out_t o = {0};
+    uint32_t j, part = tk == SQ_LAYER ? 2u : 0u;
+    if (cfp_cp == part && (cfp.n || cfa_k.n))
+        return;
+    o.sounding = 1;
+    o.n = (uint8_t)(e->n < CF_MAX_NOTES ? e->n : CF_MAX_NOTES);
+    for (j = 0; j < o.n; j++)
+        o.note[j] = e->note[j];
+    o.root_pc = e->root;
+    cfa_at = &cfa_sq[tk == SQ_LAYER];
+    cfa.on = 1;
+    cfa_chord(&o, o.n);
+    cfa_at = &cfa_k;
+    sqp.aon |= (uint8_t)(1u << tk);
+}
+static void sqp_arp_off(uint32_t tk)
+{
+    if (!((sqp.aon >> tk) & 1u))
+        return;
+    cfa_at = &cfa_sq[tk == SQ_LAYER];
+    cfa_stop();
+    cfa_at = &cfa_k;
+    sqp.aon &= (uint8_t)~(1u << tk);
+}
+static void sqp_arp_tick(uint32_t n)             /* every audio block (cf_out.c): their steps, their strums */
+{
+    uint32_t i;
+    for (i = 0; i < 2u; i++) {
+        cfa_at = &cfa_sq[i];
+        cfa_tick(n);
+    }
+    cfa_at = &cfa_k;
 }
 
 /* the tick in the bar where the drums' step i sounds: every second one late by the pattern's SWING (up to half a
@@ -216,6 +269,14 @@ static void sqp_fire(const sq_pat_t *p, uint32_t tk, uint32_t u)
             sqp_bass_on(e->note, 1, off);
             return;
         }
+        if (tk == SQ_LAYER && sqp_arp_trk(p, SQ_LAYER)) {   /* (ARP on the track: its arpeggiator plays it) */
+            sqp_layer_off();
+            sqp_arp_on(SQ_LAYER, e);
+            sqp.left[2] = off;
+            sqp.lkey = e->rootkey;
+            sqp.lbtns = e->btns;
+            return;
+        }
         if (tk == SQ_LAYER) {                    /* (its own part, no bass) */
             if (trk[2].p[P_VOICE] == V_LEGATO) {
                 /* a legato sound: the new note first, then the old one let go, so its own glide slides between
@@ -252,12 +313,16 @@ static void sqp_fire(const sq_pat_t *p, uint32_t tk, uint32_t u)
             return;
         }
         sqp_chord_off();                         /* (a chord strikes again whole: a sequencer's stab) */
-        for (j = 0; j < e->n; j++) {
-            sqp.note[j] = e->note[j];
-            if (!cfp_holds(0, e->note[j]) && !cfl_holds(0, e->note[j]))
-                cfp_on(0, e->note[j], cfp_cfg.vel);
+        if (sqp_arp_trk(p, SQ_CHORDS)) {         /* (ARP on the track: its arpeggiator plays the chord) */
+            sqp_arp_on(SQ_CHORDS, e);
+        } else {
+            for (j = 0; j < e->n; j++) {
+                sqp.note[j] = e->note[j];
+                if (!cfp_holds(0, e->note[j]) && !cfl_holds(0, e->note[j]))
+                    cfp_on(0, e->note[j], cfp_cfg.vel);
+            }
+            sqp.n = e->n;
         }
-        sqp.n = e->n;
         sqp.left[0] = off;
         sqp.ckey = e->rootkey;
         sqp.cbtns = e->btns;
@@ -277,6 +342,10 @@ static void sqp_now(void)
         sqp_chord_off();
     if (sqp.nb && !sqp.left[1])
         sqp_bass_off();
+    if (!sqp.left[0])
+        sqp_arp_off(SQ_CHORDS);                  /* (its chord over: the arpeggio ends with it) */
+    if (!sqp.left[2])
+        sqp_arp_off(SQ_LAYER);
     if (sqp.ln && !sqp.left[2] && trk[2].p[P_VOICE] != V_LEGATO)
         sqp_layer_off();                         /* (a legato LAYER: at the end of this tick, after what begins in
                                                   * it, so a note that meets the next slides into it) */
@@ -284,6 +353,10 @@ static void sqp_now(void)
         uint32_t mu = sq_st.song.mute;
         if ((mu >> SQ_CHORDS) & 1u && sqp.n)
             sqp_chord_off();
+        if ((mu >> SQ_CHORDS) & 1u)
+            sqp_arp_off(SQ_CHORDS);
+        if ((mu >> SQ_LAYER) & 1u)
+            sqp_arp_off(SQ_LAYER);
         if (((mu >> SQ_BASS) & 1u || ((mu >> SQ_CHORDS) & 1u && !sq_own(p, SQ_BASS))) && sqp.nb)
             sqp_bass_off();
         if ((mu >> SQ_LAYER) & 1u && sqp.ln)
@@ -432,6 +505,8 @@ static void sqp_stop(void)
     sqp_chord_off();
     sqp_bass_off();
     sqp_layer_off();
+    sqp_arp_off(SQ_CHORDS);
+    sqp_arp_off(SQ_LAYER);
     sqp_drum_offs();
     sqp.on = 0;
     sqp.click = 0;

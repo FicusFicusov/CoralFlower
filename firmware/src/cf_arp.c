@@ -21,7 +21,8 @@ static const uint8_t CF_ARP_UNITS[] = {96, 48, 24, 16, 12, 8, 6, 4, 3};
 #define CF_ARP_NRATES ((uint32_t)sizeof CF_ARP_UNITS)
 #define CF_ARP_MAX 48u                               /* notes in the pattern: 12 tones x 4 octaves */
 
-static struct {
+typedef struct {
+    uint8_t part;                                    /* the part it plays (0xFF: the keys' part, cfp_cp) */
     uint8_t on;                                      /* the player's view of cfp_cfg.arp_on (cfp_config moves it) */
     uint8_t mode;                                    /* the mode the pattern was started in */
     uint8_t n, note[CF_MAX_NOTES], order[CF_MAX_NOTES];   /* the chord: low to high, and in its tones' order */
@@ -41,7 +42,16 @@ static struct {
     /* locked to the beat (cf_grid on): the next step's place on the grid (1/24 beats), the grid's gen it is on */
     uint32_t next24, gen;
     uint8_t locked;
-} cfa;
+} cfa_t;
+/* the keys' arpeggiator, and the sequencer's CHORDS and LAYER tracks' (ARP in a track's editor: the owner,
+ * 2026-10-19, "ARP у дорожки"; the same settings, the ARP page's). The functions below work on cfa, the one cfa_at
+ * points to: the keys' but while the sequencer runs one of its own (cf_seqp.c sqp_arp_*), then back at once */
+static cfa_t cfa_k = {.part = 0xFF}, cfa_sq[2] = {{.part = 0}, {.part = 2}};
+static cfa_t *cfa_at = &cfa_k;
+#define cfa (*cfa_at)
+static void sqp_off(uint32_t part, uint32_t note);   /* (cf_seqp.c: a note of the sequencer's let go, unless the keys or
+                                                     * the loop sound it) */
+static uint32_t cfa_part(void) { return cfa.part == 0xFFu ? cfp_cp : cfa.part; }
 
 static uint32_t cfa_bpm(void) { return cfp_cfg.bpm >= 30u && cfp_cfg.bpm <= 300u ? cfp_cfg.bpm : 120u; }
 static uint32_t cfa_oct(void) { return cfp_cfg.arp.oct >= 1u && cfp_cfg.arp.oct <= 4u ? cfp_cfg.arp.oct : 1u; }
@@ -92,8 +102,10 @@ static int cfa_pick(uint32_t i)
 
 static void cfa_note_off(void)
 {
-    if (cfa.cur)
-        cfp_off(cfp_cp, cfa.cur);
+    if (cfa.cur && cfa_at != &cfa_k)
+        sqp_off(cfa_part(), cfa.cur);
+    else if (cfa.cur)
+        cfp_off(cfa_part(), cfa.cur);
     cfa.cur = 0;
 }
 static void cfa_strum_off(void)
@@ -101,7 +113,10 @@ static void cfa_strum_off(void)
     uint32_t i;
     for (i = 0; i < cfa.sn; i++)
         if (cfa.son[i]) {
-            cfp_off(cfp_cp, cfa.snote[i]);
+            if (cfa_at != &cfa_k)
+                sqp_off(cfa_part(), cfa.snote[i]);
+            else
+                cfp_off(cfa_part(), cfa.snote[i]);
             cfa.son[i] = 0;
         }
     cfa.sn = cfa.si = 0;
@@ -119,7 +134,8 @@ static void cfa_play(uint32_t note)
 #ifdef CF_TRACE
     fprintf(stderr, "%6u arp %u\n", (unsigned)cf_now_ms, (unsigned)note);
 #endif
-    cfp_on(cfp_cp, note, cfp_cfg.vel);
+    if (cfa_at == &cfa_k || (!cfp_holds(cfa_part(), note) && !cfl_holds(cfa_part(), note)))
+        cfp_on(cfa_part(), note, cfp_cfg.vel);       /* (the sequencer's: not over a note the keys or the loop hold) */
     cfa.steps++;
     cfa.last_note = (uint8_t)note;
 }

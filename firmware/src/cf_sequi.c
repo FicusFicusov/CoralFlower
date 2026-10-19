@@ -224,6 +224,32 @@ static uint8_t sq_live_part(void)                /* (and while the LAYER's sound
                      (cu.scr == SCR_SAVE && cu.page[SCR_SAVE] == CF_PART_LAYER) ? CF_PART_LAYER : CF_PART_CHORD);
 }
 static int sq_screen(uint32_t s) { return s == SCR_SQ || s == SCR_SQED; }
+/* ARP in a track's editor (CHORDS, LAYER): its own arpeggiator on / off, the ARP page's settings (the owner,
+ * 2026-10-19: ARP and the strum did nothing in the sequencer); the steps stay chords. The keys there play as the track
+ * does: ARP its own, none on BASS and DRUMS */
+static uint8_t sq_keys_arp(void)
+{
+    if (cu.scr != SCR_SQED || squ.pat >= SQ_NPAT)
+        return cu.arp_on;
+    return (uint8_t)((squ.trk == SQ_CHORDS || squ.trk == SQ_LAYER) && (sq_st.pat[squ.pat].arp >> squ.trk) & 1u);
+}
+static void sq_undo_poll(void);
+static void sq_touch(void);
+static void sq_arp_toggle(void)
+{
+    sq_pat_t *p = &sq_st.pat[squ.pat % SQ_NPAT];
+    char m[24];
+    if (squ.trk != SQ_CHORDS && squ.trk != SQ_LAYER)
+        return;
+    sqh.busy = 0;                                /* (an action of its own) */
+    sq_undo_poll();
+    sq_touch();
+    p->arp ^= (uint8_t)(1u << squ.trk);
+    str_cpy(m, (p->arp >> squ.trk) & 1u ? "ARP on: " : "ARP off: ", sizeof m);
+    str_cpy(m + str_len(m), SQ_TRK_NAME[squ.trk], 8);
+    cf_message(m);
+    cf_send_config();
+}
 static sq_pat_t *sq_cur(void) { return &sq_st.pat[squ.pat < SQ_NPAT ? squ.pat : 0]; }
 
 /* the drums' names as the kit plays them (eng_drum.c drum_lane_name's), short for a knob */
