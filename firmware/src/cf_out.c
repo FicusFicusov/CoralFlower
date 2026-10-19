@@ -228,7 +228,7 @@ enum {
                        * 3 pattern b next (the song from place v), 4 a take on pattern b, track v, 5 the take ends,
                        * 6 a take from HOME on pattern b, track v (8 bars at most) */
 };
-typedef struct { uint8_t op, a, b, rsv; int16_t v; } cf_ev_in_t;
+typedef struct { uint8_t op, a, b, rsv; int16_t v; } cf_ev_in_t;   /* (CFE_KEY: a key, b its age in ms, v down) */
 #define CF_EVQ 128u                              /* a power of two */
 static cf_ev_in_t cf_evq[CF_EVQ];
 static volatile uint32_t cf_evq_w, cf_evq_r;
@@ -460,6 +460,8 @@ static void cf_apply(const cf_ev_in_t *e)
 {
     switch (e->op) {
     case CFE_KEY:
+        if (e->v)
+            sqp.rage = e->b;                     /* (its age, ms: a take puts it back where it was played) */
         cfp_key(e->a, e->v);
         break;
     case CFE_CONFIG: cfp_config(); break;

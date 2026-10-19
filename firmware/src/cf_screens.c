@@ -484,21 +484,6 @@ static void draw_popup(void)
         }
         break;
     }
-    case POP_SEQHINT: {                          /* the first take from HOME: it is a pattern of the SEQUENCER, and
-                                                  * how to get to it (the owner, 2026-10-19: "давал бы как-то понять что
-                                                  * это секвенсор и как его открывать после первой записи") */
-        char t[24];
-        str_cpy(t, "Saved as Pattern X", sizeof t);
-        t[17] = (char)('A' + sqk.last % SQ_NPAT);
-        draw_panel(12, Y_VIEW + 6, 216, 110);
-        fb_text_c(&CF_FONT_UI, 120, Y_VIEW + 13, t, C_ACC(0), 1);
-        fb_text_c(&CF_FONT_UI, 120, Y_VIEW + 27, "in the SEQUENCER", FL_INK, 1);
-        draw_chip_text(26, Y_VIEW + 47, "[SEQ] [SEQ]: open it", FL_INK2);
-        draw_chip_text(26, Y_VIEW + 63, "[PLAY]: play, stop", FL_INK2);
-        draw_chip_text(26, Y_VIEW + 79, "[REC]: a new pattern", FL_INK2);
-        draw_chip_text(26, Y_VIEW + 95, "hold [REC]: undo it", FL_INK2);
-        break;
-    }
     default: break;
     }
 }

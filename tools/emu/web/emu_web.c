@@ -74,15 +74,17 @@ static uint32_t ring_w, ring_r_;
 static uint32_t dev_ms, last_frame;               /* emu.c bench(): ms, last_frame */
 static uint64_t frames_done;
 static uint8_t booted;
+uint32_t emu_render_ms;                           /* (tests, cf_headless CF_RENDER_MS: how long a frame draws on the
+                                                   * device, the keys not read while it does; 0: as the emulator) */
 
 static void run_ms(void)                          /* one millisecond of emu.c's headless loop (bench) */
 {
     uint32_t ms = dev_ms++;
     emu_fw_tick(ms);
-    if (ms == 0 || ms - last_frame >= 15u) {
+    if (ms == 0 || ms - last_frame >= 15u + emu_render_ms) {
         last_frame = ms;
         emu_fw_frame();
-    } else {
+    } else if (ms - last_frame >= emu_render_ms) {
         emu_fw_idle();
     }
     while (frames_done + EMU_BLOCK <= (uint64_t)ms * EMU_FS / 1000u) {

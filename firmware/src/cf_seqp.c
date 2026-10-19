@@ -53,6 +53,8 @@ static struct {
     uint32_t rserial;            /* the chord model's serial last seen in a take */
     uint8_t ropen;               /* a chord of the take still sounds (its off not sent yet) */
     uint32_t rheld;              /* .. the ticks it has sounded (its length: kind 2's dur) */
+    uint8_t rage;                /* the last key down's age when it got here (ms: cf_ui.c, the main loop's delay) */
+    uint32_t rback;              /* .. the open chord's start, put back by it (ticks): its length gets them too */
     uint8_t aon;                 /* bit t: track t's arpeggiator plays a chord of it (ARP on the track: sqp_arp_on) */
     uint8_t dsk[SQ_NLANE], dskb[SQ_NLANE], dskp[SQ_NLANE];   /* a drum struck in a take just before the step it is
                                   * written on: that step (+ 1), its bar and pattern, not struck again there */
@@ -449,23 +451,26 @@ static void sqp_rec_watch(void)
 {
     const cf_chord_out_t *o = &cfc.out;
     sqr_ev_t e;
-    uint32_t i;
+    uint32_t i, back;
     if (sqp.rec == 0xFFu || sqp.rec == SQ_DRUMS || o->serial == sqp.rserial)
         return;
     sqp.rserial = o->serial;
     if (sqp.cin >= SQ_PPQN / 4u)                 /* (the count-in: only its last sixteenth counts, as the first step) */
         return;
+    back = sqp.rage * SQ_PPQN * cfm.bpm / 60000u;   /* (the key's age: where in the bar it was played) */
+    sqp.rage = 0;
     e.pat = sqp.pat;
     e.bar = sqp.sb[sqp.rec % SQ_NTRK];           /* (the take's track's own bar) */
-    e.t = sqp.cin ? 0u : sqp.t;
+    e.t = sqp.cin ? 0u : sqp.t > back ? sqp.t - back : 0u;
     if (sqp.ropen) {
         e.kind = 2;
-        e.dur = sqp.rheld;
+        e.dur = sqp.rheld + sqp.rback > back ? sqp.rheld + sqp.rback - back : 1u;
         sqp_rpush(&e);
         sqp.ropen = 0;
     }
     if (!o->sounding || !o->n)
         return;
+    sqp.rback = sqp.cin ? 0u : back;
     e.kind = 1;
     e.rkey = (uint8_t)(o->single && o->n > 1u ? 0xFFu : cfc.nroots ? cfc.root_key[cfc.nroots - 1u] : 0xFFu);
     sqp.rheld = 0;                               /* (the root key the chord model built it on: the last one down; a
@@ -526,7 +531,7 @@ static void sqp_stop(void)
         e.pat = sqp.pat;
         e.bar = sqp.sb[sqp.rec % SQ_NTRK];
         e.t = sqp.t;
-        e.dur = sqp.rheld;
+        e.dur = sqp.rheld + sqp.rback;
         sqp_rpush(&e);
     }
     sqp.ropen = 0;
@@ -603,6 +608,9 @@ static void sqp_queue(uint32_t pat, uint32_t slot)
  * count-in */
 static void sqp_rec_start(uint32_t pat, uint32_t trk)
 {
+#ifdef CF_TRACE
+    fprintf(stderr, "%6u take start: pattern %c, its count-in now\n", (unsigned)cf_now_ms, (char)('A' + pat % SQ_NPAT));
+#endif
     if (!sqp.on || sqp.song || sqp.pat != pat)
         sqp_begin(pat, 0, 1);
     sqp.rec = (uint8_t)trk;
@@ -618,7 +626,7 @@ static void sqp_rec_stop(void)                   /* REC again: the take ends, th
         e.pat = sqp.pat;
         e.bar = sqp.sb[sqp.rec % SQ_NTRK];
         e.t = sqp.t;
-        e.dur = sqp.rheld;
+        e.dur = sqp.rheld + sqp.rback;
         sqp_rpush(&e);
         sqp.ropen = 0;
     }

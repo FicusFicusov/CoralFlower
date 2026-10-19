@@ -75,6 +75,7 @@ static void mo_drain(void)
     while ((p = web_midi_out_take()) != 0u)
         mo_count[(p >> 8) & 0xFFu]++;
 }
+extern uint32_t emu_render_ms;                   /* (emu_web.c: a device's frame time, CF_RENDER_MS) */
 static void step(uint32_t ms)
 {
     if (!wav) {
@@ -148,6 +149,8 @@ int main(int argc, char **argv)
             fclose(fl);
         }
     }
+    if (getenv("CF_RENDER_MS"))                 /* (a device's frame: the keys wait while it draws) */
+        emu_render_ms = (uint32_t)atoi(getenv("CF_RENDER_MS"));
     web_boot();
     step(getenv("CF_BOOT_MS") ? (uint32_t)atoi(getenv("CF_BOOT_MS")) : 1600u);   /* (0: the script sees the intro) */
     while (fgets(line, sizeof line, s)) {

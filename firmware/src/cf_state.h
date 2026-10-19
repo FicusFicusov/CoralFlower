@@ -68,8 +68,8 @@ typedef struct {
                                                       * bass_level) */
     uint16_t snd_layer;          /* the LAYER's sound (part 2): its index in the chord sounds' row; 0xFFFF: the default */
     uint8_t ch_layer, ch_drums;  /* GLO > Channels: the sequencer's LAYER and DRUMS out on MIDI, 0..15 */
-    uint8_t seq_hint;            /* the panel after the first take from HOME has been shown (it says the take is a
-                                  * pattern in the SEQUENCER and how to open it, once: 0.4) */
+    uint8_t seq_hint;            /* the SEQUENCER's hints shown once (0.4, cf_sequi.c SQH_*): bit 0 after the first
+                                  * take from HOME, bit 1 HOME after it, bit 2 the first track opened by EDIT */
 } cf_set_t;
 
 static cf_set_t cs;
@@ -145,7 +145,7 @@ typedef struct {
     uint8_t upd_left, upd_stub;  /* the update gesture's countdown (cf_shim.c cr_update_poll) */
     uint8_t edited[3];           /* a part's sound changed since it was loaded (SAVE keeps it): chord, bass, layer */
 } cf_ui_t;
-enum { POP_NONE, POP_SOUND_CHORD, POP_SOUND_BASS, POP_ALGO, POP_OCTAVE, POP_MSG, POP_SOUND_LAYER, POP_SEQHINT };
+enum { POP_NONE, POP_SOUND_CHORD, POP_SOUND_BASS, POP_ALGO, POP_OCTAVE, POP_MSG, POP_SOUND_LAYER };
 static cf_ui_t cu;
 
 /* the plant */

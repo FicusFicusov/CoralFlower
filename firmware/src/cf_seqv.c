@@ -359,7 +359,16 @@ static void draw_sq_track(void)
         else
             str_cpy(c, squ.trk == SQ_BASS ? "play a note" : "play a chord", sizeof c);
     }
-    {
+    if (cf_sn.sq_on && cf_sn.sq_rec == squ.trk && cf_sn.sq_pat == squ.pat) {   /* a take into this track: where
+                                                  * it is, not "play a chord" (that is the frame's step writing) */
+        if (cf_sn.sq_cin) {
+            str_cpy(c, "count-in", sizeof c);
+        } else {
+            str_cpy(c, "REC bar ", sizeof c);
+            kint(c + 8, (int)sq_trk_bar(p, squ.trk, cf_sn.sq_n) + 1, sqk.on ? " of 8" : 0);
+        }
+        fb_text_r(&CF_FONT_UI, 232, Y_VIEW + 4, c, FL_C(FL_R_FIRE, 1), 1);
+    } else {
         char d[24];
         fb_signs(c, d, sizeof d);
         fb_text_r(&CF_FONT_UI, 232, Y_VIEW + 4, d, drums ? FL_C(sq_lane_ink(squ.lane).ramp, 0) : C_ACC(0), 1);
@@ -472,7 +481,8 @@ static void sq_pat_row(int y0)                   /* the patterns' letters and SO
     int i, x = 8 + draw_chip(8, y0, "ALGO") + 5;
     for (i = 0; i <= (int)SQ_NPAT; i++) {
         char b[6];
-        int w, cur = i == squ.pat, used = i < (int)SQ_NPAT && !sq_empty(&sq_st.pat[i]);
+        int w, cur = i == squ.pat, used = i < (int)SQ_NPAT && sq_has((uint32_t)i);   /* (steps in it: a pattern
+                                                  * cleared reads empty, not "opened once", the owner, 2026-10-20) */
         int play = cf_sn.sq_on && (i < (int)SQ_NPAT ? !cf_sn.sq_song && i == cf_sn.sq_pat : cf_sn.sq_song);
         int next = cf_sn.sq_on && cf_sn.sq_next != 0xFFu &&
                    (i < (int)SQ_NPAT ? cf_sn.sq_next == i : cf_sn.sq_next >= SQ_NPAT);
@@ -588,9 +598,10 @@ static void sq_block(int x, int y, uint32_t pi, int cur)
     sq_ink_t k = sq_pat_ink(pi);
     int w = sq_block_w(pi), b;
     char l[2];
-    fb_rbox(x, y, w, 20, 2, FL_C(k.ramp, sq_empty(p) ? 3 : 2));
+    fb_rbox(x, y, w, 20, 2, FL_C(k.ramp, sq_has(pi % SQ_NPAT) ? 2 : 3));   /* (cleared: as empty, as long as its
+                                                  * bars, which it plays) */
     fb_hline(x + 2, y + 1, w - 4, FL_C(k.ramp, 1));
-    for (b = 0; !sq_empty(p) && b < (int)sq_len(p); b++)   /* a tick a bar */
+    for (b = 0; sq_has(pi % SQ_NPAT) && b < (int)sq_len(p); b++)   /* a tick a bar */
         fb_rect(x + 4 + b * 6, y + 15, 4, 2, FL_C(k.ramp, 0));
     l[0] = (char)('A' + pi % SQ_NPAT);
     l[1] = 0;
@@ -729,16 +740,17 @@ static void draw_sq_help(void)
                                      "[SEL] remove it  [EDIT] open it", "[PLAY] play from the frame",
                                      "hold [REC]: undo last change", "[SEQ] home  [GLO] close", 0};
     /* (a gesture says "turn", and the copy where it lands: "copy the bar there" explained it, the owner, 2026-10-19) */
+    /* (no PRESETS line, no SEL-held eraser: "тут лишнее SEL + hold, и лишнее PRESETS", the owner, 2026-10-20; the
+     * gestures stay) */
     static const char *const NO[] = {"[SELECT] move the frame", "keys: write in the frame", "[SEL] clear the step",
-                                     "[PRESETS] sound  [ARP] arpeggio", "hold [SEL], turn [SELECT]: erase",
-                                     "hold [OCT+], turn [SELECT]:", "   copy the bar there",
+                                     "[ARP] arpeggio", "hold [OCT+], turn [SELECT]:", "   copy the bar there",
                                      "hold [REC]: undo last change", "[SAVE] back  [GLO] close", 0};
     static const char *const BA[] = {"[SELECT] move the frame", "keys: write in the frame", "[SEL] clear the step",
-                                     "[PRESETS] the track's sound", "hold [SEL], turn [SELECT]: erase",
                                      "hold [OCT+], turn [SELECT]:", "   copy the bar there",
                                      "hold [REC]: undo last change", "[SAVE] back  [GLO] close", 0};   /* (no ARP) */
     static const char *const DR[] = {"upper keys: pick a drum", "lower keys: steps on / off",
-                                     "[SELECT] bar  [PRESETS] the kit", "hold [SEL], turn [SELECT]: erase",
+                                     "[SELECT] bar  [PRESETS] the kit",   /* (no eraser line: "Стереть убрать, набор
+                                                  * оставить", the owner, 2026-10-20) */
                                      "hold [OCT+], turn [SELECT]:", "   copy the bar there",
                                      "REC on: upper keys are pads", "hold [REC]: undo last change",
                                      "[SAVE] back  [GLO] close", 0};

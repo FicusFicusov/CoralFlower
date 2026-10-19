@@ -8,6 +8,13 @@
  */
 
 static void cf_message(const char *s);
+#ifndef CF_KEY_T0
+#ifdef CU_KEY_T0
+#define CF_KEY_T0(k) CU_KEY_T0(k)                /* (the emulator's: tools/emu/emu_hal_fw.h) */
+#else
+#define CF_KEY_T0(k) fm1_in.note_t0[k]           /* the first scan that saw key k closed (hal/fm1_input.h) */
+#endif
+#endif
 static void cf_pop(uint32_t kind, uint32_t ms);
 static int cf_editing_part(void);
 static void cf_edited(uint32_t part);
@@ -791,9 +798,6 @@ static void ui_button(uint32_t b)
 {
     if (cfr.go)                                  /* (erasing: no button any more) */
         return;
-    if (cu.pop == POP_SEQHINT)                   /* (the panel after the first take: any button closes it, and does
-                                                  * what it does: SEQ opens the sequencer at once) */
-        cu.pop_until = 0;
     if (cf_reset_page() && b == B_SAVE) {
         cf_reset_save();
         return;
@@ -813,8 +817,10 @@ static void ui_button(uint32_t b)
             return;                              /* (no way out to another screen here but HOME and SEQ: the owner,
                                                   * 2026-10-19; their lights are off) */
         if (cu.scr == SCR_SQ && b == B_EDIT) {
-            if (sq_open())
+            if (sq_open()) {
                 ui_open(SCR_SQED);
+                sq_hint_once(SQH_TRACK);         /* (the first track opened: the way back) */
+            }
             return;
         }
         if (cu.scr == SCR_SQ && b == B_SCL) {      /* SEL takes one thing out of the frame, never many: on the song its
@@ -996,11 +1002,12 @@ static void cf_rec_poll(void)
         cfp_cfg.bpm = cs.bpm;
         fm1_irq_on();
     }
-    if (cu.rec_hold && sq_screen(cu.scr)) {      /* the sequencer: a tap records, held 1 s undoes (as the looper's) */
+    if (cu.rec_hold && sq_screen(cu.scr)) {      /* the sequencer: a tap records, held 1 s undoes (as on HOME) */
         int held = (fm1_in.buttons >> panel.btn[B_REC]) & 1u;
         if (held && !cu.rec_fired && cu.now - cu.rec_hold >= 1000u) {
             cu.rec_fired = 1;
-            sq_undo();
+            sq_home_undo();                      /* (as on HOME: a take under way dropped, else the last change; an
+                                                  * undone take shows the pattern before it) */
             if (cu.scr == SCR_SQED && sq_empty(sq_cur()))
                 ui_open(SCR_SQ);                 /* (the pattern back to nothing: its tracks) */
             else if (cu.scr == SCR_SQED)
@@ -1073,7 +1080,14 @@ static void ui_note_key(int key, int down)
     if (down && cu.scr == SCR_SEL && cf_key_role(cs.chord.algo, key, &idx) == CF_ROLE_BUTTON &&
         !cf_is_off(&cs.chord, idx))
         cu.sel_btn = (uint8_t)idx;
-    cf_post(CFE_KEY, (uint32_t)key, 0, down);
+    {                                            /* (a key down goes with its age: how long ago the scan saw it closed,
+                                                  * hal/fm1_input.h note_t0. A frame may draw for tens of ms before the
+                                                  * keys are read: a take puts the chord where it was played, not where
+                                                  * the frame let it through. The owner, 2026-10-20: a take from HOME
+                                                  * "квантизируется не супер по таймингу") */
+        uint32_t age = down ? (fm1_ticks() - CF_KEY_T0(key % 27)) / FM1_TICKS_PER_US / 1000u : 0u;
+        cf_post(CFE_KEY, (uint32_t)key, age <= 250u ? age : 0u, down);   /* (longer: stale, none) */
+    }
 }
 
 /* the keys, between the frame's tile rows too. Keys that changed in one scan went at once: the ones let go first,
@@ -1237,7 +1251,7 @@ static int sq_key_led(uint32_t k, uint8_t *lit, uint8_t *mid, uint8_t *dim, uint
             u += cf_key_is_upper(j);
         if (u < (int)SQ_NPAT)
             cf_led((cu.keys >> k) & 1u || (sq_st.song.n && sq_st.song.pat[squ.slot] == u) ? lit :
-                   sq_empty(&sq_st.pat[u]) ? faint : dim, id, 1);
+                   sq_has((uint32_t)u) ? dim : faint, id, 1);
         return 1;
     }
     if (cu.scr != SCR_SQED || (cu.keys >> k) & 1u)
