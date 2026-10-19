@@ -284,6 +284,22 @@ static void cfp_change(uint32_t part, uint8_t *old, uint8_t *pn, const uint8_t *
             } else if (used_p[a] && !used_q[b]) {    /* a split: a new voice out of this old note */
                 used_q[b] = 1;
                 cfp_on_from(part, nw[b], vel, from[a], ticks);
+            } else if (!used_p[a] && used_q[b]) {    /* a merge: this old voice goes into a note another one reaches.
+                                                      * It slides there and lets go on the way (RETRIG Notes: fades);
+                                                      * let go where it was, its tail stood at the old pitch: a chord
+                                                      * moving down kept its top note (the owner, 2026-10-19: "глайд
+                                                      * вниз хуже, чем вверх") */
+                used_p[a] = 1;
+                if (vv[a] && !bass && mode != 5) {
+                    if (from[a] != nw[b])
+                        trk_retune(&trk[part], vv[a], nw[b], ticks);
+                    vv[a]->gate = 0, vv[a]->stage = 3;
+                } else if (vv[a]) {
+                    vv[a]->gate = 0, vv[a]->stage = 4;
+                } else {
+                    trk_note_off(&trk[part], from[a]);
+                }
+                cfp_midi(0x80u, cfp_ch(part), from[a], 0);
             }
         }
         for (i = 0; i < n; i++)                      /* merged away: the extra old voices let go */
