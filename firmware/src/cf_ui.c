@@ -1271,7 +1271,7 @@ static int sq_key_led(uint32_t k, uint8_t *lit, uint8_t *mid, uint8_t *dim, uint
         }
         if (i >= st)
             return 1;
-        {                                        /* the picked drum's hits full, the beats dim under them (the
+        {                                        /* the picked drum's hits full, the beats lit less under them (the
                                                   * owner, 2026-10-20: "доли слегка подсвечиваются на клавишах, а
                                                   * поставленные на дорожку барабаны светятся во всю"); the running
                                                   * light full on an empty step and dark on a hit, so it shows there
@@ -1283,8 +1283,9 @@ static int sq_key_led(uint32_t k, uint8_t *lit, uint8_t *mid, uint8_t *dim, uint
                 cf_led(lit, id, !hit);
             else if (hit)
                 cf_led(lit, id, 1);
-            else if ((i * cs.beats) % st == 0)
-                cf_led(dim, id, 1);
+            else if ((i * cs.beats) % st == 0)  /* (the middle level: dim was hard to see in daylight, "ещё бы чуть
+                                                  * поярче", the owner, 2026-10-20; nothing lies between dim and it) */
+                cf_led(mid, id, 1);
         }
         return 1;
     }
