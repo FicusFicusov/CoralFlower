@@ -63,6 +63,8 @@ typedef struct {
     uint8_t cpart;              /* the part the keys' chords play: 0, or 2 while the sequencer's LAYER is open (its
                                  * own sound; the bass is silent then) */
     uint8_t ch_layer, ch_drums; /* the sequencer's LAYER (part 2) and DRUMS (part 3) out on MIDI, 0..15 */
+    uint8_t bass_only;          /* the keys play the bass alone (the sequencer's BASS in the frame: its row, its track,
+                                 * its take), HOME's bass switch or not; no chord */
 } cf_play_cfg_t;
 
 /* the beat grid the arpeggiator locks to while the metronome's clock runs (cf_out.c cfm_tick writes it): on, where it
@@ -75,6 +77,7 @@ static cf_chord_cfg_t cfc_shadow;                    /* the UI's copy; CFE_CONFI
 static cf_play_cfg_t cfp_cfg = {0, 0, 100, 1, 0, 0, 1, 0, 1, 0, 0, CF_ARP_DEFAULT, 120, CF_LOOP_DEFAULT, 0};
 static uint8_t cfp_cp;                               /* the part the keys' chords sound on now (cfp_cfg.cpart, taken
                                                      * at a CFE_CONFIG with the notes let go) */
+static uint8_t cfp_bo;                               /* .. the bass alone (cfp_cfg.bass_only, taken likewise) */
 
 static struct {
     uint8_t n, note[CF_MAX_NOTES];                   /* what part 0 plays now, low to high */
@@ -339,11 +342,11 @@ static void cfp_change(uint32_t part, uint8_t *old, uint8_t *pn, const uint8_t *
 
 #include "cf_arp.c"                                  /* (the arpeggiator: cfa_chord, cfa_tick, cfa_config) */
 
-/* the bass notes of a chord (the keys' model's, or a sequencer step's) */
-static int cfp_bass_notes_of(const cf_chord_out_t *o, uint8_t out[2])
+/* the bass notes of a chord (the keys' model's, or a sequencer step's); _calc: whatever HOME's bass switch says */
+static int cfp_bass_calc(const cf_chord_out_t *o, uint8_t out[2])
 {
     int n = 0, b;
-    if (!cfp_cfg.bass_on || !o->sounding || o->single || o->bass_pc < 0)
+    if (!o->sounding || o->single || o->bass_pc < 0)
         return 0;
     /* an octave under the root as played (the owner's 0), so the bass goes the way the keys go (it used to sit in
      * C2 .. B2 by pitch class: B up to C fell eleven semitones); a bass degree other than the root: its nearest note */
@@ -358,7 +361,22 @@ static int cfp_bass_notes_of(const cf_chord_out_t *o, uint8_t out[2])
         out[n++] = (uint8_t)(b + 12);
     return n;
 }
+static int cfp_bass_notes_of(const cf_chord_out_t *o, uint8_t out[2])
+{
+    return cfp_cfg.bass_on ? cfp_bass_calc(o, out) : 0;
+}
 static int cfp_bass_notes(uint8_t out[2]) { return cfp_bass_notes_of(&cfc.out, out); }
+/* the keys on the sequencer's BASS: its bass alone; a single note (no chord): that note, as the track writes it */
+static int cfp_bass_alone(uint8_t out[2])
+{
+    const cf_chord_out_t *o = &cfc.out;
+    int n = cfp_bass_calc(o, out);
+    if (!n && o->sounding && o->n) {
+        out[0] = o->note[0];
+        n = 1;
+    }
+    return n;
+}
 
 /* a note the keys' player sounds (the sequencer lets such a note go only when the keys let it go) */
 static int cfp_holds(uint32_t part, uint32_t note)
@@ -404,7 +422,8 @@ static void cfp_sync(int how)
 {
     const cf_chord_out_t *o = &cfc.out;
     uint8_t nb[2];
-    int m = o->sounding ? o->n : 0, mb = cfp_cp ? 0 : cfp_bass_notes(nb);   /* (the LAYER: no bass) */
+    int m = o->sounding && !cfp_bo ? o->n : 0;   /* (the bass alone: no chord) */
+    int mb = cfp_cp ? 0 : cfp_bo ? cfp_bass_alone(nb) : cfp_bass_notes(nb);   /* (the LAYER: no bass) */
     /* RETRIG Off: a chord changed while the last one still sounds under held keys (another chord button, another
      * root) moves its voices there with no new attack, at the Glide time (0: at once) */
     int glide = (cfp_cfg.glide_ms || cfp_cfg.retrig != CF_RT_STRIKE) && cfp.n && m;
@@ -481,7 +500,8 @@ static void cfp_key(int key, int down)
 static void cfp_config(void)                         /* CFE_CONFIG: the UI's settings */
 {
     uint8_t was = cfa.on, latched = cfa.latched, i;
-    if (cfp_cfg.cpart != cfp_cp) {                   /* the keys move to another part: what they sound there goes */
+    if (cfp_cfg.cpart != cfp_cp || cfp_cfg.bass_only != cfp_bo) {   /* the keys move to another part: what they
+                                                     * sound there goes */
         cfa_stop();
         for (i = 0; i < cfp.n; i++)
             cfp_off(cfp_cp, cfp.note[i]);
@@ -490,6 +510,7 @@ static void cfp_config(void)                         /* CFE_CONFIG: the UI's set
         cfp.n = cfp.nb = 0;
         cfp.slast = 0;                               /* (another part: no slide from the old one's note) */
         cfp_cp = (uint8_t)(cfp_cfg.cpart == 2u ? 2u : 0u);
+        cfp_bo = cfp_cfg.bass_only;
     }
     cfc.keep = cfp_cfg.retrig == CF_RT_WAIT;
     cf_chord_config(&cfc, &cfc_shadow);

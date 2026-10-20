@@ -330,7 +330,9 @@ static void draw_sq_track(void)
     fb_rect(0, Y_VIEW, FB_W, H_VIEW, FL_BG);
     /* the line over the grid: the pattern (the owner, 2026-10-19: "Pattern A", not the frame's bar and step), or a bar
      * being copied, then what is in the frame */
-    if (squ.cpy) {
+    if (squ.mv) {
+        str_cpy(b, "Moving", sizeof b);          /* (EDIT held, SELECT turned: the chord rides with the frame) */
+    } else if (squ.cpy) {
         str_cpy(b, "Erasing", sizeof b);         /* (SEL held, SELECT turned) */
     } else if (squ.ocpy) {                       /* (OCT+ held, SELECT turned) */
         str_cpy(b, "Copy bar ", sizeof b);
@@ -342,7 +344,7 @@ static void draw_sq_track(void)
         b[8] = (char)('A' + squ.pat);
         b[9] = 0;
     }
-    fb_text(&CF_FONT_UI, 8, Y_VIEW + 4, b, squ.cpy || squ.ocpy ? C_ACC(0) : FL_INK2, 1);
+    fb_text(&CF_FONT_UI, 8, Y_VIEW + 4, b, squ.cpy || squ.ocpy || squ.mv ? C_ACC(0) : FL_INK2, 1);
     if (!squ.cpy && !squ.ocpy && !drums && (p->arp >> squ.trk) & 1u) {   /* (the track's ARP on: its button named,
                                                   * then its state: a chip alone read as a button, not as "on") */
         int ax = 8 + fb_text_w(&CF_FONT_UI, b, 1) + 6;
@@ -354,7 +356,9 @@ static void draw_sq_track(void)
         str_cpy(c, sq_lane_name(squ.lane), sizeof c);
     } else {
         int i = sq_at(p, squ.trk, squ.bar, squ.step);
-        if (i >= 0)
+        if (squ.nofr)
+            c[0] = 0;                            /* (no frame: nothing to name) */
+        else if (i >= 0)
             sq_ev_name(p, (uint32_t)i, c);
         else
             str_cpy(c, squ.trk == SQ_BASS ? "play a note" : "play a chord", sizeof c);
@@ -400,7 +404,7 @@ static void draw_sq_track(void)
         int y = SQG_Y0 + squ.bar * SQG_RH - 1, st = (int)sq_steps(p, squ.trk, squ.bar);
         if (drums) {
             fb_rframe(SQG_X0 - 3, y, SQG_X1 - SQG_X0 + 5, SQG_RH + 1, C_ACC(0));
-        } else {
+        } else if (!squ.nofr) {                  /* (hidden after a take: the keys only sound) */
             int x = sq_cell_x(squ.step, st), w = sq_cell_x(squ.step + 1, st) - x;
             fb_rframe(x - (w < 8), y, w + (w < 8), SQG_RH + 1, C_ACC(0));
         }
@@ -743,9 +747,11 @@ static void draw_sq_help(void)
     /* (no PRESETS line, no SEL-held eraser: "тут лишнее SEL + hold, и лишнее PRESETS", the owner, 2026-10-20; the
      * gestures stay) */
     static const char *const NO[] = {"[SELECT] move the frame", "keys: write in the frame", "[SEL] clear the step",
-                                     "[ARP] arpeggio", "hold [OCT+], turn [SELECT]:", "   copy the bar there",
+                                     "[ARP] arpeggio", "hold [EDIT], turn [SELECT]: move",
+                                     "hold [OCT+], turn [SELECT]:", "   copy the bar there",
                                      "hold [REC]: undo last change", "[SAVE] back  [GLO] close", 0};
     static const char *const BA[] = {"[SELECT] move the frame", "keys: write in the frame", "[SEL] clear the step",
+                                     "hold [EDIT], turn [SELECT]: move",
                                      "hold [OCT+], turn [SELECT]:", "   copy the bar there",
                                      "hold [REC]: undo last change", "[SAVE] back  [GLO] close", 0};   /* (no ARP) */
     static const char *const DR[] = {"upper keys: pick a drum", "lower keys: steps on / off",

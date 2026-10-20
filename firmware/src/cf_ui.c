@@ -25,6 +25,7 @@ static const char CF_NAME_CHARS[] = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-.+#/"
 
 /* -------------------------------------------------------- the engine --- */
 static uint8_t sq_live_part(void);              /* (cf_sequi.c) */
+static uint8_t sq_live_bass(void);              /* (cf_sequi.c) */
 static uint8_t sq_keys_arp(void);               /* (cf_sequi.c: the keys' ARP, a track's own while it is open) */
 static void cf_send_config(void)                 /* the chord settings -> the audio side */
 {
@@ -53,6 +54,7 @@ static void cf_send_config(void)                 /* the chord settings -> the au
     trk[CF_PART_LAYER].p[P_LEVEL] = cs.level_layer;
     trk[CF_PART_DRUMS].p[P_LEVEL] = cs.level_drums;
     cfp_cfg.cpart = sq_live_part();              /* (the keys play the LAYER's sound while it is open) */
+    cfp_cfg.bass_only = sq_live_bass();          /* (.. the bass alone in the frame's BASS) */
     fm1_irq_on();
     cf_fx_apply(&cs.fx);
     cf_post(CFE_CONFIG, 0, 0, 0);
@@ -612,7 +614,7 @@ static void ui_select(int d)                     /* SELECT: the bass sound, or a
         return;
     }
     if (cu.scr == SCR_SQED) {                    /* a track: its step (DRUMS: its bar) */
-        sq_select(d);
+        sq_carry_turn(d);
         return;
     }
     if (cu.scr == SCR_ENV) {                     /* chord + bass (linked: the bass follows), chord, bass, the LAYER */
@@ -663,8 +665,8 @@ static void ui_select(int d)                     /* SELECT: the bass sound, or a
 }
 static void ui_presets(int d)                    /* PRESETS: the chord sound (a sequencer's track open: its sound) */
 {
-    if (cu.scr == SCR_SQED && squ.trk != SQ_CHORDS) {
-        sq_presets(d);
+    if ((cu.scr == SCR_SQED || (cu.scr == SCR_SQ && squ.pat < SQ_NPAT)) && squ.trk != SQ_CHORDS) {
+        sq_presets(d);                           /* (the frame's track's sound, heard on the keys) */
         return;
     }
     cf_snd_step(CF_PART_CHORD, d);
@@ -727,7 +729,7 @@ static void ui_open(uint32_t scr)
         cu.sel_btn = sel_first();
     if ((was == SCR_SEQ || sq_screen(was)) != (cu.scr == SCR_SEQ || sq_screen(cu.scr)))
         cf_send_metro();
-    if (was == SCR_SQED || cu.scr == SCR_SQED || was == SCR_EDIT || cu.scr == SCR_EDIT || was == SCR_ENV ||
+    if (sq_screen(was) || sq_screen(cu.scr) || was == SCR_EDIT || cu.scr == SCR_EDIT || was == SCR_ENV ||
         cu.scr == SCR_ENV || was == SCR_SAVE || cu.scr == SCR_SAVE)   /* (the LAYER open or left: where the keys play,
                                                   * cf_send_config) */
         cf_send_config();
@@ -812,13 +814,18 @@ static void ui_button(uint32_t b)
             sq_arp_toggle();
             return;
         }
-        if (b == B_FX || b == B_ENV || b == B_LFO || b == B_ARP || (cu.scr == SCR_SQED && b == B_EDIT) ||
+        if (cu.scr == SCR_SQED && b == B_EDIT) { /* EDIT held in a track: SELECT moves the frame's chord */
+            sq_edit_press();
+            return;
+        }
+        if (b == B_FX || b == B_ENV || b == B_LFO || b == B_ARP ||
             (cu.scr == SCR_SQ && b == B_SAVE))   /* (SAVE: nothing on the SEQUENCER; a pattern's copy is OCT+'s) */
             return;                              /* (no way out to another screen here but HOME and SEQ: the owner,
                                                   * 2026-10-19; their lights are off) */
         if (cu.scr == SCR_SQ && b == B_EDIT) {
             if (sq_open()) {
                 ui_open(SCR_SQED);
+                squ.nofr = 0;                    /* (opened: the frame where it was) */
                 sq_hint_once(SQH_TRACK);         /* (the first track opened: the way back) */
             }
             return;
@@ -1125,6 +1132,7 @@ static void cf_ui_input(void)
     sq_rec_poll();
     sq_sel_poll();
     sq_oct_poll();
+    sq_edit_poll();
     sq_save_poll();
     for (i = 0; i < 14u; i++)
         if ((pr >> i) & 1u) {
@@ -1254,6 +1262,19 @@ static int sq_key_led(uint32_t k, uint8_t *lit, uint8_t *mid, uint8_t *dim, uint
                    sq_has((uint32_t)u) ? dim : faint, id, 1);
         return 1;
     }
+    if (cu.scr == SCR_SQ && squ.pat < SQ_NPAT && squ.trk == SQ_DRUMS) {   /* the Drums row: the drums on the upper
+                                                  * keys (the picked one lit, each flashing as it sounds), the lower
+                                                  * keys dark */
+        int j, i = 0;
+        if (!cf_key_is_upper((int)k))
+            return 1;
+        for (j = 0; j < (int)k; j++)
+            i += cf_key_is_upper(j);
+        if (i < (int)SQ_NLANE)
+            cf_led((cu.keys >> k) & 1u || i == squ.lane ||
+                   ((int32_t)(cf_sn.now_ms - cf_sn.sq_lane_t[i]) < 110 && cf_sn.sq_lane_t[i]) ? lit : faint, id, 1);
+        return 1;
+    }
     if (cu.scr != SCR_SQED || (cu.keys >> k) & 1u)
         return 0;
     if (squ.trk == SQ_DRUMS) {
@@ -1320,9 +1341,11 @@ static void cf_leds(void)
             if (sq_track_has(p, squ.trk))
                 cf_led(dim, panel.btn[B_SCL], 1);
         } else {
-            int clear = squ.trk != SQ_DRUMS && sq_at(p, squ.trk, squ.bar, squ.step) >= 0;
+            int clear = squ.trk != SQ_DRUMS && !squ.nofr && sq_at(p, squ.trk, squ.bar, squ.step) >= 0;
             /* (DRUMS: SEL nothing) */
-            cf_led(mid, panel.btn[B_SAVE], 1);   /* (EDIT does nothing in a track: dark) */
+            cf_led(mid, panel.btn[B_SAVE], 1);
+            if (squ.mv || clear)                 /* (EDIT held + SELECT moves the frame's chord: up on a chord) */
+                cf_led(squ.mv ? lit : mid, panel.btn[B_EDIT], 1);
             if (squ.trk != SQ_DRUMS)
                 cf_led(clear ? mid : faint, panel.btn[B_SCL], 1);
             if (squ.trk == SQ_CHORDS || squ.trk == SQ_LAYER)   /* (ARP: the track's own, lit while on) */
