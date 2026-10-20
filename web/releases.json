@@ -1,6 +1,19 @@
 {
  "releases": [
   {
+   "version": "0.4.1",
+   "tag": "v0.4.1",
+   "sha256": "d91fb954d25832db4e7d0aea782d6919028bec3e920b0473f8db53b839db7ab4",
+   "pkg": "coralflower-0.4.1.fwsc",
+   "date": "2026-10-20",
+   "title": "Write while it plays",
+   "notes": [
+    "The keys write chords into a pattern while it plays; hold EDIT and turn SELECT to move a chord.",
+    "Each pattern has its own mutes, and you can switch to the song while it plays.",
+    "The crash rings like metal, and a dimmed KEY or SCALE tells you why."
+   ]
+  },
+  {
    "version": "0.4",
    "tag": "v0.4",
    "sha256": "8c3a1603a04aef8aa82720becf7e400ce10dff8cea8a68c61a9e16ae72a9992f",
