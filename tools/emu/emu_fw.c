@@ -297,6 +297,13 @@ void emu_fw_dump(void)
     for (c = 0; c < FM1_NCOL; c++)
         printf(" %02X/%02X/%02X/%02X", fm1_led[c], fm1_led_dim2[c], fm1_led_dim[c], fm1_led_faint[c]);
     printf("  (lit/mid/dim/faint)\n");
+    printf("  key lights:");                     /* (each key's LED, keys 0..26: L lit, M mid, D dim, F faint, . off) */
+    for (i = 0; i < 27u; i++) {
+        uint8_t q = cu_led_pos[14u + i], col = q >> 3, bit = (uint8_t)(1u << (q & 7u));   /* (ids 0..13 the buttons) */
+        printf("%c", q == 0xFF ? '?' : fm1_led[col] & bit ? 'L' : fm1_led_dim2[col] & bit ? 'M' :
+               fm1_led_dim[col] & bit ? 'D' : fm1_led_faint[col] & bit ? 'F' : '.');
+    }
+    printf("\n");
     printf("  screen %s  algo %u quantize %u key %u scale %u octave %d glide %u\n", SCR_NAME[cu.scr],
            (unsigned)cs.chord.algo, (unsigned)cs.chord.quantize, (unsigned)cs.chord.tonic, (unsigned)cs.chord.scale,
            (int)cs.chord.octave, (unsigned)cs.glide_ms);
