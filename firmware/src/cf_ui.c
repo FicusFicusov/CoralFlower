@@ -366,18 +366,24 @@ static void ui_knob_info(int k, cf_knob_t *o)
     }
 }
 
+#define CF_MSG_QOFF "QUANTIZE is Off: turn it on"   /* (KEY or SCALE turned while they are dimmed) */
 static void ui_knob_turn(int k, int d)
 {
     cu.knob_ms[k] = cu.now ? cu.now : 1u;
     cu.knob_last = (uint8_t)k;
     switch (cu.scr) {
     case SCR_HOME:
-        if (k == 0)
+        if (k == 0) {
             cs.chord.quantize = (uint8_t)clampi(cs.chord.quantize + d, 0, 2);
-        else if (k == 1 && cs.chord.quantize != CF_Q_OFF)
+            if (cs.chord.quantize != CF_Q_OFF && cu.pop == POP_MSG && !memcmp(cu.msg, CF_MSG_QOFF, sizeof CF_MSG_QOFF))
+                cu.pop = POP_NONE;                /* (the hint below: done) */
+        } else if (k == 1 && cs.chord.quantize != CF_Q_OFF)
             cs.chord.tonic = (uint8_t)wrapi(cs.chord.tonic + d, 12);
         else if (k == 2 && cs.chord.quantize != CF_Q_OFF)
             cs.chord.scale = (uint8_t)clampi(cs.chord.scale + d, 0, CF_NSCALES - 1);
+        else if (k == 1 || k == 2)                /* dimmed (QUANTIZE Off): it says what wakes it, every turn (the
+                                                  * owner, 2026-10-20, after a reboot: "key и scale заблокировались") */
+            cf_message(CF_MSG_QOFF);
         else if (k == 3) {
             int g = cs.glide_ms;          /* 0, then 5 ms steps to 50, 10 to 200, 25 to 500, 100 to 2000 */
             int step = g < 50 ? 5 : g < 200 ? 10 : g < 500 ? 25 : 100;
