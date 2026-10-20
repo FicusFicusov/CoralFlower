@@ -1271,14 +1271,21 @@ static int sq_key_led(uint32_t k, uint8_t *lit, uint8_t *mid, uint8_t *dim, uint
         }
         if (i >= st)
             return 1;
-        if (cf_sn.sq_on && cf_sn.sq_pat == squ.pat &&   /* (the song's too) */
-            sq_trk_bar(p, SQ_DRUMS, cf_sn.sq_n) == squ.bar && cf_sn.sq_bt &&
-            (int)(cf_sn.sq_t * (uint32_t)st / cf_sn.sq_bt) == i)
-            cf_led(lit, id, 1);                  /* (the running light) */
-        else if ((p->hit[squ.lane][squ.bar] >> i) & 1u)   /* (what plays in the bar) */
-            cf_led(mid, id, 1);
-        else if ((i * cs.beats) % st == 0)
-            cf_led(faint, id, 1);
+        {                                        /* the picked drum's hits full, the beats dim under them (the
+                                                  * owner, 2026-10-20: "доли слегка подсвечиваются на клавишах, а
+                                                  * поставленные на дорожку барабаны светятся во всю"); the running
+                                                  * light full on an empty step and dark on a hit, so it shows there
+                                                  * too */
+            int hit = (p->hit[squ.lane][squ.bar] >> i) & 1u;
+            if (cf_sn.sq_on && cf_sn.sq_pat == squ.pat &&   /* (the song's too) */
+                sq_trk_bar(p, SQ_DRUMS, cf_sn.sq_n) == squ.bar && cf_sn.sq_bt &&
+                (int)(cf_sn.sq_t * (uint32_t)st / cf_sn.sq_bt) == i)
+                cf_led(lit, id, !hit);
+            else if (hit)
+                cf_led(lit, id, 1);
+            else if ((i * cs.beats) % st == 0)
+                cf_led(dim, id, 1);
+        }
         return 1;
     }
     /* CHORDS / BASS / LAYER: the keys light as on HOME, as the screen's caps do: what they play and write (held, the
