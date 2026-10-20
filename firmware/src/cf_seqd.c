@@ -152,6 +152,9 @@ static void sq_fresh(sq_pat_t *p, uint32_t beats)
         p->tb[l] = 4;
         p->ts[l] = 0;
     }
+    p->tb[SQ_DRUMS] = 2;                         /* (the drums 2 bars, round under longer tracks: "сложно прописывать
+                                                  * сразу 4, долго ждать приходится или постоянно переключать кнопку
+                                                  * PLAY", the owner, 2026-10-20) */
     p->nev = 0;
     p->kit = 0;
     p->swing = 0;
