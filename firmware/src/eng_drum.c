@@ -251,6 +251,17 @@ static int32_t drum_amp(track_t *t, voice_t *v, int32_t adsr)
     return 32767;
 }
 
+/* the hit's level now (Q15): its drum's body envelope (RIM and CLAVE: their one fast envelope) at its velocity */
+static int32_t drum_level(track_t *t, const voice_t *v)
+{
+    const drum_lane_t *L = drum_lane_of(t, v);
+    int32_t e;
+    if (!L || !L->v.live)
+        return 0;
+    e = L->role == DVT_RIM || L->role == DVT_CLAVE ? (int32_t)(L->v.e[0] >> 1) : L->v.q[0] >> 15;
+    return mulq15(e > 32767 ? 32767 : e, v->vel * 258);
+}
+
 static void drum_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const vmod_t *m)
 {
     drum_lane_t *L = drum_lane_of(t, v);
@@ -328,6 +339,7 @@ static const engine_t ENG_DRUM = {
     .note_on = drum_note_on,
     .render = drum_render,
     .amp = drum_amp,
+    .level = drum_level,
     .knob = {P_E1, P_E2, P_E3, P_E4},
     .poly = DV_NLANE,
     .oneshot = 1,

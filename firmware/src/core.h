@@ -347,6 +347,9 @@ typedef struct {                 /* an engine (engines.c ENGINES[]; the eng_*.c 
     /* optional: 1 = the voice would sound on after its release (QUAD's REL INF): trk_all_off (panic, all notes off, a
      * sound load) kills it instead of releasing it */
     int (*endless)(const struct track *t, const voice_t *v);
+    /* optional, oneshot engines: a hit's level now, Q15 (DRUM: its drum's own envelope; env_out stays full while it
+     * rings). voice.c voice_victim gives up the quietest hit */
+    int32_t (*level)(struct track *t, const voice_t *v);
 } engine_t;
 /* voice_start: what the voice it starts did just before (0 free, 1 released, 2 its key down: a steal or a move);
  * engine_t.note_on may read it */
