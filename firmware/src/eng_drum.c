@@ -294,6 +294,8 @@ static void drum_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const 
         if (dv_uses_metal(r))
             dv_metal_tune(&L->mb, &L->c);
     }
+    if (r == DVT_CYM && L->v.live)
+        dv_metal_drift(&L->mb, &L->c, L->v.cnt);
     if (dv_uses_metal(r) && (L->v.live || L->v.trig))
         dv_metal_run(&L->mb, mb, n);
     dv_run(&L->c, &L->v, mb, y, n);

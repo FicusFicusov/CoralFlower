@@ -116,7 +116,7 @@ static const struct {
     {1139, 947, 1331, 20, 32, {64, 64, 64}, 5215},       /* RIM    500 Hz (250..1000), tau 2..8 ms */
     {1585, 1382, 1715, 30, 32, {64, 64, 64}, 5608},      /* CLAVE  2.5 kHz (1.2..4), tau 3..12 ms */
     {1161, 969, 1353, 300, 59, {64, 64, 64}, 2785},      /* BELL   540 Hz (270..1080), tail tau 30..400 ms */
-    {1078, 886, 1270, 2000, 53, {64, 64, 64}, 11000},    /* CYM    metal 400 Hz, ring tau 0.2..2 s */
+    {1078, 886, 1270, 2600, 53, {64, 64, 64}, 13100},    /* CYM    metal 800 Hz (its squares 0.8..2.1 kHz), ring tau 0.26..2.6 s */
 };
 #define DV_SEED 0x5EED1234
 #define DV_P16(hz_p16) pitch_inc(clamp((hz_p16), 0, 2047))
@@ -287,22 +287,27 @@ static void dv_setup(dv_coef_t *c, const dv_param_t *p)
         c->g[0] = dv_lin(x, 8000, 40000) + acc * 40;     /* STRIKE */
         c->g[1] = dv_lin(tn, 0, 5000);                   /* TONE: the squares themselves (brighter) */
         break;
-    case DVT_CYM: {                                      /* a crash: noise, the metal source's squares ring-modulating
-                                                          * part of it (a dense metallic wash, no clang of their own:
-                                                          * the squares alone were a gong, "вообще не похоже на краш",
-                                                          * the owner, 2026-10-19), above 1.6 kHz, two bands */
+    case DVT_CYM: {                                      /* a crash: the metal source's six squares an octave over
+                                                          * their designed pitch (their clang rings, no gong: the
+                                                          * squares at 400 Hz were one, "вообще не похоже на краш", the
+                                                          * owner, 2026-10-19; noise alone was "как белый шум ... как fx
+                                                          * скорее", 2026-10-20), ring-modulated noise and a little
+                                                          * noise over them, above 2.4 kHz, two bands: the ring at
+                                                          * 4.2 kHz under the hats' band, the shimmer at 8 kHz */
         int32_t dp = p16 - DV_DEF[t].p16;
-        tsvf_coef_k(&c->f[0], dv_cut(1866 + dp), 6827);  /* 7 kHz with TUNE, Q 0.6: the shimmer */
-        tsvf_coef_k(&c->f[1], dv_cut(1706 + dp), 6827);  /* 3.8 kHz, Q 0.6: the body */
-        c->hp = dv_pole(1500 + dp);                      /* the wash above 1.6 kHz (what a one-pole low-pass leaves) */
-        c->kb[0] = dv_kb(tau);                           /* ring */
-        c->kb[1] = dv_kb(90000);                         /* the splash */
+        c->metal = (int16_t)(p16 + 192);                 /* 800 Hz .. 2.1 kHz */
+        tsvf_coef_k(&c->f[0], dv_cut(1912 + dp), 5120);  /* 8 kHz with TUNE, Q 0.8: the shimmer */
+        tsvf_coef_k(&c->f[1], dv_cut(1730 + dp), 3413);  /* 4.2 kHz, Q 1.2: the ring */
+        c->hp = dv_pole(1580 + dp);                      /* above 2.4 kHz (what a one-pole low-pass leaves) */
+        c->kb[0] = dv_kb(tau);                           /* the ring */
+        c->kb[1] = dv_kb(150000);                        /* the splash */
         c->g[0] = dv_lin(tn, 12000, 30000);              /* TONE: the shimmer's share */
-        c->g[1] = 32767 - c->g[0] / 2;                   /* the body */
+        c->g[1] = 32767 - c->g[0] / 2;                   /* the ring's */
         c->g[2] = dv_lin(x, 6000, 30000) + acc * 60;     /* STRIKE: the splash over the ring */
         c->g[3] = 2500;                                  /* the open wash (air above the bands) */
-        c->g[4] = dv_pole(1968 + dp);                    /* a one-pole low-pass at 10 kHz over it all (white noise
-                                                          * read as hiss) */
+        c->g[4] = dv_pole(2000 + dp);                    /* a one-pole low-pass at 11 kHz over it all, at the hit */
+        c->k[0] = (uint32_t)dv_pole(1700 + dp);          /* .. as the ring dies: 7 kHz (a softer tail, the owner's pick, 2026-10-20) */
+        c->g[5] = 10500;                                 /* the squares themselves */
         break;
     }
     }
@@ -314,6 +319,19 @@ static void dv_metal_tune(dv_metal_t *b, const dv_coef_t *c)
     const uint16_t *r = DV_METAL_R[c->type == DVT_CYM];
     for (i = 0; i < 6u; i++)
         b->inc[i] = (inc >> 12) * r[i];
+}
+
+/* the cymbal's squares drift, each at its own slow rate (0.3 .. 0.8 Hz, +-7 cents): fixed oscillators read as a
+ * machine ("чуть менее искусственный", the owner, 2026-10-20). t: the hit's blocks */
+static void dv_metal_drift(dv_metal_t *b, const dv_coef_t *c, uint32_t t)
+{
+    static const uint8_t R[6] = {13, 17, 22, 27, 31, 37};   /* (a 16-bit phase's step a block) */
+    uint32_t i, inc = DV_P16(c->metal);
+    for (i = 0; i < 6u; i++) {
+        uint32_t ph = (t * R[i] + i * 10923u) & 0xFFFFu, base = (inc >> 12) * DV_METAL_R[1][i];
+        int32_t tri = (int32_t)(ph < 32768u ? ph : 65535u - ph) * 2 - 32768;
+        b->inc[i] = base + (uint32_t)(((int32_t)(base >> 16) * tri) >> 7);
+    }
 }
 
 static __attribute__((noinline)) void dv_metal_run(dv_metal_t *b, int32_t *y, uint32_t n)
@@ -524,23 +542,27 @@ static __attribute__((noinline)) void dv_cym_run(const dv_coef_t *c, dv_voice_t 
                                                  uint32_t n)
 {
     uint32_t i;
-    int32_t a, d, b, e;
+    int32_t a, d, b, e, lp;
     dv_slow(&v->q[0], c->kb[0], &a, &d);
     dv_slow(&v->q[1], c->kb[1], &b, &e);
+    lp = (int32_t)c->k[0] + (((c->g[4] - (int32_t)c->k[0]) * (a >> 5)) >> 15);   /* (the low-pass by the ring's level
+                                                          * at the block's start) */
+    v->cnt++;                                            /* (blocks since the hit: dv_metal_drift) */
     for (i = 0; i < n; i++) {
         int32_t nz = DV_NOISE(v), src, hp, hi, lo, r, s;
-        src = (((m[i] * nz) >> 15) * 20000 >> 15) + (nz * 14000 >> 15);   /* ring-modulated noise, plain noise */
+        src = ((m[i] * c->g[5]) >> 15) + (((m[i] * nz) >> 15) * 15500 >> 15) + (nz * 5000 >> 15);   /* the squares,
+                                                          * ring-modulated noise, plain noise (within +-32768) */
         v->s[4] += ((src - v->s[4]) * c->hp) >> 15;
-        hp = src - v->s[4];                              /* (above 1.6 kHz) */
+        hp = src - v->s[4];                              /* (above 2.4 kHz) */
         hi = dv_bp(&c->f[0], hp, v->s);
         lo = dv_bp(&c->f[1], hp, v->s + 2);
         a += d;
         b += e;
         r = a >> 5;
         s = (b >> 5) * c->g[2] >> 15;
-        hp = (((hi * c->g[0]) >> 15) * ((r + s) >> 1) >> 15) + (((lo * c->g[1]) >> 15) * ((r + s) >> 1) >> 15) +
-             (((hp * c->g[3]) >> 15) * ((r >> 1) + s) >> 16);
-        v->ph[0] += (uint32_t)(((hp - (int32_t)v->ph[0]) * c->g[4]) >> 15);   /* (ph[0]: the low-pass's state, the
+        hp = (((hi * c->g[0]) >> 15) * ((r + s) >> 1) >> 15) + (((lo * c->g[1]) >> 15) * ((r + (s >> 1)) >> 1) >> 15) +
+             (((hp * c->g[3]) >> 15) * ((r >> 1) + s) >> 16);   /* (the splash brightest: the ring rings on) */
+        v->ph[0] += (uint32_t)(((hp - (int32_t)v->ph[0]) * lp) >> 15);   /* (ph[0]: the low-pass's state, the
                                                           * cymbal has no phase of its own) */
         y[i] = (int32_t)v->ph[0];
     }
