@@ -568,7 +568,7 @@ static void cf_message(const char *s)
     str_cpy(cu.msg, s, sizeof cu.msg);
     for (i = 0; cu.msg[i] && cu.msg[i] != '\n'; i++)
         ;
-    cf_pop(POP_MSG, cu.msg[i] ? 2500u : 1200u);  /* (two lines: longer to read) */
+    cf_pop(POP_MSG, cu.msg[i] ? 2000u : 1200u);  /* (two lines: longer to read; 2 s, as the first take's hint) */
 }
 /* what the kept files (upreset.c, fm6_store.c) say goes into the message popup */
 static void ui_message(const char *s) { cf_message(s); }

@@ -1073,7 +1073,8 @@ static void sq_home_end(int drop)                /* the take ends (drop: it goes
     if (!(cs.seq_hint & SQH_TAKE)) {             /* the first one ever: where it is, longer to read */
         str_cpy(m + 21, "\nin the SEQUENCER", sizeof m - 21u);
         cf_message(m);
-        cu.pop_until = cu.now + 4000u;
+        cu.pop_until = cu.now + 2000u;           /* (2 s, two lines; the hints 1.5 s: "подсказки слишком долго
+                                                  * висят сейчас, нужно в два-три раза быстрее", the owner, 2026-10-20) */
         cs.seq_hint |= SQH_TAKE;
         sqh_scr = cu.scr;
         return;
@@ -1087,7 +1088,7 @@ static void sq_hint_once(uint32_t bit)
         return;
     cs.seq_hint |= (uint8_t)bit;
     cf_message(bit == SQH_HOME ? "[SEQ] [SEQ] the SEQUENCER" : "[SAVE] back");
-    cu.pop_until = cu.now + 3000u;
+    cu.pop_until = cu.now + 1500u;
     sqh_scr = cu.scr;
 }
 static void sq_home_rec(void)                    /* REC tapped */

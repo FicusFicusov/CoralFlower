@@ -375,10 +375,18 @@ static void cf_click_mix(int32_t *out, uint32_t n)
     uint32_t i;
     if (cfm.click) {
         const cf_click_t *k = &CF_CLICKS[cf_click_sound < CF_NCLICKS ? cf_click_sound : 0];
-        int32_t lv = sqp.click && cfm.level < 60u ? 60 : (int32_t)cfm.level;   /* (a count-in and a
-                                                                                              * take are always heard) */
-        int32_t amp = (cfm.on || cfm.running) ? 10000 * lv / 100 : 0;
+        int32_t lv = sqp.click && !cfm.level ? 100 : (int32_t)cfm.level;   /* (a count-in and a take are
+                                                  * always heard: METRONOME's LEVEL never set (0), 100, its beat 1 a
+                                                  * little over a usual chord, the median of the 51 sounds' peaks
+                                                  * +1 dB: "я бы наоборот чуть громче сделал", the owner, 2026-10-20;
+                                                  * a LEVEL the player set is used as it is) */
+        int32_t amp = (cfm.on || cfm.running) ? 100 * lv : 0;
         int acc = cfm.click == 2u;
+        if (!fx_usb_fixed)                       /* MASTER on it, as on the music: it was mixed in after MASTER, and the
+                                                  * volume knob at its bottom left the click as loud as ever (the
+                                                  * owner, 2026-10-20: "орёт при записи. Даже когда громкость синта на
+                                                  * минимум"). With USB Level Fixed MASTER comes after it (audio.c) */
+            amp = amp * (int32_t)song.master_q12 >> 12;
         cf_ck_a1 = acc ? k->a1_acc : k->a1;
         cf_ck_a2 = k->a2;
         cf_ck_y1 = amp * (acc ? k->s_acc : k->s) / 10000;
