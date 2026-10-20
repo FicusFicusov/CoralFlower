@@ -38,7 +38,6 @@ static struct {
     uint8_t help_hold;           /* .. GLO held: while it is down */
     uint32_t rr;                 /* the take's queue: read so far (cf_seqp.c sqp_rw) */
     uint8_t rtrk;                /* .. the track the take writes */
-    uint8_t rhome;               /* .. it came from HOME: written on the track's own grid (sq_take_steps) */
     uint8_t ropen, rbar, rpos;   /* .. where its sounding chord was written (its bar, its place in it) */
     uint32_t sel_down;           /* SEL down in a track (0: up): a tap clears the step, held with SELECT turned erases
                                   * all the frame passes over (the owner, 2026-10-19) */
@@ -64,16 +63,16 @@ static void sq_home_undo(void);
 enum { SQH_TAKE = 1, SQH_HOME = 2, SQH_TRACK = 4 };   /* (cs.seq_hint's bits) */
 static uint8_t sqh_scr = 0xFF;                   /* the screen a hint is up on (0xFF: none): it goes with the screen */
 static void sq_hint_once(uint32_t bit);
-/* .. as played: every chord's notes with its exact start and length (ticks, 96 a beat, from its bar's start), kept
- * till the take ends; then each bar is put on the grid that keeps its chords apart (sq_home_snap: the owner,
- * 2026-10-20, "Мельче сетка только там, где надо") */
+/* a take on CHORDS / BASS / LAYER as played: each chord's notes, where it began (ticks, 96 a beat, from the start of the
+ * bar it was played in) and how long it sounded, kept till the take ends; then a bar played in triplets gets the
+ * triplet grid (sq_take_trip) */
 #define SQK_N SQ_NEV
 static struct {
-    sq_ev_t ev[SQK_N];
+    sq_ev_t ev[SQK_N];           /* (bar: the bar it was played in) */
     uint16_t t[SQK_N], d[SQK_N];
     uint16_t m;                  /* the last chord took over the one before it (one gesture): that one's ticks */
-    uint8_t n;
-    uint8_t snap;                /* the take's bars, to snap once its last chord has ended (0: nothing to do) */
+    uint8_t n, on, pat, trk;     /* on: 1 a take begun, 2 seen running (its end looks for triplets), 0 none */
+    uint8_t b0, b1, elig;        /* the track's bars when it began; those on the take's grid then, a bit each */
 } sqkl __attribute__((section(".pool")));
 
 #define SQ_ST(p) sq_steps((p), squ.trk, squ.bar)    /* the frame's bar's steps in the open track */
@@ -811,6 +810,33 @@ static int sq_key(int key, int down)             /* returns 1: the key is the se
 /* REC tapped on these screens: a take into the track in the frame (from SEQUENCER: its track opens, so the notes are
  * seen as they come), or the take ends. On the song: nothing (a take is a track's) */
 static int sq_open(void);
+/* a take's grid: 16 a bar in 4/4, twice the default STEPS, in every bar of the track left at the default; a bar whose
+ * STEPS the player set keeps them, and the take lands on its marks (the owner, 2026-10-20: "Давай всё же при записи с
+ * HOME (да и везде) ставить 16, ака 2х по умолчанию, а там уже если пользователь в секвенсоре переключил у такта, то
+ * делаем как пользователь переключил"; a bar no longer goes to 32 or 24 by itself). What is written keeps its time:
+ * the default's marks are every other one of the new */
+static void sq_take_grid(sq_pat_t *p, uint32_t trk)
+{
+    uint32_t b, b0 = sq_ts(p, trk), b1 = b0 + sq_tbars(p, trk);
+    for (b = b0; b < b1 && b < SQ_BARS; b++)
+        if (p->steps[trk % SQ_NTRK][b] == SQ_KDEF)
+            p->steps[trk % SQ_NTRK][b] = 2u * SQ_KDEF;
+}
+static void sq_take_log(const sq_pat_t *p, uint32_t pat, uint32_t trk)   /* a take begins: its log */
+{
+    uint32_t b;
+    sqkl.n = 0;
+    sqkl.m = 0;
+    sqkl.pat = (uint8_t)pat;
+    sqkl.trk = (uint8_t)trk;
+    sqkl.on = trk != SQ_DRUMS;
+    sqkl.b0 = (uint8_t)sq_ts(p, trk);
+    sqkl.b1 = (uint8_t)(sqkl.b0 + sq_tbars(p, trk) < SQ_BARS ? sqkl.b0 + sq_tbars(p, trk) : SQ_BARS);
+    sqkl.elig = 0;
+    for (b = sqkl.b0; b < sqkl.b1; b++)
+        if (p->steps[trk % SQ_NTRK][b] == 2u * SQ_KDEF)
+            sqkl.elig |= (uint8_t)(1u << b);
+}
 static void sq_rec_tap(void)
 {
     sq_pat_t *p;
@@ -832,24 +858,20 @@ static void sq_rec_tap(void)
     }
     if (sq_empty(p))
         sq_fresh_kept(p);
-    sqh.busy = 0;                                /* (a take is an action of its own, all of it one undo) */
+    sqh.busy = 0;                                /* (a take is an action of its own, all of it one undo: its grid
+                                                  * too) */
     sq_undo_poll();
     sq_touch();
+    if (squ.trk != SQ_DRUMS)
+        sq_take_grid(p, squ.trk);
+    sq_take_log(p, squ.pat, squ.trk);
     squ.rtrk = squ.trk;
-    squ.rhome = 0;
     squ.ropen = 0;
     squ.rr = sqp_rw;                             /* (what the queue held before is not this take's) */
     cf_post(CFE_SEQ, 4, squ.pat, squ.trk);
     cf_send_config();                            /* (a LAYER take: the keys play its sound) */
 }
 
-/* a take's grid in bar b: the drums' own; a track's twice its STEPS (sq_rec_steps); a take from HOME the track's own,
- * 16 a bar, so what is written sits on the marks shown (the owner, 2026-10-20: "после записи дорожка на 8 степов,
- * хотя записалось в 16. Она должна быть в 16 сразу") */
-static uint32_t sq_take_steps(const sq_pat_t *p, uint32_t trk, uint32_t b)
-{
-    return trk == SQ_DRUMS || (squ.rhome && trk == SQ_CHORDS) ? sq_steps(p, trk, b) : sq_rec_steps(p, trk, b);
-}
 /* every frame: the take's queue into the pattern. A chord goes on the track's step nearest to where it began (late in
  * a bar: the next bar's first); it lasts to the step nearest to where it ended. DRUMS: a hit on the nearest step. The
  * writer of the patterns stays the UI (the ISR only says what and when) */
@@ -863,11 +885,11 @@ static void sq_rec_poll(void)
         squ.rr++;
         if (sq_empty(p) || bar >= SQ_BARS || !bt)
             continue;
-        st = sq_take_steps(p, trk, bar);         /* (bar: the track's own) */
+        st = sq_steps(p, trk, bar);         /* (bar: the track's own) */
         step = (e.t * st + bt / 2u) / bt;
         if (e.kind == 2) {                       /* a chord ended: its length */
             int i;
-            if (squ.rhome && sqkl.n) {           /* (a take from HOME: its log too) */
+            if (sqkl.on && sqkl.n) {             /* (the log's too) */
                 uint32_t d = e.dur + sqkl.m;
                 sqkl.d[sqkl.n - 1u] = (uint16_t)(d < 65535u ? d : 65535u);
                 sqkl.m = 0;
@@ -882,7 +904,7 @@ static void sq_rec_poll(void)
                                                   * the time it was held, the ISR's count; worked out from where it
                                                   * ended, a chord let go before the step it was rounded up to came
                                                   * out a whole track long) */
-                uint32_t su = SQ_U / sq_take_steps(p, trk, squ.rbar), d = e.dur * SQ_U / bt, len;
+                uint32_t su = SQ_U / sq_steps(p, trk, squ.rbar), d = e.dur * SQ_U / bt, len;
                 len = (d + su / 2u) / su * su;
                 if (len > sq_room(p, &p->ev[i]))
                     len = sq_room(p, &p->ev[i]);
@@ -896,7 +918,7 @@ static void sq_rec_poll(void)
         if (step >= st) {                        /* (late in the bar: the next bar's first step) */
             step = 0;
             bar = bar + 1u < sq_ts(p, trk) + sq_tbars(p, trk) ? bar + 1u : sq_ts(p, trk);
-            st = sq_take_steps(p, trk, bar);
+            st = sq_steps(p, trk, bar);
         }
         if (e.kind == 3) {
 #ifdef CF_TRACE
@@ -943,13 +965,13 @@ static void sq_rec_poll(void)
             fprintf(stderr, "take: %c bar %u step %u of %u (t %u)\n", 'A' + e.pat % SQ_NPAT, (unsigned)bar + 1u,
                     (unsigned)step, (unsigned)st, (unsigned)e.t);
 #endif
-            if (squ.rhome) {                     /* (a take from HOME: as played, for sq_home_snap) */
+            if (sqkl.on) {                       /* (as played, for sq_take_trip) */
                 uint32_t j = sqkl.n - 1u;
                 if (sqkl.n && sqkl.ev[j].bar == e.bar && sqkl.d[j] && sqkl.t[j] + sqkl.d[j] >= e.t &&
                     e.t - sqkl.t[j] < (CFP_GATHER_MS * SQ_PPQN * cs.bpm + 59999u) / 60000u) {
                     sqkl.m = sqkl.d[j];          /* (a chord changed while it sounded, this soon: fingers never quite
                                                   * together, a button just after the root. One chord, the later,
-                                                  * from where the first began; it took the step before too) */
+                                                  * from where the first began) */
                     sqkl.ev[j] = v;
                     sqkl.ev[j].bar = e.bar;
                     sqkl.d[j] = 0;
@@ -1028,7 +1050,7 @@ static void sq_home_end(int drop)                /* the take ends (drop: it goes
     for (i = 0; i < p->nev; i++)
         n += p->ev[i].trk == SQ_CHORDS;
     if (drop || !sqk.rolled || !n) {             /* (ended in its count-in, or nothing played: no pattern) */
-        sqkl.snap = 0;
+        sqkl.on = 0;
         sq_st.pat[sqk.pat % SQ_NPAT] = sqh.pre;  /* (the state before the take: sq_home_rec's undo) */
         sqh.pend = 0;
         sqh.busy = 0;
@@ -1042,7 +1064,6 @@ static void sq_home_end(int drop)                /* the take ends (drop: it goes
     bars = bars < 1u ? 1u : bars > SQ_BARS ? SQ_BARS : bars;
     p->tb[SQ_CHORDS] = (uint8_t)bars;
     p->bars = (uint8_t)bars;
-    sqkl.snap = (uint8_t)bars;                   /* (each bar on its grid once the last chord has ended) */
     sq_touch();
     sqk.last = sqk.pat;
     str_cpy(m, "Recorded as Pattern ", sizeof m);   /* (not "Saved": flash takes it once playback stops and things
@@ -1072,7 +1093,6 @@ static void sq_hint_once(uint32_t bit)
 static void sq_home_rec(void)                    /* REC tapped */
 {
     sq_pat_t *p;
-    uint32_t i;
     int f;
     if (sqk.on) {
         sq_home_end(0);
@@ -1094,18 +1114,14 @@ static void sq_home_rec(void)                    /* REC tapped */
     p = &sq_st.pat[f];
     sq_fresh(p, cs.beats);
     p->tb[SQ_CHORDS] = SQ_BARS;                  /* (8 bars while it records: its end cuts them to the take's) */
-    for (i = 0; i < SQ_BARS; i++)                /* (16 steps a bar, the take's grid: sq_take_steps) */
-        p->steps[SQ_CHORDS][i] = 4;
+    sq_take_grid(p, SQ_CHORDS);                  /* (16 steps a bar, the take's grid) */
+    sq_take_log(p, (uint32_t)f, SQ_CHORDS);
     p->tonic = cs.chord.tonic;
     p->scale = cs.chord.scale;
     if (cu.arp_on)                               /* (ARP on under the keys: on the track too, so it plays as heard) */
         p->arp |= (uint8_t)(1u << SQ_CHORDS);
     sq_touch();
     squ.rtrk = SQ_CHORDS;
-    squ.rhome = 1;
-    sqkl.n = 0;
-    sqkl.m = 0;
-    sqkl.snap = 0;
     squ.ropen = 0;
     squ.rr = sqp_rw;                             /* (what the queue held before is not this take's) */
     sqk.on = 1;
@@ -1279,78 +1295,71 @@ static void sq_from_loop(void)
         cf_message(m);
     }
 }
-/* a take from HOME, its bars put on their grids: a bar stays on the take's (16 a bar in 4/4) unless two chords would
- * share a step there; then the finer grid that keeps them apart and puts them nearest where they were played: 32 a
- * bar, or 16th triplets (24), when the bar holds it (32 steps at most). Its chords are written again from the log.
- * Chord i on a grid of st steps a bar: its step (st: past the bar's last, the next bar's first) */
-static uint32_t sqkl_step(uint32_t i, uint32_t st, uint32_t bt) { return (sqkl.t[i] * st + bt / 2u) / bt; }
-static void sq_home_snap(uint32_t pat, uint32_t bars)
+/* a bar played in triplets gets the triplet grid by itself, when the take ends (the owner, 2026-10-20: "Единственное,
+ * триплеты было бы классно распознавать"): 16th triplets, 24 a bar in 4/4 (8th triplets where 16th ones do not fit a
+ * bar's 32 steps: 21 in 7/4); not in 6/8, whose beat is an eighth. Only bars on the take's grid (16 a bar), not a bar
+ * whose STEPS the player set. Every chord of the bar scores where it began within a half beat: + up to 21 on a
+ * triplet's place between the 16ths, - up to 15 on a 16th's, 0 on the beat and the half beat (both grids have them).
+ * The bar goes to triplets when the score is 50 or more (three clear triplet chords at least) and 6 or more a chord
+ * (most of its chords lean that way). Even 16ths played loosely stay: with 20 ms of spread, none switched up to 120
+ * BPM, 4 in 1000 bars at 140 (a simulation); whole bars of triplets with 15 ms switched 85-100 % of the time. The
+ * score: the likelihood of the triplet grid against the 16ths', a 3.5-tick spread each, x10 */
+static const int8_t SQ_TRIP_SCORE[48] = {0, 0, 0, 0, 0, 0, 0, 1, 4, 7, 11, 15, 18, 20, 21, 20, 18, 15, 11, 5, 0, -5, -10, -14,
+                                         -15, -14, -10, -5, 0, 5, 11, 15, 18, 20, 21, 20, 18, 15, 11, 7, 4, 1, 0, 0, 0,
+                                         0, 0, 0};
+static void sq_take_trip(void)
 {
-    static const uint8_t KS[3] = {4, 8, 6};      /* a beat's steps: the take's, then finer: 32nds, 16th triplets */
-    sq_pat_t *p = &sq_st.pat[pat % SQ_NPAT];
-    uint32_t bt = (uint32_t)cs.beats * 96u, b, i, j, carry = 0;   /* carry: the bar before's last chord is this
-                                                  * bar's first step */
-    if (!bt || !sqkl.n)
-        return;
-    bars = bars < SQ_BARS ? bars : SQ_BARS;
-    for (b = 0; b < bars; b++) {
-        uint32_t best = 4u, bcol = 0xFFFFu, berr = 0xFFFFFFFFu, blate = 0;
-        for (j = 0; j < 3u; j++) {
-            uint32_t k = KS[j], st = k * cs.beats, used = carry, col = 0, err = 0, late = 0;
-            if (st > SQ_MAXST)
-                continue;
-            for (i = 0; i < sqkl.n; i++) {
-                uint32_t step, at;
-                if (sqkl.ev[i].bar != b)
-                    continue;
-                step = sqkl_step(i, st, bt);
-                at = step * bt / st;
-                err += sqkl.t[i] > at ? sqkl.t[i] - at : at - sqkl.t[i];
-                if (step >= st) {
-                    late = 1;
-                    continue;
-                }
-                col += (used >> step) & 1u;
-                used |= 1u << step;
+    sq_pat_t *p = &sq_st.pat[sqkl.pat % SQ_NPAT];
+    uint32_t trk = sqkl.trk % SQ_NTRK, bt = (uint32_t)cs.beats * 96u, kt, b, i, trip = 0;
+    if (cs.beats == 6u || !bt || !sqkl.n || sq_empty(p) || !sqh.busy || sqh.prepat != sqkl.pat)
+        return;                                  /* (the take's undo, the state before it, must still be at hand) */
+    kt = 6u * cs.beats <= SQ_MAXST ? 6u : 3u;
+    for (b = sqkl.b0; b < sqkl.b1; b++) {
+        int32_t s = 0, n = 0;
+        if (!((sqkl.elig >> b) & 1u) || p->steps[trk][b] != 2u * SQ_KDEF)
+            continue;
+        for (i = 0; i < sqkl.n; i++)
+            if (sqkl.ev[i].bar == b) {
+                s += SQ_TRIP_SCORE[sqkl.t[i] % 48u];
+                n++;
             }
-            if (col < bcol || (col == bcol && err < berr)) {
-                best = k;
-                bcol = col;
-                berr = err;
-                blate = late;
-            }
-            if (j == 0 && !col)                  /* (nothing shares a step: the take's grid) */
-                break;
+        if (s >= 50 && s >= 6 * n) {
+            p->steps[trk][b] = (uint8_t)kt;
+            trip |= 1u << b;
         }
-        p->steps[SQ_CHORDS][b] = (uint8_t)best;
-        carry = blate;
 #ifdef CF_TRACE
-        fprintf(stderr, "snap: bar %u grid %u a beat (%u shared)\n", (unsigned)b + 1u, (unsigned)best,
-                (unsigned)(bcol == 0xFFFFu ? 0u : bcol));
+        if (n)
+            fprintf(stderr, "triplets? bar %u: %d over %d chords%s\n", (unsigned)b + 1u, (int)s, (int)n,
+                    (trip >> b) & 1u ? ": yes" : "");
 #endif
     }
-    for (i = 0; i < p->nev;)                     /* (the take's chords out: the pattern was new, all are the take's) */
-        if (p->ev[i].trk == SQ_CHORDS)
+    if (!trip)
+        return;
+    for (i = 0; i < p->nev;)                     /* (those bars again: the track as it was there before the take ..) */
+        if (p->ev[i].trk == trk && p->ev[i].bar < SQ_BARS && (trip >> p->ev[i].bar) & 1u)
             sq_del(p, i);
         else
             i++;
-    for (i = 0; i < sqkl.n; i++) {               /* .. and in again, each on its bar's grid */
+    for (i = 0; i < sqh.pre.nev && p->nev < SQ_NEV; i++)
+        if (sqh.pre.ev[i].trk == trk && sqh.pre.ev[i].bar < SQ_BARS && (trip >> sqh.pre.ev[i].bar) & 1u)
+            p->ev[p->nev++] = sqh.pre.ev[i];
+    for (i = 0; i < sqkl.n; i++) {               /* (.. and the take's chords on the triplets' marks) */
         sq_ev_t v = sqkl.ev[i];
         uint32_t st, su, step, len;
         int at;
         b = v.bar;
-        if (b >= bars)                           /* (in the bar REC ended the take at the line of: not the take's) */
-            continue;
-        st = sq_steps(p, SQ_CHORDS, b);
-        step = sqkl_step(i, st, bt);
-        if (step >= st) {                        /* (late in the bar: the next bar's first) */
-            if (++b >= bars)
-                continue;
-            st = sq_steps(p, SQ_CHORDS, b);
+        st = sq_steps(p, trk, b);
+        step = (sqkl.t[i] * st + bt / 2u) / bt;
+        if (step >= st) {                        /* (late in its bar: the next one's first, as the take wrote it) */
+            b = b + 1u < sqkl.b1 ? b + 1u : sqkl.b0;
+            st = sq_steps(p, trk, b);
             step = 0;
         }
+        if (b >= SQ_BARS || !((trip >> b) & 1u))   /* (a bar left on its grid: as the take wrote it) */
+            continue;
         su = SQ_U / st;
         len = ((uint32_t)sqkl.d[i] * SQ_U / bt + su / 2u) / su * su;
+        v.trk = (uint8_t)trk;
         v.bar = (uint8_t)b;
         v.pos = (uint8_t)(step * su);
         v.len = (uint16_t)(len ? len : su);
@@ -1358,7 +1367,6 @@ static void sq_home_snap(uint32_t pat, uint32_t bars)
         if (at >= 0 && p->ev[at].len > sq_room(p, &p->ev[at]))
             p->ev[at].len = (uint16_t)sq_room(p, &p->ev[at]);
     }
-    squ.ropen = 0;
     sq_touch();
 }
 static void sq_home_poll(void)                   /* every frame */
@@ -1380,10 +1388,11 @@ static void sq_home_poll(void)                   /* every frame */
     }
     if (cu.scr == SCR_HOME && (cs.seq_hint & SQH_TAKE) && cu.pop == POP_NONE)
         sq_hint_once(SQH_HOME);                  /* (HOME after the first take: how to come back) */
-    if (sqkl.snap && !sqk.on && cf_sn.sq_rec == 0xFFu && squ.rr == sqp_rw) {   /* (the take over, its last chord's end
-                                                  * written: each bar on its grid) */
-        sq_home_snap(sqk.pat, sqkl.snap);
-        sqkl.snap = 0;
+    if (sqkl.on == 1u && cf_sn.sq_rec != 0xFFu)
+        sqkl.on = 2;                             /* (the take runs) */
+    else if (sqkl.on == 2u && !sqk.on && cf_sn.sq_rec == 0xFFu && squ.rr == sqp_rw && !squ.ropen) {
+        sqkl.on = 0;                             /* (it ended, its last chord's end written: triplets?) */
+        sq_take_trip();
     }
     if (!sqk.on)
         return;

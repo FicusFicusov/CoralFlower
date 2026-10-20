@@ -117,6 +117,7 @@ static const sq_kit_t SQ_KITS[] = {
 
 /* the steps a beat takes (K2: quarters, 8ths, 8th triplets, 16ths, 16th triplets, 32nds), a bar's at most SQ_MAXST */
 static const uint8_t SQ_KS[] = {1, 2, 3, 4, 6, 8};
+#define SQ_KDEF 2u                                /* a synth track's steps a beat at first: 8 a bar in 4/4 */
 #define SQ_NKS ((int)(sizeof SQ_KS))
 /* the drums' steps a bar: 16ths (the 16 lower keys hold 4 beats of them), 8ths in a longer bar */
 static uint32_t sq_dsteps(void) { return sq_beats * 4u <= 16u ? sq_beats * 4u : sq_beats * 2u; }
@@ -135,17 +136,6 @@ static uint32_t sq_kbeat(const sq_pat_t *p, uint32_t trk, uint32_t b)
 static uint32_t sq_steps(const sq_pat_t *p, uint32_t trk, uint32_t b)
 {
     return trk == SQ_DRUMS ? sq_dsteps() : sq_kbeat(p, trk, b) * sq_beats;
-}
-/* a take's grid in bar b (CHORDS / BASS / LAYER): twice the track's steps (the owner, 2026-10-19: short notes fell
- * through the grid in a take, "вдвое мельче"), when twice still fits a bar's 32 steps and a beat's 24 parts; else the
- * track's own steps: a track set to 32 a bar takes on its 32 marks, not between them (the owner, 2026-10-20: "если
- * выбрано на паттерне 32 в баре, то ровняется он пусть в 32 после записи") */
-static uint32_t sq_rec_steps(const sq_pat_t *p, uint32_t trk, uint32_t b)
-{
-    uint32_t k = sq_kbeat(p, trk, b), g = 2u * k;
-    if (g * sq_beats > SQ_MAXST || SQ_UB % g)
-        g = k;
-    return g * sq_beats;
 }
 
 static int sq_empty(const sq_pat_t *p) { return !p->bars; }
@@ -171,7 +161,7 @@ static void sq_fresh(sq_pat_t *p, uint32_t beats)
     for (l = 0; l < SQ_NLANE; l++)
         p->dkit[l] = 0;
     for (b = 0; b < SQ_BARS; b++) {
-        p->steps[SQ_CHORDS][b] = p->steps[SQ_BASS][b] = p->steps[SQ_LAYER][b] = 2;
+        p->steps[SQ_CHORDS][b] = p->steps[SQ_BASS][b] = p->steps[SQ_LAYER][b] = SQ_KDEF;
         p->steps[SQ_DRUMS][b] = 4;                   /* (not read: sq_dsteps) */
         for (l = 0; l < SQ_NLANE; l++)
             p->hit[l][b] = 0;
