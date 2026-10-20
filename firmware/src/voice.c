@@ -8,7 +8,7 @@
  * share one budget of VBUDGET units (a voice of an engine capped above NPOLY takes one, any
  * other two: eight of them, as before): a part that starts
  * a voice while the budget is full takes one from any part (voice_victim): the oldest
- * released voice, else the quietest drum hit, else the oldest extra UNISON voice, else the
+ * released voice, else the oldest extra UNISON voice, else the quietest drum hit, else the
  * oldest held voice of a POLY part that is not its lowest note. A voice taken from another part fades out
  * over one block (stage 4: the envelope goes to 0, the block's amplitude ramp
  * declicks it); one of the part's own is restarted in place, as before. Extra UNISON
@@ -122,8 +122,9 @@ static uint32_t lowest_held(const track_t *t)           /* index of the lowest h
 /* the voice to give up for a new one (see the top); soft: only released voices and
  * extra voices of other non-POLY parts (also ones left after a mode change).
  * A hit (DRUM) rings out by itself, its key held or not (the sequencer's never let go): it goes after the released
- * voices and before any held note, the quietest first (a crash still ringing outlives the tails of the kick and the
- * snare struck with it: the owner, 2026-10-20, "краш замолкает от закрытого хета").
+ * voices and the extra UNISON ones (they only start where there is room), before any held note, the quietest first
+ * (a crash still ringing outlives the tails of the kick and the snare struck with it: the owner, 2026-10-20, "краш
+ * замолкает от закрытого хета").
  * Returns its index, *pp its part; NVOICE = none */
 static uint32_t voice_victim(const track_t *self, int soft, track_t **pp)
 {
@@ -148,12 +149,12 @@ static uint32_t voice_victim(const track_t *self, int soft, track_t **pp)
             if (e->oneshot) {
                 if (soft)
                     continue;                           /* (an extra UNISON voice cuts no drum) */
-                c = 2;                                  /* a hit: by its level now */
+                c = 3;                                  /* a hit: by its level now */
                 lv = e->level ? e->level(t, v) : 0;
             } else if (!v->gate)
                 c = 1;                                  /* released */
             else if (mode != V_POLY && i > 0)
-                c = 3;                                  /* extra UNISON, or a voice left by a mode / cap change */
+                c = 2;                                  /* extra UNISON, or a voice left by a mode / cap change */
             else if (!soft && mode == V_POLY && i != low)
                 c = 4;                                  /* held, not the bass */
             else

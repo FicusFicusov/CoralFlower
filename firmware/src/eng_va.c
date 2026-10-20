@@ -949,9 +949,9 @@ static va_fw_t va_fweights(uint32_t ty, int32_t ff)
 {
     const int8_t *a = VA_FW[ty & 3u], *b = VA_FW[(ty + 1u) & 3u];
     va_fw_t w;
-    w.x = (a[0] << 10) + (b[0] - a[0]) * ff;
-    w.b = (a[1] << 10) + (b[1] - a[1]) * ff;
-    w.l = (a[2] << 10) + (b[2] - a[2]) * ff;
+    w.x = a[0] * 1024 + (b[0] - a[0]) * ff;              /* (* 1024, not << 10: a weight may be -1) */
+    w.b = a[1] * 1024 + (b[1] - a[1]) * ff;
+    w.l = a[2] * 1024 + (b[2] - a[2]) * ff;
     return w;
 }
 /* one sample of the SVF c (state ic1, ic2) with the output weights w; the soft knee after it */
