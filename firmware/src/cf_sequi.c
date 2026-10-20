@@ -199,6 +199,7 @@ static void sq_defaults(void)
     for (i = 0; i < sizeof sq_st; i++)
         b[i] = 0;
     sq_st.song.n = 0;                            /* (an empty song: the page says how to add to it) */
+    sq_st.song.mute = SQ_MUTE_OWN;               /* (each pattern its own mutes, none yet) */
 }
 /* a CFQ5 store read in (0.3-rc5 .. rc8: no drum levels, each pattern 12 bytes shorter): the patterns moved to their
  * places, the last first, every drum at 100 %, written again at the next save. 1: it was one */
@@ -243,6 +244,13 @@ static void sq_load(void)                        /* power-on */
         sq_saved[k] = sq_chunk_len(k) ? cfs_fnv((uint8_t *)&sq_st + k * SQ_CHUNK, sq_chunk_len(k)) : 0u;
         if (!ok || !((got >> k) & 1u))
             sq_saved[k] = ~sq_saved[k];
+    }
+    if (!(sq_st.song.mute & SQ_MUTE_OWN)) {      /* (the mutes of before, every pattern's: each pattern takes them, and
+                                                  * the objects that changed are written at the next save) */
+        for (k = 0; k < SQ_NPAT; k++)
+            sq_st.pat[k].mute = (uint8_t)(sq_st.song.mute & ((1u << SQ_NTRK) - 1u));
+        sq_st.song.mute = SQ_MUTE_OWN;
+        sq_dirty = 1;
     }
 }
 static void sq_save_write(void)                  /* the objects that changed, now (cf_backup.c's LIST too) */
@@ -1564,7 +1572,7 @@ static void sq_knob_info(int k, cf_knob_t *o)
             break;
         default:
             kfmt(o->name, 12, "MUTE");
-            kfmt(o->val, 14, (sq_st.song.mute >> t) & 1u ? "On" : "Off");
+            kfmt(o->val, 14, (p->mute >> t) & 1u ? "On" : "Off");
             break;
         }
         return;
@@ -1664,7 +1672,7 @@ static void sq_knob_turn(int k, int d)
             if ((d > 0) != (p->follow != 0))
                 sq_follow_toggle();
         } else {
-            sq_st.song.mute ^= (uint8_t)(1u << t);
+            p->mute ^= (uint8_t)(1u << t);       /* (this pattern's) */
             sq_touch();
         }
         return;

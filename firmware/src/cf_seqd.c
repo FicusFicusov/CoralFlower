@@ -68,6 +68,10 @@ typedef struct {
                                                   * no way to tell how to use it": the owner, 2026-10-19) */
     uint8_t arp;                                 /* bit t: track t (CHORDS, LAYER) is played by an arpeggiator (ARP in its
                                                   * editor; in what was a padding byte after SWING: CFQ5 kept) */
+    uint8_t mute;                                /* bit t: track t is silent in this pattern (K4 MUTE on the SEQUENCER;
+                                                  * the owner, 2026-10-20: "мьютил дорожки на отдельных паттернах, не на
+                                                  * всех сразу"). In the padding byte before hit: CFQ6 kept, a backup
+                                                  * goes back to 0.4 (without the mutes) */
     uint32_t hit[SQ_NLANE][SQ_BARS];             /* lane l, bar b: bit i, a hit on the drums' step i (sq_dsteps) */
     sq_ev_t ev[SQ_NEV];
     uint8_t dlev[SQ_NLANE];                      /* each drum's level, 0..100 % (K2 in the DRUMS editor: the owner,
@@ -77,8 +81,11 @@ typedef struct {
 typedef struct {
     uint8_t n;                                   /* patterns in the song */
     uint8_t pat[SQ_SONG];                        /* their indices */
-    uint8_t mute;                                /* bit t: track t is silent (every pattern) */
+    uint8_t mute;                                /* SQ_MUTE_OWN: the mutes are the patterns' own (sq_pat_t.mute); without
+                                                  * it, bit t: track t silent in every pattern (0.4.1-rc4 and before),
+                                                  * given to every pattern at power-on (sq_mute_own) */
 } sq_song_t;
+#define SQ_MUTE_OWN 0x80u
 
 /* all of it in one block, as flash keeps it (cf_sequi.c: six objects of it) */
 #define SQ_MAGIC 0x36514643u                     /* "CFQ6" (CFQ5: no drum levels, read in: sq_load; CFQ4: one first
@@ -88,6 +95,7 @@ typedef struct {
 #define SQ_PAT5 2524u                            /* .. its pattern's size: this one's up to dlev */
 _Static_assert(sizeof(sq_pat_t) == 2536u && __builtin_offsetof(sq_pat_t, dlev) == SQ_PAT5,
                "CFQ6's pattern layout, CFQ5's up to dlev (a change: a new magic)");
+_Static_assert(__builtin_offsetof(sq_pat_t, mute) + 1u == __builtin_offsetof(sq_pat_t, hit), "mute: the padding byte");
 typedef struct {
     uint32_t magic, size, check;                 /* check: FNV-1a over what follows */
     sq_song_t song;
@@ -159,6 +167,7 @@ static void sq_fresh(sq_pat_t *p, uint32_t beats)
     p->kit = 0;
     p->swing = 0;
     p->arp = 0;
+    p->mute = 0;
     for (l = 0; l < SQ_NLANE; l++)
         p->dlev[l] = 100;
     for (l = 0; l < SQ_NLANE; l++)

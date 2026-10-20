@@ -6,7 +6,8 @@
  * A step sounds at its place in the bar (1/24 of a beat: 4 ticks; the drums at their steps, every second one late by
  * the pattern's SWING). CHORDS on part 0, BASS on part 1 (a pattern
  * with no bass steps: the bass each chord had when it was written, as under the hands), LAYER on part 2 (its own
- * sound), DRUMS on part 3 (the DRUM engine, a General MIDI note a lane). A muted track (sq_song_t.mute) is skipped.
+ * sound), DRUMS on part 3 (the DRUM engine, a General MIDI note a lane). A muted track (sq_pat_t.mute, the pattern
+ * playing's) is skipped.
  * A note the keys also hold is theirs to let go (cfp_holds), and theirs do not cut the
  * sequencer's (cf_play.c cfp_off asks sqp_holds).
  * Another pattern picked while one plays comes in at the next bar line (sqp.next; it waited for the pattern's end, and
@@ -331,7 +332,7 @@ static void sqp_fire(const sq_pat_t *p, uint32_t tk, uint32_t u)
         sqp.left[0] = off;
         sqp.ckey = e->rootkey;
         sqp.cbtns = e->btns;
-        if (!sq_own(p, SQ_BASS) && e->nb && !((sq_st.song.mute >> SQ_BASS) & 1u))   /* no bass steps: the chord's
+        if (!sq_own(p, SQ_BASS) && e->nb && !((p->mute >> SQ_BASS) & 1u))   /* no bass steps: the chord's
                                                   * own bass (BASS muted: none; it sounded for a tick) */
             sqp_bass_on(e->bass, e->nb, off);
         return;
@@ -355,7 +356,7 @@ static void sqp_now(void)
         sqp_layer_off();                         /* (a legato LAYER: at the end of this tick, after what begins in
                                                   * it, so a note that meets the next slides into it) */
     {   /* a track muted while it sounds: it goes now */
-        uint32_t mu = sq_st.song.mute;
+        uint32_t mu = p->mute;                   /* (the pattern playing's: another pattern's come in with it) */
         if ((mu >> SQ_CHORDS) & 1u && sqp.n)
             sqp_chord_off();
         if ((mu >> SQ_CHORDS) & 1u)
@@ -374,12 +375,12 @@ static void sqp_now(void)
     }
     while (sqp.nu < SQ_U && sqp.t >= sqp.nu * sqp_bar_ticks() / SQ_U) {
         for (tk = 0; tk < SQ_DRUMS; tk++)
-            if (!((sq_st.song.mute >> tk) & 1u))   /* (muted: its steps pass by) */
+            if (!((p->mute >> tk) & 1u))         /* (muted: its steps pass by) */
                 sqp_fire(p, tk, sqp.nu);
         sqp.nu++;
     }
     while (sqp.nh < sq_dsteps() && sqp.t >= sqp_drum_tick(p, sqp.nh)) {   /* (the drums, swung) */
-        if (!((sq_st.song.mute >> SQ_DRUMS) & 1u))
+        if (!((p->mute >> SQ_DRUMS) & 1u))
             sqp_fire(p, SQ_DRUMS, sqp.nh);
         sqp.nh++;
     }

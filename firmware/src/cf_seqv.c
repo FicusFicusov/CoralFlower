@@ -529,7 +529,7 @@ static void draw_sq_tracks(void)
     draw_head(t);
     sq_pat_row(HEAD_LINE);
     for (r = 0; r < SQ_NTRK; r++) {             /* four rows, 20 px, 2 apart; a muted track's dark */
-        int y = VIEW_Y - 4 + (int)r * 22, sel = r == squ.trk, mute = (sq_st.song.mute >> r) & 1u, ym = y + 10;
+        int y = VIEW_Y - 4 + (int)r * 22, sel = r == squ.trk, mute = (p->mute >> r) & 1u, ym = y + 10;
         int has = !sq_empty(p) && (r == SQ_DRUMS ? sq_drums(p) : sq_count(p, r) > 0);
         sq_ink_t k = r == SQ_DRUMS ? sq_lane_ink(0) : sq_root_ink(r == SQ_BASS ? 7u : r == SQ_LAYER ? 4u : 0u);
         fb_rbox(6, y, 228, 20, 3, sel ? cf_panel(2) : FL_BG1);
