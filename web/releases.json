@@ -1,6 +1,19 @@
 {
  "releases": [
   {
+   "version": "0.4",
+   "tag": "v0.4",
+   "sha256": "8c3a1603a04aef8aa82720becf7e400ce10dff8cea8a68c61a9e16ae72a9992f",
+   "pkg": "coralflower-0.4.fwsc",
+   "date": "2026-10-20",
+   "title": "REC records straight into the sequencer",
+   "notes": [
+    "REC on the main screen records your chords into a new sequencer pattern; the looper is gone.",
+    "A loop you saved becomes a pattern the next time you switch on.",
+    "Your drum hits, the beats and the playing step light up on the keys."
+   ]
+  },
+  {
    "version": "0.3.1",
    "tag": "v0.3.1",
    "sha256": "198fb92550bc02a47e6cf5c0f14f97349c6ed7fc284d5387d812464b68856dd5",

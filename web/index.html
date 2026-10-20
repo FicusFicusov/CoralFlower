@@ -130,9 +130,9 @@
           <p class="card__text">Nine patterns, including a strum up and down. They follow the FM-1’s tempo or an external MIDI clock.</p>
         </article>
         <article class="card card--feature">
-          <div class="card__media"><img src="images/looper.png" width="480" height="480" alt="The looper recording a take" loading="lazy"></div>
-          <h3 class="card__title">Looper</h3>
-          <p class="card__text">Record a chord progression and layer more on top. Undo the last layer. Save the loop, or it’s gone when you switch off.</p>
+          <div class="card__media"><img src="images/take.png" width="480" height="480" alt="A take being recorded into a new pattern’s Chords track" loading="lazy"></div>
+          <h3 class="card__title">Record a take</h3>
+          <p class="card__text">Press REC and play. After a one-bar count-in, your chords are written into the sequencer and play in a loop. From there, you can add drums and a melody in a few clicks.</p>
         </article>
         <article class="card card--feature">
           <div class="card__media"><img src="images/fm-voice.png" width="480" height="480" alt="The FM editor: the algorithm's operators" loading="lazy"></div>
@@ -214,7 +214,7 @@
         <div class="card card--icon">
           <svg class="pixel-icon" viewBox="0 0 12 12" width="48" height="48" aria-hidden="true"><path class="px-sea" d="M5 0h2v1h-2zM5 1h2v1h-2zM5 2h2v1h-2zM5 3h2v1h-2zM3 4h6v1h-6zM4 5h4v1h-4zM5 6h2v1h-2z"/><path class="px-ash" d="M1 8h1v1h-1zM10 8h1v1h-1zM1 9h1v1h-1zM10 9h1v1h-1zM1 10h10v1h-10z"/><path class="px-lime" d="M3 9h6v1h-6z"/></svg>
           <h3 class="card__title">Sounds backed up before updates</h3>
-          <p class="card__text">If the FM-1 runs CoralFlower, ChoralRoot or Felucca, the installer first saves its sounds, loops and settings to a file. The official firmware can’t be backed up.</p>
+          <p class="card__text">If the FM-1 runs CoralFlower, ChoralRoot or Felucca, the installer first saves its sounds, patterns and settings to a file. The official firmware can’t be backed up.</p>
         </div>
         <div class="card card--icon">
           <svg class="pixel-icon" viewBox="0 0 12 12" width="48" height="48" aria-hidden="true"><path class="px-fire" d="M3 1h1v1h-1zM2 2h2v1h-2zM1 3h9v1h-9zM2 4h2v1h-2zM10 4h1v1h-1zM3 5h1v1h-1zM11 5h1v1h-1zM11 6h1v1h-1zM11 7h1v1h-1zM10 8h1v1h-1zM2 9h8v1h-8z"/></svg>
@@ -237,8 +237,8 @@
             <p class="note" id="backup-note" role="status" hidden></p>
             <div class="fold__cols">
               <div>
-                <p>A backup is one .json file. It holds everything saved on the FM-1: your settings, the loop, the sequencer’s patterns and song, sound banks and 32 user sounds.</p>
-                <p>Restore copies a backup onto the FM-1. It checks every part before it writes, then restarts the FM-1. Stop any loop first.</p>
+                <p>A backup is one .json file. It holds everything saved on the FM-1: your settings, the sequencer’s patterns and song, sound banks and 32 user sounds.</p>
+                <p>Restore copies a backup onto the FM-1. It checks every part before it writes, then restarts the FM-1.</p>
                 <p>Backup and restore work with CoralFlower, ChoralRoot and Felucca. The official firmware can’t make backups.</p>
               </div>
               <div>
@@ -259,7 +259,7 @@
           <div class="fold__body">
             <div class="fold__cols">
               <div>
-                <p class="note note--warn">The official firmware can’t use CoralFlower’s sounds, loops or settings, so this page saves them to a backup file first.</p>
+                <p class="note note--warn">The official firmware can’t use CoralFlower’s sounds, patterns or settings, so this page saves them to a backup file first.</p>
                 <p>Download the official FM-1 V15 from <a href="https://www.m-vave.com/download" target="_blank" rel="noopener">M-VAVE Downloads</a>. Then choose its FM-1.fwsc file here, exactly as downloaded. Your browser checks the file, and nothing is uploaded.</p>
               </div>
               <div>
@@ -497,7 +497,7 @@ const TEXT = {
     backupSaved: "Backup saved: ",
     noBackup: "This FM-1 can’t be backed up from here (it runs the official firmware or an older Felucca).",
     noBackupCf: "This CoralFlower build can’t make a backup, so the installer skips the backup. Your sounds and settings stay safe: the update only rewrites the firmware.",
-    noBackupConfirm: "The FM-1 couldn’t be backed up. Install anyway, without a backup? Its saved sounds, loops and settings may be lost.",
+    noBackupConfirm: "The FM-1 couldn’t be backed up. Install anyway, without a backup? Its saved sounds, patterns and settings may be lost.",
     restoreOffer: "CoralFlower is installed. Restore the backup you just saved (settings, user sounds, FM6 patches)?",
     restoreConfirm: "Restore this backup onto the FM-1? It replaces what the FM-1 has saved, and the FM-1 restarts afterwards.",
     restoring: "Restoring ",
@@ -521,8 +521,8 @@ const TEXT = {
     stockError: "Not the official firmware file: ",
     stockWrongFile: "Choose the unmodified official FM-1 V15 file (FM-1.fwsc).",
     stockDnLine: "The FM-1 now runs the official V15 ({identity}).",
-    stockDnSaved: "CoralFlower’s sounds, loops and settings are in the backup saved before the write: {file}.",
-    stockDnEarlier: "No backup was saved this time. CoralFlower’s sounds, loops and settings are in the backup you saved earlier.",
+    stockDnSaved: "CoralFlower’s sounds, patterns and settings are in the backup saved before the write: {file}.",
+    stockDnEarlier: "No backup was saved this time. CoralFlower’s sounds, patterns and settings are in the backup you saved earlier.",
   },
 };
 const lang = "en";

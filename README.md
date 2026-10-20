@@ -31,8 +31,8 @@ before you install anything.
 - **A bass part under your chords** (you can turn it off), with its own sound and range, plus an octaver that doubles each bass note.
 - **An arpeggiator** with nine patterns, including a strum like the one on the Orchid chord synth. It locks to the
   metronome or to an external MIDI clock.
-- **A looper for chord progressions,** with count-in, overdub, undo and timing correction. Save the loop, and it
-  stays after you switch off.
+- **A sequencer** with eight patterns of chords, bass, drums and one more sound (the layer), and a song made of them.
+  REC on the main screen records what you play into a new pattern, after a one-bar count-in.
 - **Six effects** in an order you choose: filter, drive, chorus, phaser, delay and reverb.
 - **About 60 sounds** from two synth engines, virtual analogue and FM: pads, keys, strings and basses. Many pads
   change slowly on their own. Chords and basses have separate lists. Every sound has an editor, and you can save your
@@ -40,7 +40,8 @@ before you install anything.
 - **A plant that grows from your music.** In the Top key layout a flower grows; in the Side layout, a coral.
   Each note of the chord adds a part: a bloom, a bud, a cluster of berries. The plant's structure follows
   [PlantStudio](https://github.com/pdfernhout/PlantStudio), a program that models real plants.
-- **MIDI over USB.** Chord and bass notes go out on their own channels, and a MIDI clock comes in.
+- **MIDI over USB.** The chords, the bass and the sequencer's Layer and Drums go out on four channels you set. The
+  FM-1 follows an external MIDI clock or sends its own.
 
 <table>
   <tr>
@@ -51,7 +52,7 @@ before you install anything.
   <tr>
     <td><img src="docs/images/fm-voice.png" width="260" alt="The FM editor: the algorithm's operators"></td>
     <td><img src="docs/images/arp.png" width="260" alt="ARPEGGIO: the pattern as a little piano roll"></td>
-    <td><img src="docs/images/looper.png" width="260" alt="LOOPER: a take being recorded"></td>
+    <td><img src="docs/images/take.png" width="260" alt="A take being recorded into a new pattern's Chords track"></td>
   </tr>
 </table>
 
