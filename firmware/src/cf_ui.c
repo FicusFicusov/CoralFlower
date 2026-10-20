@@ -1367,7 +1367,8 @@ static void cf_leds(void)
         if (cf_sn.running)                       /* PLAY: with the beat while it runs; a pattern to play: mid */
             cf_led((int32_t)(cf_sn.now_ms - cf_sn.beat_ms) < 120 ? lit : mid, panel.btn[B_PLAY], 1);
         else
-            cf_led(sqk.last < SQ_NPAT && sq_has(sqk.last) ? mid : dim, panel.btn[B_PLAY], 1);
+            cf_led((sqk.song && sq_st.song.n) || (sqk.last < SQ_NPAT && sq_has(sqk.last)) ? mid : dim,
+                   panel.btn[B_PLAY], 1);
         if (cf_sn.sq_on)                         /* the sequencer plays elsewhere: SEQ up, as ARP is */
             cf_led(mid, panel.btn[B_SEQ], 1);
     }

@@ -60,6 +60,9 @@ static struct {
 static struct {
     uint8_t on;                  /* a take under way (its pattern: pat) */
     uint8_t pat, last;           /* .. its pattern; the pattern last recorded or opened (0xFF none) */
+    uint8_t song;                /* .. the song's page was opened after it (its song not empty): PLAY on HOME plays
+                                  * the song (the owner, 2026-10-20: "Когда включён режим песни, выхожу на главный,
+                                  * ставлю стоп, начинаю плей — то он не идёт по песне почему-то") */
     uint8_t seen, rolled;        /* the audio side has the take; .. its count-in is over */
     uint32_t nbar, t, bt;        /* where it was last seen: bars since its first, ticks into the bar, of the bar */
 } sqk = {.last = 0xFF};
@@ -1112,6 +1115,7 @@ static void sq_home_end(int drop)                /* the take ends (drop: it goes
     p->bars = (uint8_t)bars;
     sq_touch();
     sqk.last = sqk.pat;
+    sqk.song = 0;                                /* (a take: its pattern is what PLAY on HOME plays) */
     str_cpy(m, "Recorded as Pattern ", sizeof m);   /* (not "Saved": flash takes it once playback stops and things
                                                   * rest, sq_save_poll) */
     m[20] = (char)('A' + sqk.pat % SQ_NPAT);
@@ -1198,7 +1202,11 @@ static void sq_home_play(void)                   /* PLAY tapped */
         cf_post(CFE_TRANSPORT, 0, 0, 0);
         return;
     }
-    if (pat < SQ_NPAT && sq_has(pat))
+    if (sqk.song && sq_st.song.n)                /* (the song last chosen: the song, from the block its frame was on,
+                                                  * as PLAY on its page: "С блока, где стояла рамка", the owner,
+                                                  * 2026-10-20) */
+        cf_post(CFE_SEQ, 1, SQ_NPAT, squ.slot < sq_st.song.n ? squ.slot : 0u);
+    else if (pat < SQ_NPAT && sq_has(pat))
         cf_post(CFE_SEQ, 1, (uint8_t)pat, 0);
     else
         cf_post(CFE_TRANSPORT, 0, 0, 1);         /* (no pattern yet: the beat alone, as before) */
@@ -1353,6 +1361,12 @@ static void sq_home_poll(void)                   /* every frame */
             sqk.last = (uint8_t)i;
     if (sq_screen(cu.scr) && squ.pat < SQ_NPAT && sq_has(squ.pat))
         sqk.last = squ.pat;                      /* (opened: the last pattern PLAY on HOME plays) */
+    if (sq_screen(cu.scr) && squ.pat < SQ_NPAT && sq_has(squ.pat))
+        sqk.song = 0;
+    else if (cu.scr == SCR_SQ && squ.pat == SQ_SONGPG && sq_st.song.n)
+        sqk.song = 1;                            /* (the song's page: PLAY on HOME plays the song) */
+    if (sqk.song && !sq_st.song.n)               /* (its blocks all removed since) */
+        sqk.song = 0;
     if (sqh_scr != 0xFFu && (cu.pop != POP_MSG || cu.scr != sqh_scr)) {   /* (a hint is said where it is needed: "[SAVE]
                                                   * back" went on over HOME) */
         if (cu.pop == POP_MSG)
