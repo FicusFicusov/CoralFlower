@@ -1727,9 +1727,15 @@ static void sq_algo(int d)
     squ.pat = (uint8_t)clampi(squ.pat + d, 0, SQ_SONGPG);
     cv_turned(d);
     cf_send_config();                            /* (the keys: the row's sound, the song's page the chords') */
-    if (cf_sn.sq_on && !cf_sn.sq_song && cf_sn.sq_rec == 0xFFu && squ.pat < SQ_NPAT)
-        cf_post(CFE_SEQ, 3, squ.pat, 0);         /* (a pattern plays: the one shown takes over at the next bar line;
-                                                  * the song's page leaves it playing) */
+    if (!cf_sn.sq_on || cf_sn.sq_rec != 0xFFu)
+        return;
+    /* playing: the page shown takes over at the next bar line, an empty pattern too; the song from its start (the
+     * owner, 2026-10-20: the song's page left the pattern playing, "сколько бы не ждал он не начинает играть"; "пустые
+     * пусть играются тоже, так консистентнее"; "чтобы при переключении игралось с начала"). An empty song: nothing */
+    if (squ.pat < SQ_NPAT)
+        cf_post(CFE_SEQ, 3, squ.pat, 0);
+    else if (sq_st.song.n)
+        cf_post(CFE_SEQ, 3, SQ_NPAT, 0);
 }
 /* SELECT on SEQUENCER: the track (the song: the place) */
 /* a track of the pattern shown cleared whole (SEL held 1 s on the SEQUENCER: sq_sel_poll; a sweep of SEL held and

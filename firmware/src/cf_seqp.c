@@ -425,6 +425,9 @@ static void sqp_next_bar(void)
             sqp.pat = sqp.next;
         }
         sqp.next = 0xFF;
+#ifdef CF_TRACE
+        fprintf(stderr, "%6u seq comes in: %s%c\n", (unsigned)cf_now_ms, sqp.song ? "the song, " : "", 'A' + sqp.pat);
+#endif
         sqp_bars();
         return;
     }
@@ -601,8 +604,8 @@ static void sqp_queue(uint32_t pat, uint32_t slot)
         return;
     }
     sqp.next = (uint8_t)(pat >= SQ_NPAT ? SQ_NPAT + slot % SQ_SONG : pat);
-    if (pat < SQ_NPAT && !sqp.song && pat == sqp.pat)
-        sqp.next = 0xFF;                         /* (back to the one playing: it plays on) */
+    if ((pat < SQ_NPAT && !sqp.song && pat == sqp.pat) || (pat >= SQ_NPAT && sqp.song))
+        sqp.next = 0xFF;                         /* (back to the one playing, or to the song playing: it plays on) */
 }
 /* REC: a take into track trk of pattern pat. Playing that pattern: at once; else from its top after a bar of
  * count-in */
