@@ -110,7 +110,9 @@ void cf_chord_defaults(cf_chord_cfg_t *cfg)
     };
     int i;
     cfg->algo = CF_ALG_TOP_LOCK;                 /* (the first on the ALGORITHM knob: cf_ui.c) */
-    cfg->quantize = CF_Q_FULL;                   /* (the owner, 2026-10-18: Full by default, the chords in the scale) */
+    cfg->quantize = CF_Q_BASIC;                  /* (a chord button plays its own type on any root; the owner, 2026-10-21:
+                                                  * "квантайз я бы на бейсик поставил всё же по-умолчанию", after Full
+                                                  * since 2026-10-18) */
     cfg->tonic = 0;
     cfg->scale = CF_SC_MAJOR;
     cfg->octave = 0;
