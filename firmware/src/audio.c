@@ -155,6 +155,10 @@ static void shed_voice(void)
 {
     uint32_t p, i;
     voice_t *best = 0;
+#ifdef SHED_FIRST
+    if (SHED_FIRST())                                  /* (a sound of the firmware's own that can go first: cf_fx.c) */
+        return;
+#endif
     for (p = 0; p < NPART; p++)
         for (i = 0; i < NVOICE; i++) {
             voice_t *v = &trk[p].v[i];

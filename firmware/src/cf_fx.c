@@ -568,6 +568,8 @@ static const uint32_t CF_BOOT_INC[12] = {796254u, 843601u, 893765u, 946911u, 100
 static volatile uint8_t cf_boot_go;              /* the UI's: start it */
 static struct {
     uint8_t on;
+    uint8_t yield;                               /* the audio is overloaded: it fades out at once (audio.c shed) */
+    int32_t gain;                                /* .. its level on the way out, Q15 */
     uint32_t t;                                  /* samples since the start */
     uint32_t pa[CF_BOOT_N], pb[CF_BOOT_N], pm[CF_BOOT_N];
     int32_t e[CF_BOOT_N], ei[CF_BOOT_N], bloom[CF_BOOT_N];   /* level, shimmer (Q30); the slide still to go (Q16) */
@@ -575,29 +577,45 @@ static struct {
 static void cf_boot_mix(int32_t *l, int32_t *r, uint32_t n)
 {
     uint32_t i, k;
+    uint32_t live = 0;
     if (cf_boot_go) {
         cf_boot_go = 0;
         memset(&cfb, 0, sizeof cfb);
         cfb.on = 1;
+        cfb.gain = 32768;
     }
     if (!cfb.on)
         return;
+    if (cfb.yield) {                             /* (the chords come first: out over 4 blocks, 2.9 ms) */
+        cfb.gain -= 8192;
+        if (cfb.gain <= 0) {
+            cfb.on = 0;
+            return;
+        }
+    }
     for (k = 0; k < CF_BOOT_N; k++) {
-        uint32_t t0 = CF_BOOT[k].ms * (FS / 1000u), inc, inc_a, inc_b, a;
-        int32_t amp = CF_BOOT[k].vel * 36, pan = CF_BOOT[k].pan, sub = k == 0u;
-        if (cfb.t + n <= t0)
+        uint32_t t0 = CF_BOOT[k].ms * (FS / 1000u), inc, inc_a, inc_b, inc_m, a;
+        int32_t amp = (CF_BOOT[k].vel * 36 * cfb.gain) >> 15, pan = CF_BOOT[k].pan, sub = k == 0u;
+        if (cfb.t + n <= t0) {
+            live = 1;                            /* (still to come) */
             continue;
+        }
         if (cfb.e[k] == 0 && cfb.t <= t0 + n) {      /* (its start: in this block) */
             cfb.e[k] = 1 << 30;
             cfb.ei[k] = 1 << 30;
             cfb.bloom[k] = sub ? 0 : 1497;
         }
-        if (cfb.e[k] < (1 << 16))
-            continue;                                /* (gone) */
+        if (cfb.e[k] < (1 << 20))
+            continue;                                /* (gone: -60 dB under its strike, below -79 dBFS; it was computed on to
+                                                      * -84 dB for the whole 6 s, as dear as a 6-operator FM chord on the
+                                                      * one core: the first chords after power-on lost their notes to the
+                                                      * overload guard, the owner, 2026-10-21) */
+        live = 1;
         inc = CF_BOOT_INC[CF_BOOT[k].note % 12u] << (CF_BOOT[k].note / 12u);
         inc = (uint32_t)(((uint64_t)inc * (uint32_t)(65536 - cfb.bloom[k])) >> 16);
         inc_a = inc + (uint32_t)(((uint64_t)inc * 190u) >> 17);
         inc_b = inc - (uint32_t)(((uint64_t)inc * 190u) >> 17);
+        inc_m = inc * 7u / 2u;
         cfb.bloom[k] -= cfb.bloom[k] >> 5;           /* (the slide up: ~50 ms) */
         for (i = 0; i < n; i++) {
             uint32_t tt = cfb.t + i;
@@ -610,10 +628,10 @@ static void cf_boot_mix(int32_t *l, int32_t *r, uint32_t n)
             } else {
                 off = osc_sine(cfb.pm[k]) * (cfb.ei[k] >> 17);
                 y = (osc_sine(cfb.pa[k] + (uint32_t)off) + osc_sine(cfb.pb[k] + (uint32_t)off)) >> 1;
-                cfb.pm[k] += inc * 7u / 2u;
+                cfb.pm[k] += inc_m;
             }
-            y = (int32_t)(((int64_t)y * (cfb.e[k] >> 15)) >> 15);
-            y = (int32_t)(((int64_t)y * (int32_t)a) >> 15) * amp / 32768;
+            y = (y * (cfb.e[k] >> 15)) >> 15;        /* (32 bits: |y| <= 2^15, e >> 15 <= 2^15) */
+            y = ((y * (int32_t)a) >> 15) * amp / 32768;
             l[i] += y * (32 - pan) / 32;
             r[i] += y * (32 + pan) / 32;
             cfb.pa[k] += inc_a;
@@ -623,9 +641,18 @@ static void cf_boot_mix(int32_t *l, int32_t *r, uint32_t n)
         }
     }
     cfb.t += n;
-    if (cfb.t > FS * 6u)
+    if (cfb.t > FS * 6u || !live)
         cfb.on = 0;
 }
+/* audio.c's SHED_FIRST: the audio overloaded; the power-on sound, while it rings, goes before any voice. 1: it was it */
+static int cf_boot_yield(void)
+{
+    if (!cfb.on)
+        return 0;
+    cfb.yield = 1;
+    return 1;
+}
+#define SHED_FIRST() cf_boot_yield()
 
 static void cf_fx_chain(int32_t *l, int32_t *r, uint32_t n)
 {
