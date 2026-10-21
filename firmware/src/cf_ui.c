@@ -1108,17 +1108,25 @@ static void ui_note_key(int key, int down)
  * could come first and strike with the old ones: the owner heard the last chord slip in) */
 static void cf_ui_pump(void)
 {
-    uint32_t now = fm1_in.notes, ch = now ^ cu.keys, k, pass;
+    /* tap: a key pressed and let go since the last read (the scan keeps its press, hal/fm1_input.h notes_pressed): a
+     * frame that drew longer than the press lost it. Right after power-on (the intro, the first full redraw) a quick
+     * tap on a chord button went that way, and the roots played single notes (the owner, 2026-10-21: "после включения
+     * если выбрать тип аккорда и начать играть, то сначала играются по одной ноте") */
+    uint32_t now = fm1_in.notes, tap = fm1_input_note_edges() & ~now & ~cu.keys & ((1u << CF_NKEYS) - 1u);
+    uint32_t ch = (now ^ cu.keys) | tap, k, pass;
     if (!ch || !cu.booted)
         return;
     for (pass = 0; pass < 3u; pass++)
         for (k = 0; k < CF_NKEYS; k++)
             if ((ch >> k) & 1u) {
-                int down = (int)((now >> k) & 1u), idx;
+                int down = (int)(((now | tap) >> k) & 1u), idx;
                 int btn = cf_key_role(cs.chord.algo, (int)k, &idx) == CF_ROLE_BUTTON;
                 if ((uint32_t)(down ? (btn ? 1 : 2) : 0) == pass)
                     ui_note_key((int)k, down);
             }
+    for (k = 0; k < CF_NKEYS; k++)               /* (a tap's release, after the roots it went with) */
+        if ((tap >> k) & 1u)
+            ui_note_key((int)k, 0);
     cu.keys = now;
     cu.idle_ms = 0;
 }
