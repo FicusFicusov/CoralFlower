@@ -1,6 +1,19 @@
 {
  "releases": [
   {
+   "version": "0.4.2",
+   "tag": "v0.4.2",
+   "sha256": "52a8c1b8bbf790d4d73f4e11679f0b4437ca028a9276187005c3154178e55169",
+   "pkg": "coralflower-0.4.2.fwsc",
+   "date": "2026-10-21",
+   "title": "Everything as you left it",
+   "notes": [
+    "Settings and sound edits are saved as you go and kept when you switch off.",
+    "PLAY picks up the pattern or song you picked last.",
+    "Fast chords on heavy FM sounds stay whole, right from power-on."
+   ]
+  },
+  {
    "version": "0.4.1",
    "tag": "v0.4.1",
    "sha256": "d91fb954d25832db4e7d0aea782d6919028bec3e920b0473f8db53b839db7ab4",
