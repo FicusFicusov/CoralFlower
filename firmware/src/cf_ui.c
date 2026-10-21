@@ -1488,8 +1488,11 @@ static void cf_feed_plant(uint32_t dt)
 static int cf_editing_part(void) { return cu.scr == SCR_EDIT ? (int)cu.edit_part : -1; }
 static void cf_edited(uint32_t part)
 {
-    if (part < 3u)
+    if (part < 3u) {
         cu.edited[part] = 1;
+        cfk_on[part] = 1;                        /* (kept over a power-off: cf_settings.c) */
+        cfk_gen[part] = cf_snd_gen[part];
+    }
 }
 
 /* ------------------------------------------------------------------ init --- */
@@ -1506,6 +1509,7 @@ static void cf_ui_init(void)
     if (!cr_safe) {
         sq_load();                               /* the sequencer's patterns and song */
         sq_from_loop();                          /* (a loop kept by 0.3.1 or before, or restored: a pattern now) */
+        sq_resume();                             /* (what PLAY on HOME played before the power-off) */
     } else {
         sq_defaults();
     }
@@ -1532,6 +1536,7 @@ static void cf_ui_init(void)
         cf_snd_load_index(CF_PART_LAYER, 2);
     cs.snd_layer = (uint16_t)cf_snd_pos(CF_PART_LAYER);
     cf_drums_init();
+    cfk_load();                                  /* (the sounds' edits not SAVEd, on the sounds they were made on) */
     cu.env_tgt = cs.env_link ? 0u : 1u;
     if (cs.env_link)
         cf_env_follow();

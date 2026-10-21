@@ -5,7 +5,8 @@
  * requests fed to crb_handle as the main loop would, the replies taken at CRB_SEND.
  *   cc -std=gnu11 -O1 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/cf_backup_test tests/cf_backup_test.c -lm
  *   ./build/host/cf_backup_test
- * Checks: INFO (the version, the tags); LIST of the 14 objects; a sound, the settings (the newest in their log), a loop and sequencer patterns
+ * Checks: INFO (the version, the tags); LIST of the 17 objects; a sound, the settings (the newest in their log), the bass sound's
+ * unsaved edits (put back at the restart), a loop and sequencer patterns
  * (a change not yet saved: LIST writes it) saved, then backed up whole (GET in 256-byte pieces, every CRC as LIST
  * says); the flash erased and everything restored (PUT): LIST and the bytes identical, the sound back in its list, the
  * patterns and song read in at the restart; refusals with nothing written: a CRC error, a settings record of another
@@ -93,7 +94,7 @@ static uint32_t unpack(const uint8_t *a, uint32_t na, uint8_t *out)
 
 /* ------------------------------------------------------------------ the objects --- */
 typedef struct { uint8_t id; uint32_t size, crc; uint8_t bytes[8192]; } obj_t;
-static obj_t man[16];
+static obj_t man[CRB_N];
 static uint32_t nman;
 static int t_list(void)                              /* -> rc; man[] filled (sizes, CRCs) */
 {
@@ -184,7 +185,7 @@ int main(void)
 {
     uint32_t n, i, k;
     const uint8_t *a;
-    static obj_t ref[16];
+    static obj_t ref[CRB_N];
     uint32_t nref;
 
     emu_flash_open();
@@ -206,7 +207,7 @@ int main(void)
     CHECK(a && a[1] == 5, "GET before LIST: 5");
 
     /* ---- a fresh device: the 8 objects, nothing stored but what the boot wrote ---- */
-    CHECK(t_list() == 0 && nman == 14, "LIST on a fresh flash: 14 objects (%u)", nman);
+    CHECK(t_list() == 0 && nman == 17, "LIST on a fresh flash: 17 objects (%u)", nman);
     CHECK(t_find(50) && !t_find(50)->size && t_find(55) && !t_find(55)->size, "LIST: no patterns stored yet");
 
     /* ---- content: a user sound, the settings, a loop ---- */
@@ -221,6 +222,10 @@ int main(void)
         st_hdr_t h;
         CHECK(st_current(CF_SET_OBJ, &h) >= 0 && st_cur_e >= 2u, "the newest settings are in the log, not at its entry 0 (entry %u)", st_cur_e);
     }
+    fm1_irq_off();                                   /* the bass sound edited, not SAVEd (LIST writes it) */
+    trk[CF_PART_BASS].p[P_REL] = (int16_t)(trk[CF_PART_BASS].p[P_REL] == 77 ? 78 : 77);
+    fm1_irq_on();
+    cf_edited(CF_PART_BASS);
     make_loop(40, 1);
     sq_st.song.n = 3;                                /* patterns and a song, not saved yet (LIST writes them) */
     sq_st.song.pat[0] = 2, sq_st.song.pat[1] = 7, sq_st.song.pat[2] = 2;
@@ -230,6 +235,8 @@ int main(void)
     CHECK(t_list() == 0, "LIST");
     for (i = 0, k = 0; i < nman; i++) k += man[i].size != 0;
     CHECK(t_find(6)->size && t_find(30)->size && t_find(31)->size, "LIST: the bank, the settings and the loop hold data");
+    CHECK(t_find(57)->size == sizeof(cfk_rec_t) && t_find(56)->size == 0 && t_find(58)->size == 0,
+          "LIST wrote the bass sound's edit (57: %u B), the chord and the LAYER have none", t_find(57)->size);
     CHECK(!sq_dirty && t_find(50)->size == SQ_CHUNK && t_find(55)->size == sq_chunk_len(5) && sq_chunk_len(5),
           "LIST wrote the sequencer's change: its six objects hold the store (%u .. %u B)", t_find(50)->size, t_find(55)->size);
     for (i = 0; i < nman; i++)
@@ -273,6 +280,17 @@ int main(void)
               !memcmp(&h, &h0, sizeof h) && st_read(st_at, &r, sizeof r) == 0 && st_at == st_sector(CF_SET_OBJ, h.slot) + 256u &&
               r.s.bpm == 97, "restored where 0.4.1 reads it: the header at the copy's start, the record at 256");
     }
+    {                                                /* the restart: the bass's edit back on its sound */
+        int16_t rel = trk[CF_PART_BASS].p[P_REL];
+        cfk_on[CF_PART_BASS] = 0;
+        cu.edited[CF_PART_BASS] = 0;
+        fm1_irq_off();
+        trk[CF_PART_BASS].p[P_REL] = 0;
+        fm1_irq_on();
+        cfk_load();
+        CHECK(cfk_on[CF_PART_BASS] && cu.edited[CF_PART_BASS] && trk[CF_PART_BASS].p[P_REL] == rel && !cfk_on[CF_PART_CHORD],
+              "the restored edit put back on the bass at the restart (REL %d)", trk[CF_PART_BASS].p[P_REL]);
+    }
     memset(&sq_st, 0, sizeof sq_st);                 /* the restart: the sequencer read in from flash */
     sq_load();
     CHECK(sq_st.magic == SQ_MAGIC && sq_st.song.n == 3 && sq_st.song.pat[1] == 7 && sq_st.pat[2].hit[0][1] == 0x1111u &&
@@ -299,8 +317,18 @@ int main(void)
         CHECK(t_put(50, q->bytes, q->size, st_crc32(q->bytes, q->size)) == 2, "a sequencer head of another magic: 2");
         q->bytes[0] ^= 0x55;
         CHECK(t_put(51, q->bytes, 1000, st_crc32(q->bytes, 1000)) == 1, "a sequencer part of another length: 1");
-        CHECK(t_put(56, q->bytes, 16, st_crc32(q->bytes, 16)) == 1, "an id past the sequencer's (56): 1");
+        CHECK(t_put(59, q->bytes, 16, st_crc32(q->bytes, 16)) == 1, "an id past the sounds' edits (59): 1");
         CHECK(t_list() == 0 && t_find(50)->crc == crc_before, "nothing written by the refused sequencer PUTs");
+    }
+    {
+        obj_t *e = t_find(57);
+        uint32_t crc_before = e->crc;
+        CHECK(t_put(56, e->bytes, e->size, e->crc) == 2, "the bass's edit as the chord's (56): 2");
+        e->bytes[0] ^= 0x55;
+        CHECK(t_put(57, e->bytes, e->size, st_crc32(e->bytes, e->size)) == 2, "an edit of another magic: 2");
+        e->bytes[0] ^= 0x55;
+        CHECK(t_put(57, e->bytes, 100, st_crc32(e->bytes, 100)) == 1, "an edit of another length: 1");
+        CHECK(t_list() == 0 && t_find(57)->crc == crc_before, "nothing written by the refused edit PUTs");
     }
     {                                                /* a sequencer restore alone locks too: RAM does not go over it */
         obj_t *q = t_find(55);

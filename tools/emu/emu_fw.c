@@ -356,6 +356,17 @@ void emu_fw_dump(void)
     printf("\n");
     printf("  settings: %s, key %u, colour %u, saved %08X now %08X\n", cfs_loaded ? "loaded" : "defaults",
            (unsigned)cs.chord.tonic, (unsigned)cs.accent, (unsigned)cfs_saved, (unsigned)cfs_fnv(&cs, sizeof cs));
+    {                                             /* what a power-on brings back (cf_settings.c, cf_sequi.c sq_resume) */
+        uint32_t k;
+        printf("  kept: resume %02X (play: %s %u), edits", (unsigned)cs.resume, sqk.song ? "song from block" : "pattern",
+               (unsigned)(sqk.song ? squ.slot : sqk.last));
+        for (k = 0; k < 3u; k++) {
+            cfk_build(k, &cfk_rec);
+            printf(" %s %s %08X%s", k == 0 ? "chord" : k == 1 ? "bass" : "layer", cfk_rec.edited ? "edited" : "-",
+                   (unsigned)cfk_rec.check, cfk_rec.check == cfk_saved[k] ? "" : " (not written)");
+        }
+        printf("\n");
+    }
     {
         cf_keycap_t kc;
         printf("  fb probe (5,190) %u (5,175) %u  lcd %04X\n", (unsigned)fb[190 * 240 + 5], (unsigned)fb[175 * 240 + 5],

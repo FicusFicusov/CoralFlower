@@ -14,6 +14,9 @@
 
 typedef struct { char name[13]; uint8_t engine, kind, fk, slot; uint16_t pos; } cf_snd_t;
 static cf_snd_t cf_snd[3];
+static uint8_t cf_snd_gen[3];                    /* each part's sound loads and saves: an edit belongs to one of them
+                                                  * (cf_settings.c keeps a part's unsaved edits with the sound they were
+                                                  * made on; another sound loaded, they are gone) */
 
 static const uint8_t CF_ENGINES[] = {ENGI_FM6,
 #if FELUCCA_VA
@@ -292,6 +295,7 @@ static void cf_pool_load(uint32_t part, uint32_t e, uint32_t pos)
     cf_snd[part].fk = en.fk;
     cf_snd[part].slot = en.slot;
     cf_snd[part].pos = (uint16_t)pos;
+    cf_snd_gen[part % 3u]++;
 }
 
 /* the part's place in the one row of sounds, and a step through it */
@@ -382,6 +386,7 @@ static int cf_snd_save(uint32_t part, int as_new, const char *name)
     cf_snd[part].fk = (uint8_t)cb_bound(k);
     up_name(k, cf_snd[part].name);
     cf_snd_resync();
+    cf_snd_gen[part % 3u]++;                     /* (its edits are in the saved sound now) */
     return 0;
 }
 

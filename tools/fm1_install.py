@@ -956,8 +956,9 @@ CR_IDS = [1, 6, 7, 8, 9, 10, 11, 12, 13] + list(range(14, 22)) + [22] + list(ran
 # (9 the VA patches, 10 11 the FM6 patches, 12 13 the CZ-1 tones, 14..21 the CZ-1 banks, 22 the FM TONE patches, 40..49
 # loops; no samples)
 CF_SEQ_IDS = list(range(50, 56))
-CF_IDS = [6, 7, 8, 9, 10, 11, 30, 31] + CF_SEQ_IDS   # fm1backup.js CF_BACKUP_IDS (30 settings, 31 the loop, 50..55
-# the sequencer's patterns and song: the six parts of one store, 0.3.1)
+CF_EDIT_IDS = [56, 57, 58]                         # the chord, bass and LAYER sounds' unsaved edits (0.4.2)
+CF_IDS = [6, 7, 8, 9, 10, 11, 30, 31] + CF_SEQ_IDS + CF_EDIT_IDS   # fm1backup.js CF_BACKUP_IDS (30 settings, 31 the
+# loop, 50..55 the sequencer's patterns and song: the six parts of one store, 0.3.1; 56..58 the sounds' edits, 0.4.2)
 KNOWN_IDS = set(FELUCCA_IDS) | set(CR_IDS) | set(CF_IDS)
 BK_RC = {1: "invalid object, size or request", 2: "the data failed validation", 3: "busy: stop the loop on the FM-1",
          4: "flash write failed", 5: "stale session: start again"}
@@ -1053,6 +1054,8 @@ def object_name(i):
         return "CoralFlower loop"
     if i in CF_SEQ_IDS:
         return "CoralFlower patterns and song"
+    if i in CF_EDIT_IDS:
+        return "CoralFlower unsaved sound edits"
     return f"object {i}"
 
 

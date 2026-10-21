@@ -17,7 +17,8 @@
  * (va_store.c), 10, 11 the FM6 patch store (fm6_ustore.c, slots 1..16, 17..32). CoralFlower's own have ids of their
  * own, so a ChoralRoot record never lands in them: 30 the settings (cf_settings.c cf_rec_t, "CFS1"), 31 the loop
  * (cf_loop.c cfl_data_t, "CFL1": 0.4 has no looper, a loop restored becomes a pattern at the next power-on), 50..55 the sequencer's patterns and song (cf_sequi.c sq_store_t, "CFQ6", in its six
- * objects as flash keeps them; 0.3.1). ChoralRoot's 1 (its settings) and 40..49 (its loops) are refused (rc 1: the page
+ * objects as flash keeps them; 0.3.1), 56..58 the chord, bass and LAYER sounds' unsaved edits (cf_settings.c
+ * cfk_rec_t, "CFK1"; 0.4.2: older firmware does not list them, so their restore skips them). ChoralRoot's 1 (its settings) and 40..49 (its loops) are refused (rc 1: the page
  * reports them skipped).
  *
  * Reads come from flash (the current record of each object, checked at LIST: storage.c st_current) in 256-byte windows: no RAM copy, the audio
@@ -37,8 +38,10 @@ enum { CRB_INFO = 1, CRB_LIST = 65, CRB_GET, CRB_PUT, CRB_RESTART = 72 };
 #define CFB_SET 30u                                  /* CoralFlower's settings record */
 #define CFB_LOOP 31u                                 /* CoralFlower's loop */
 #define CFB_SEQ 50u                                  /* 50..55: the sequencer's six objects (OBJ_CFSEQ0..5) */
+#define CFB_EDIT 56u                                 /* 56..58: the sounds' unsaved edits (OBJ_CFEDIT0..2) */
 static const uint8_t CRB_IDS[] = {6, 7, 8, CRB_VA, CRB_FM6S, CRB_FM6S + 1u, CFB_SET, CFB_LOOP,
-                                  CFB_SEQ, CFB_SEQ + 1u, CFB_SEQ + 2u, CFB_SEQ + 3u, CFB_SEQ + 4u, CFB_SEQ + 5u};
+                                  CFB_SEQ, CFB_SEQ + 1u, CFB_SEQ + 2u, CFB_SEQ + 3u, CFB_SEQ + 4u, CFB_SEQ + 5u,
+                                  CFB_EDIT, CFB_EDIT + 1u, CFB_EDIT + 2u};
 _Static_assert(SQ_NCHUNK == 6u, "backup: one id per sequencer object");
 #define CRB_N ((uint32_t)sizeof CRB_IDS)
 /* an FM6 bank of earlier firmware, as fm6_bank.c fm6_bank_import takes it at boot: Felucca 1.0's (27 records, version
@@ -144,6 +147,8 @@ static uint32_t crb_obj(uint32_t id)                 /* storage.c's object of an
         return CF_SET_OBJ;
     if (id == CFB_LOOP)
         return OBJ_CFLOOP;
+    if (id >= CFB_EDIT)
+        return (uint32_t)OBJ_CFEDIT0 + id - CFB_EDIT;
     if (id >= CFB_SEQ)
         return (uint32_t)OBJ_CFSEQ0 + id - CFB_SEQ;
     return id == 8u ? (uint32_t)OBJ_FM6BANK : id == CRB_VA ? (uint32_t)OBJ_VASTORE
@@ -188,6 +193,8 @@ static void crb_list(void)
         cf_settings_write(0);                        /* a change not yet saved goes in first .. */
     if (!cr_safe && !cfs_restore_lock && sq_dirty)
         sq_save_write();                             /* .. the sequencer's too (playing or not: a backup is taken now) */
+    if (!cr_safe && !cfs_restore_lock)
+        cfk_flush();                                 /* .. and the sounds' edits */
     for (i = 0; i < CRB_N; i++) {
         uint32_t id = CRB_IDS[i];
         crb.at[i] = crb.size[i] = crc[i] = 0;
@@ -244,6 +251,8 @@ static int crb_size_ok(uint32_t id, uint32_t len)   /* a begin's size for this i
         return len >= __builtin_offsetof(cf_rec_t, s) && len <= sizeof(cf_rec_t);
     if (id == CFB_LOOP)
         return !len || (len >= __builtin_offsetof(cfl_data_t, ev) && len <= sizeof(cfl_data_t));
+    if (id >= CFB_EDIT && id < CFB_EDIT + 3u)
+        return !len || len == sizeof(cfk_rec_t);
     if (id >= CFB_SEQ && id < CFB_SEQ + SQ_NCHUNK)  /* (a later format reads this one's lengths in, as sq_load does) */
         return !len || len == sq_chunk_len(id - CFB_SEQ);
     return 0;
@@ -285,6 +294,16 @@ static uint32_t crb_commit(void)
         if (st_save(OBJ_CFLOOP, raw, len))
             return 4;
         return 0;                                    /* (the restart loads it, stopped, as at power-on) */
+    }
+    if (id >= CFB_EDIT) {                            /* a part's unsaved edits: put back at the restart, if made on the
+                                                      * sound the part then has (cf_settings.c cfk_load) */
+        if (len && !cfk_valid((const cfk_rec_t *)raw, id - CFB_EDIT))
+            return 2;
+        if (st_save(crb_obj(id), raw, len))
+            return 4;
+        cfs_restore_lock = 1;                        /* (nothing saved from RAM over it before the restart) */
+        cf_message("Sounds restored: restart");
+        return 0;
     }
     if (id >= CFB_SEQ) {                             /* a part of the sequencer's store: the first holds its head; the
                                                       * whole is checked at the restart (sq_load: its FNV) */

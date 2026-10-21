@@ -29,7 +29,8 @@
  * each). FELUCCA_QUAD: 0xB2000 / 0xB3000 the QUAD patch store (quad_store.c, OBJ_QUADSTORE: the user sample slot 2's
  * flash); 0xB4000 / 0xB5000 the session (cr_settings.c, OBJ_SESSION: where the unit was left, 0.18);
  * 0xB6000..0xC7FFF stays free (CoralFlower: 0xB6000 / 0xB7000 its loop, OBJ_CFLOOP; 0xB8000..0xC3FFF its sequencer's
- * patterns and song, OBJ_CFSEQ0..5, six A/B pairs) */
+ * patterns and song, OBJ_CFSEQ0..5, six A/B pairs; 0xC4000..0xC7FFF and 0xC8000 / 0xC9000 (ChoralRoot's loop slots,
+ * not used here) the parts' unsaved sound edits, OBJ_CFEDIT0..2, three A/B pairs, cf_settings.c) */
 enum { OBJ_SETTINGS, OBJ_PROJECT0, OBJ_UPRESET0 = OBJ_PROJECT0 + 4, OBJ_FM6BANK = OBJ_UPRESET0 + 2,
 #if FELUCCA_CZ && FELUCCA_QUAD
        OBJ_CZSTORE1, OBJ_CZBANK0, OBJ_QUADSTORE = OBJ_CZBANK0 + 8, OBJ_SESSION, OBJ_COUNT
@@ -40,6 +41,8 @@ enum { OBJ_SETTINGS, OBJ_PROJECT0, OBJ_UPRESET0 = OBJ_PROJECT0 + 4, OBJ_FM6BANK 
        OBJ_CFLOOP,                             /* CoralFlower's loop (cf_loop.c): 0xB6000 / 0xB7000, free in every build */
        OBJ_CFSEQ0,                             /* .. the sequencer's (cf_sequi.c): 0xB8000.., six pairs */
        OBJ_CFSEQ5 = OBJ_CFSEQ0 + 5,
+       OBJ_CFEDIT0,                            /* .. the chord, bass and LAYER sounds' unsaved edits (cf_settings.c): 0xC4000.. */
+       OBJ_CFEDIT2 = OBJ_CFEDIT0 + 2,
 #endif
        OBJ_COUNT
 #endif
@@ -98,6 +101,8 @@ static uint32_t st_sector(uint32_t obj, uint32_t copy)  /* flash offset of copy 
         return 0xB6000u + copy * ST_SECTOR;
     if (obj >= OBJ_CFSEQ0 && obj <= OBJ_CFSEQ5)
         return 0xB8000u + (obj - OBJ_CFSEQ0) * 2u * ST_SECTOR + copy * ST_SECTOR;
+    if (obj >= OBJ_CFEDIT0 && obj <= OBJ_CFEDIT2)
+        return 0xC4000u + (obj - OBJ_CFEDIT0) * 2u * ST_SECTOR + copy * ST_SECTOR;
 #endif
     if (obj >= OBJ_UPRESET0)
         return 0xDC000u + (obj - OBJ_UPRESET0) * 2u * ST_SECTOR + copy * ST_SECTOR;
@@ -106,22 +111,29 @@ static uint32_t st_sector(uint32_t obj, uint32_t copy)  /* flash offset of copy 
 
 static uint8_t st_buf[ST_PAYLOAD_MAX] __attribute__((aligned(4)));
 
-/* One object may keep a log (ST_LOG_OBJ: CoralFlower's settings, written half a second after a change while the
- * audio plays). Each of its copies holds up to 15 entries. Entry 0 is the record above (its header at 0, its payload
- * at 256: all that 0.4.1 and older firmware read); entry e of 1..14 sits at 256 + 256 e, its header first, then its
- * payload (up to 224 bytes), rsv[0] = e. A save appends to the current copy's next erased entry: page programs of
- * about 1 ms, no erase. When none is left, it opens the other copy at entry 0, if that copy is erased. Only that
- * needs an erase (about 45 ms of silence), so the caller picks a quiet moment for it (st_tidy). The current copy is
- * the one whose entry 0 is newer, as older firmware picks it; in it the last intact entry wins */
+/* Some objects keep a log (CoralFlower: its settings, ST_LOG_OBJ, and the sounds' unsaved edits, OBJ_CFEDIT0..2; both
+ * written half a second after a change while the audio plays). Entries of S bytes (the settings 256, the edits 512):
+ * entry 0 is the record above (its header at 0, its payload at 256: all that 0.4.1 and older firmware read); entry e
+ * of 1 .. (3840 / S) - 1 sits at 256 + S e, its header first, then its payload (up to S - 32 bytes), rsv[0] = e: 15
+ * entries a copy for the settings, 7 for an edit. A save appends to the current copy's next erased entry: page
+ * programs of about 1 ms, no erase. When none is left, it opens the other copy at entry 0, if that copy is erased.
+ * Only that needs an erase (about 45 ms of silence), so the caller picks a quiet moment for it (st_tidy). The current
+ * copy is the one whose entry 0 is newer, as older firmware picks it; in it the last intact entry wins */
 #ifdef ST_LOG_OBJ
-#define ST_LOGGED(obj) ((obj) == (uint32_t)(ST_LOG_OBJ))
+#define ST_LOGGED(obj) ((obj) == (uint32_t)(ST_LOG_OBJ) || ((obj) >= OBJ_CFEDIT0 && (obj) <= OBJ_CFEDIT2))
+#define ST_LSZ(obj) ((obj) == (uint32_t)(ST_LOG_OBJ) ? 256u : 512u)
 #else
 #define ST_LOGGED(obj) 0
+#define ST_LSZ(obj) 256u
 #endif
-#define ST_LOG_N 15u
-#define ST_LOG_MAX (256u - (uint32_t)sizeof(st_hdr_t))
-static uint32_t st_entry(uint32_t e) { return e ? 256u + e * 256u : 0u; }    /* an entry's header in its copy .. */
-static uint32_t st_data(uint32_t e) { return e ? st_entry(e) + (uint32_t)sizeof(st_hdr_t) : ST_PAYLOAD_OFF; }   /* .. its payload */
+#define ST_LOG_MAX (256u - (uint32_t)sizeof(st_hdr_t))          /* the settings' entry */
+#define ST_LMAX(obj) (ST_LSZ(obj) - (uint32_t)sizeof(st_hdr_t))  /* an entry's payload, at most */
+static uint32_t st_ln(uint32_t obj) { return (ST_SECTOR - 256u) / ST_LSZ(obj); }   /* entries a copy */
+static uint32_t st_entry(uint32_t obj, uint32_t e) { return e ? 256u + e * ST_LSZ(obj) : 0u; }   /* an entry's header .. */
+static uint32_t st_data(uint32_t obj, uint32_t e)                                                 /* .. its payload */
+{
+    return e ? st_entry(obj, e) + (uint32_t)sizeof(st_hdr_t) : ST_PAYLOAD_OFF;
+}
 static uint32_t st_cur_e, st_at;                       /* st_current's find: its entry, its payload's flash offset */
 
 /* the copies known to be erased (all 0xFF): a save into one needs no erase. Bit obj * 2 + copy; RAM: unknown (0) at
@@ -141,9 +153,9 @@ static int st_head(uint32_t obj, uint32_t copy, uint32_t e, st_hdr_t *h)   /* co
 {
     if (obj >= OBJ_COUNT || copy > 1u)
         return -1;
-    if (st_read(st_sector(obj, copy) + st_entry(e), h, sizeof *h))
+    if (st_read(st_sector(obj, copy) + st_entry(obj, e), h, sizeof *h))
         return -1;
-    if (h->magic != ST_MAGIC || h->type != obj || h->slot != copy || h->len > (e ? ST_LOG_MAX : ST_PAYLOAD_MAX) ||
+    if (h->magic != ST_MAGIC || h->type != obj || h->slot != copy || h->len > (e ? ST_LMAX(obj) : ST_PAYLOAD_MAX) ||
         (e && h->rsv[0] != e) || h->hcrc != st_crc32(h, sizeof *h - 4u))
         return -1;
     return 0;
@@ -151,7 +163,7 @@ static int st_head(uint32_t obj, uint32_t copy, uint32_t e, st_hdr_t *h)   /* co
 
 static int st_body(uint32_t obj, uint32_t copy, uint32_t e, const st_hdr_t *h)   /* payload -> st_buf, CRC ok: 0 */
 {
-    if (st_read(st_sector(obj, copy) + st_data(e), st_buf, h->len) || st_crc32(st_buf, h->len) != h->crc)
+    if (st_read(st_sector(obj, copy) + st_data(obj, e), st_buf, h->len) || st_crc32(st_buf, h->len) != h->crc)
         return -1;
     return 0;
 }
@@ -162,7 +174,7 @@ static int st_newest(uint32_t obj, uint32_t copy, st_hdr_t *h)
 {
     uint32_t e;
     st_hdr_t x;
-    for (e = ST_LOGGED(obj) ? ST_LOG_N - 1u : 0u; e; e--)
+    for (e = ST_LOGGED(obj) ? st_ln(obj) - 1u : 0u; e; e--)
         if (st_head(obj, copy, e, &x) == 0 && x.seq - h->seq - 1u < 0x80000000u && st_body(obj, copy, e, &x) == 0)
             break;
     if (e)
@@ -170,7 +182,7 @@ static int st_newest(uint32_t obj, uint32_t copy, st_hdr_t *h)
     else if (st_body(obj, copy, 0, h))
         return -1;
     st_cur_e = e;
-    st_at = st_sector(obj, copy) + st_data(e);
+    st_at = st_sector(obj, copy) + st_data(obj, e);
     return 0;
 }
 
@@ -216,16 +228,16 @@ static uint32_t st_free(uint32_t obj, uint32_t copy, uint32_t e)
 {
     uint32_t off, i;
     uint8_t b[64];
-    for (; e < ST_LOG_N; e++) {
-        for (off = 0; off < 256u; off += sizeof b) {
-            if (st_read(st_sector(obj, copy) + st_entry(e) + off, b, sizeof b))
+    for (; e < st_ln(obj); e++) {
+        for (off = 0; off < ST_LSZ(obj); off += sizeof b) {
+            if (st_read(st_sector(obj, copy) + st_entry(obj, e) + off, b, sizeof b))
                 return 0;
             for (i = 0; i < sizeof b && b[i] == 0xFFu; i++)
                 ;
             if (i < sizeof b)
                 break;
         }
-        if (off >= 256u)
+        if (off >= ST_LSZ(obj))
             return e;
     }
     return 0;
@@ -239,15 +251,17 @@ static uint32_t st_free(uint32_t obj, uint32_t copy, uint32_t e)
 /* a save: 0 written (and read back), 1 not now (ST_NOERASE), < 0 a flash error */
 static int st_put(uint32_t obj, const void *src, uint32_t len, uint32_t how)
 {
-    uint32_t seq, copy, e = 0, base, off;
+    uint32_t seq, copy, e = 0, base, off, n;
     int cur, rc;
     st_hdr_t h;
     if (ST_BLOCKED() || obj >= OBJ_COUNT || len > ST_PAYLOAD_MAX)
         return -1;
     cur = st_current(obj, &h);
     seq = cur < 0 ? 0u : h.seq;
-    copy = cur == 0 ? 1u : 0u;                         /* the other copy .. */
-    if (ST_LOGGED(obj) && cur >= 0 && !(how & ST_ROLL) && len <= ST_LOG_MAX &&
+    copy = cur == 0 ? 1u : 0u;                         /* the other copy (none current: an erased one, if any) .. */
+    if (cur < 0 && !st_is_blank(obj, 0) && st_is_blank(obj, 1))
+        copy = 1;
+    if (ST_LOGGED(obj) && cur >= 0 && !(how & ST_ROLL) && len <= ST_LMAX(obj) &&
         (e = st_free(obj, (uint32_t)cur, st_cur_e + 1u)) != 0)
         copy = (uint32_t)cur;                          /* .. or the current one's next erased entry */
     if (!e && !st_is_blank(obj, copy)) {
@@ -260,11 +274,14 @@ static int st_put(uint32_t obj, const void *src, uint32_t len, uint32_t how)
     base = st_sector(obj, copy);
     for (off = 0; off < len; off++)
         st_buf[off] = ((const uint8_t *)src)[off];    /* the driver wants RAM sources */
-    for (off = 0; off < len; off += 256u) {
-        uint32_t n = len - off > 256u ? 256u : len - off;
+    for (off = 0; off < len; off += n) {               /* (page by page: a log entry's payload starts mid-page) */
+        uint32_t at = base + st_data(obj, e) + off;
+        n = 256u - (at & 0xFFu);
+        if (n > len - off)
+            n = len - off;
         if (how & ST_NOERASE)
             ST_PROG_SYNC();
-        if ((rc = st_prog(base + st_data(e) + off, st_buf + off, n)) != 0)
+        if ((rc = st_prog(at, st_buf + off, n)) != 0)
             return rc;
     }
     h.magic = ST_MAGIC;
@@ -278,7 +295,7 @@ static int st_put(uint32_t obj, const void *src, uint32_t len, uint32_t how)
     h.hcrc = st_crc32(&h, sizeof h - 4u);
     if (how & ST_NOERASE)
         ST_PROG_SYNC();
-    if ((rc = st_prog(base + st_entry(e), &h, sizeof h)) != 0)   /* the commit record, last */
+    if ((rc = st_prog(base + st_entry(obj, e), &h, sizeof h)) != 0)   /* the commit record, last */
         return rc;
     {   /* read back: a write-protected or failing part must not report SAVED */
         st_hdr_t chk;

@@ -1358,6 +1358,23 @@ static void sq_from_loop(void)
         cf_message(m);
     }
 }
+/* power-on, the patterns read in (cf_ui.c cf_ui_init): PLAY on HOME plays what it played before the power-off, the
+ * pattern or the song from the block its frame was on (the owner, 2026-10-21: "Как оставил"; stopped, on HOME) */
+_Static_assert(SQ_SONG <= 64u && SQ_NPAT <= 8u, "settings: cs.resume holds a block or a pattern");
+static void sq_resume(void)
+{
+    uint32_t r = cs.resume;
+    if (!(r & CF_RESUME_ON))
+        return;
+    if (r & CF_RESUME_SONG) {
+        if (!sq_st.song.n)
+            return;
+        sqk.song = 1;
+        squ.slot = (uint8_t)((r & 0x3Fu) < sq_st.song.n ? (r & 0x3Fu) : 0u);
+    } else if ((r & 7u) < SQ_NPAT && sq_has(r & 7u)) {
+        sqk.last = (uint8_t)(r & 7u);
+    }
+}
 static void sq_home_poll(void)                   /* every frame */
 {
     uint32_t i;
@@ -1375,6 +1392,12 @@ static void sq_home_poll(void)                   /* every frame */
         sqk.song = 1;                            /* (the song's page: PLAY on HOME plays the song) */
     if (sqk.song && !sq_st.song.n)               /* (its blocks all removed since) */
         sqk.song = 0;
+    {                                            /* .. kept with the settings for the next power-on (sq_resume) */
+        uint8_t r = sqk.song ? (uint8_t)(CF_RESUME_ON | CF_RESUME_SONG | (squ.slot < sq_st.song.n ? squ.slot : 0u))
+                  : sqk.last < SQ_NPAT ? (uint8_t)(CF_RESUME_ON | sqk.last) : 0u;
+        if (cs.resume != r)
+            cs.resume = r;
+    }
     if (sqh_scr != 0xFFu && (cu.pop != POP_MSG || cu.scr != sqh_scr)) {   /* (a hint is said where it is needed: "[SAVE]
                                                   * back" went on over HOME) */
         if (cu.pop == POP_MSG)

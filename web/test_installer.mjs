@@ -25,7 +25,7 @@ import { spawnSync } from "node:child_process";
 import vm from "node:vm";
 import { Package, logicalImage, productOf, crc16, STOCK_V15_SIZE } from "./fm1pkg.js";
 import { pack7, unpack7, classifyFirmware, refusalText, CF_EARLY } from "./fm1ota.js";
-import { bkU32, bkR32, bkPack, bkUnpack, bkCrc, CR_BACKUP_IDS, CF_BACKUP_IDS, BACKUP_IDS, backupFamily, backupFileName, objectNames, readBackup } from "./fm1backup.js";
+import { bkU32, bkR32, bkPack, bkUnpack, bkCrc, CR_BACKUP_IDS, CF_BACKUP_IDS, CF_EDIT_IDS, BACKUP_IDS, backupFamily, backupFileName, objectNames, readBackup } from "./fm1backup.js";
 
 let failed = 0;
 const ok = (cond, what) => { console.log(`${what.padEnd(100)} ${cond ? "ok" : "FAIL"}`); if (!cond) failed++; };
@@ -719,7 +719,8 @@ async function readyPage(dev, opts = {}) {
 }
 {
   // CoralFlower 0.3.1: the sequencer's patterns and song in the file and back; on 0.3 (no such objects) kept in the file
-  const cf = backupSide("CoralFlower 0.3.1", CF_BACKUP_IDS, cfData());
+  const CF031 = CF_BACKUP_IDS.filter((id) => !CF_EDIT_IDS.includes(id));   // (0.3.1 lists no sound edits: 0.4.2's)
+  const cf = backupSide("CoralFlower 0.3.1", CF031, cfData());
   const dev = new FakeFM1(image, { identity: "FM-1_930", bk: () => cf });
   const p = runPage({ navigator: midiOf(dev) });
   await p.ready;
@@ -730,9 +731,9 @@ async function readyPage(dev, opts = {}) {
   await until(() => blobText);
   URL.createObjectURL = realCreate;
   const file = blobText && JSON.parse(blobText);
-  ok(file && file.objects.length === CF_BACKUP_IDS.length && [50, 51, 52, 53, 54, 55].every((id) => file.objects.find((o) => o.id === id)?.size) &&
-     readBackup(blobText).objects.length === CF_BACKUP_IDS.length, "Back up on 0.3.1: the sequencer's six parts in the file (3840 B each at most: accepted)");
-  const blank = backupSide("CoralFlower 0.3.1", CF_BACKUP_IDS);
+  ok(file && file.objects.length === CF031.length && [50, 51, 52, 53, 54, 55].every((id) => file.objects.find((o) => o.id === id)?.size) &&
+     readBackup(blobText).objects.length === CF031.length, "Back up on 0.3.1: the sequencer's six parts in the file (3840 B each at most: accepted)");
+  const blank = backupSide("CoralFlower 0.3.1", CF031);
   dev.bk = () => blank;
   p.$["restore-file"].files = [{ text: async () => blobText }];
   await p.$["restore-file"].fire("change");
@@ -746,6 +747,7 @@ async function readyPage(dev, opts = {}) {
   ok(!old.log.some((id) => id >= 50) && old.objs.get(30) && p.$["backup-status"].textContent.endsWith(en.restoreSkipped + "CoralFlower patterns and song)"),
      "Restore on 0.3: the rest restored, the patterns kept in the file and named once as not used");
   ok(objectNames([50, 6, 51, 55]) === "CoralFlower patterns and song, user sounds 1-16", "objectNames: each name once, in order");
+  ok(objectNames([57, 30, 56, 58]) === "CoralFlower unsaved sound edits, CoralFlower settings", "objectNames: the three sounds' edits named once (0.4.2)");
 }
 
 // the return to the official V15 (validateStockPackage stands in for the real file, which is not in the repo)
