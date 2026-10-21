@@ -119,6 +119,7 @@
 #define mix_block fx_mix_block
 #define CF_FX_OWN 1                       /* fx.c: CoralFlower's chain (cf_fx.c) on the mix, not ChoralRoot's sends */
 #define CF_LOOP_STORE 1                   /* storage.c: the looper's object (OBJ_CFLOOP, 0xB6000; cf_loop.c) */
+#define ST_LOG_OBJ (OBJ_PROJECT0 + 3u)    /* storage.c: the settings' object keeps a log (cf_settings.c CF_SET_OBJ) */
 #define CLN_TRIM 4096                     /* fx.c's Clean output: the mix in at 0 dB (ChoralRoot's -2.5 dB left it quieter
                                            * than the Classic chain it replaces here) */
 static void cf_fx_chain(int32_t *l, int32_t *r, uint32_t n);

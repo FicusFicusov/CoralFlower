@@ -7,7 +7,8 @@
  * 256), then the 32-byte header at offset 0 LAST. The header is the commit
  * record (magic, seq, length, payload CRC, header CRC); on load the valid
  * copy with the newest seq wins (including wrap), so a write torn at any point leaves the
- * previous copy in charge.
+ * previous copy in charge. One object may also keep a log after that record (ST_LOG_OBJ, below
+ * st_buf): saves without an erase.
  *
  * Flash access goes through three hooks (also used by the host test):
  *   st_read(off, dst, n)   st_erase(off)   st_prog(off, src, n)
@@ -105,44 +106,93 @@ static uint32_t st_sector(uint32_t obj, uint32_t copy)  /* flash offset of copy 
 
 static uint8_t st_buf[ST_PAYLOAD_MAX] __attribute__((aligned(4)));
 
-static int st_head(uint32_t obj, uint32_t copy, st_hdr_t *h)   /* commit record valid: 0 */
+/* One object may keep a log (ST_LOG_OBJ: CoralFlower's settings, written half a second after a change while the
+ * audio plays). Each of its copies holds up to 15 entries. Entry 0 is the record above (its header at 0, its payload
+ * at 256: all that 0.4.1 and older firmware read); entry e of 1..14 sits at 256 + 256 e, its header first, then its
+ * payload (up to 224 bytes), rsv[0] = e. A save appends to the current copy's next erased entry: page programs of
+ * about 1 ms, no erase. When none is left, it opens the other copy at entry 0, if that copy is erased. Only that
+ * needs an erase (about 45 ms of silence), so the caller picks a quiet moment for it (st_tidy). The current copy is
+ * the one whose entry 0 is newer, as older firmware picks it; in it the last intact entry wins */
+#ifdef ST_LOG_OBJ
+#define ST_LOGGED(obj) ((obj) == (uint32_t)(ST_LOG_OBJ))
+#else
+#define ST_LOGGED(obj) 0
+#endif
+#define ST_LOG_N 15u
+#define ST_LOG_MAX (256u - (uint32_t)sizeof(st_hdr_t))
+static uint32_t st_entry(uint32_t e) { return e ? 256u + e * 256u : 0u; }    /* an entry's header in its copy .. */
+static uint32_t st_data(uint32_t e) { return e ? st_entry(e) + (uint32_t)sizeof(st_hdr_t) : ST_PAYLOAD_OFF; }   /* .. its payload */
+static uint32_t st_cur_e, st_at;                       /* st_current's find: its entry, its payload's flash offset */
+
+/* the copies known to be erased (all 0xFF): a save into one needs no erase. Bit obj * 2 + copy; RAM: unknown (0) at
+ * power-on, set by st_check_blank or st_tidy, cleared by a save into it */
+static uint8_t st_blank[(OBJ_COUNT * 2u + 7u) / 8u];
+static int st_is_blank(uint32_t obj, uint32_t copy) { uint32_t b = obj * 2u + copy; return (st_blank[b >> 3] >> (b & 7u)) & 1u; }
+static void st_set_blank(uint32_t obj, uint32_t copy, int on)
+{
+    uint32_t b = obj * 2u + copy;
+    if (on)
+        st_blank[b >> 3] |= (uint8_t)(1u << (b & 7u));
+    else
+        st_blank[b >> 3] &= (uint8_t)~(1u << (b & 7u));
+}
+
+static int st_head(uint32_t obj, uint32_t copy, uint32_t e, st_hdr_t *h)   /* commit record valid: 0 */
 {
     if (obj >= OBJ_COUNT || copy > 1u)
         return -1;
-    if (st_read(st_sector(obj, copy), h, sizeof *h))
+    if (st_read(st_sector(obj, copy) + st_entry(e), h, sizeof *h))
         return -1;
-    if (h->magic != ST_MAGIC || h->type != obj || h->slot != copy || h->len > ST_PAYLOAD_MAX ||
-        h->hcrc != st_crc32(h, sizeof *h - 4u))
+    if (h->magic != ST_MAGIC || h->type != obj || h->slot != copy || h->len > (e ? ST_LOG_MAX : ST_PAYLOAD_MAX) ||
+        (e && h->rsv[0] != e) || h->hcrc != st_crc32(h, sizeof *h - 4u))
         return -1;
     return 0;
 }
 
-static int st_body(uint32_t obj, uint32_t copy, const st_hdr_t *h)   /* payload -> st_buf, CRC ok: 0 */
+static int st_body(uint32_t obj, uint32_t copy, uint32_t e, const st_hdr_t *h)   /* payload -> st_buf, CRC ok: 0 */
 {
-    if (st_read(st_sector(obj, copy) + ST_PAYLOAD_OFF, st_buf, h->len) || st_crc32(st_buf, h->len) != h->crc)
+    if (st_read(st_sector(obj, copy) + st_data(e), st_buf, h->len) || st_crc32(st_buf, h->len) != h->crc)
         return -1;
     return 0;
 }
 
-/* the current copy: the newest valid sequence (A on a tie), -1 when
+/* a copy's newest intact record, *h its valid entry 0 on the way in: 0, the payload in st_buf, *h, st_cur_e, st_at
+ * set. A log entry counts only when it is newer than entry 0 */
+static int st_newest(uint32_t obj, uint32_t copy, st_hdr_t *h)
+{
+    uint32_t e;
+    st_hdr_t x;
+    for (e = ST_LOGGED(obj) ? ST_LOG_N - 1u : 0u; e; e--)
+        if (st_head(obj, copy, e, &x) == 0 && x.seq - h->seq - 1u < 0x80000000u && st_body(obj, copy, e, &x) == 0)
+            break;
+    if (e)
+        *h = x;
+    else if (st_body(obj, copy, 0, h))
+        return -1;
+    st_cur_e = e;
+    st_at = st_sector(obj, copy) + st_data(e);
+    return 0;
+}
+
+/* the current copy: the newest valid sequence at entry 0 (A on a tie), -1 when
  * neither is valid. Headers first, so only the winner's payload is read (it
  * is left in st_buf); *h gets its header. */
 static int st_current(uint32_t obj, st_hdr_t *h)
 {
     st_hdr_t a, b;
-    int va = st_head(obj, 0, &a) == 0, vb = st_head(obj, 1, &b) == 0;
+    int va = st_head(obj, 0, 0, &a) == 0, vb = st_head(obj, 1, 0, &b) == 0;
     if (vb && (!va || (b.seq != a.seq && b.seq - a.seq < 0x80000000u))) {
-        if (st_body(obj, 1, &b) == 0) {
+        if (st_newest(obj, 1, &b) == 0) {
             *h = b;
             return 1;
         }
         vb = 0;
     }
-    if (va && st_body(obj, 0, &a) == 0) {
+    if (va && st_newest(obj, 0, &a) == 0) {
         *h = a;
         return 0;
     }
-    if (vb && st_body(obj, 1, &b) == 0) {
+    if (vb && st_newest(obj, 1, &b) == 0) {
         *h = b;
         return 1;
     }
@@ -161,40 +211,131 @@ static int st_load(uint32_t obj, void *dst, uint32_t max)
     return (int)h.len;
 }
 
-static int st_save(uint32_t obj, const void *src, uint32_t len)
+/* the first erased entry of a copy from entry e on, 0: none */
+static uint32_t st_free(uint32_t obj, uint32_t copy, uint32_t e)
 {
-    uint32_t seq, base, off;
+    uint32_t off, i;
+    uint8_t b[64];
+    for (; e < ST_LOG_N; e++) {
+        for (off = 0; off < 256u; off += sizeof b) {
+            if (st_read(st_sector(obj, copy) + st_entry(e) + off, b, sizeof b))
+                return 0;
+            for (i = 0; i < sizeof b && b[i] == 0xFFu; i++)
+                ;
+            if (i < sizeof b)
+                break;
+        }
+        if (off >= 256u)
+            return e;
+    }
+    return 0;
+}
+
+#ifndef ST_PROG_SYNC
+#define ST_PROG_SYNC() ((void)0)                       /* before each page program of an ST_NOERASE write (storage_hw.c) */
+#endif
+#define ST_NOERASE 1u                                  /* st_put: no erase (the audio plays): 1 back if only one would make room */
+#define ST_ROLL 2u                                     /* .. entry 0 of the other copy (what older firmware reads) */
+/* a save: 0 written (and read back), 1 not now (ST_NOERASE), < 0 a flash error */
+static int st_put(uint32_t obj, const void *src, uint32_t len, uint32_t how)
+{
+    uint32_t seq, copy, e = 0, base, off;
     int cur, rc;
     st_hdr_t h;
     if (ST_BLOCKED() || obj >= OBJ_COUNT || len > ST_PAYLOAD_MAX)
         return -1;
     cur = st_current(obj, &h);
     seq = cur < 0 ? 0u : h.seq;
-    base = st_sector(obj, cur == 0 ? 1u : 0u);       /* write the other copy */
+    copy = cur == 0 ? 1u : 0u;                         /* the other copy .. */
+    if (ST_LOGGED(obj) && cur >= 0 && !(how & ST_ROLL) && len <= ST_LOG_MAX &&
+        (e = st_free(obj, (uint32_t)cur, st_cur_e + 1u)) != 0)
+        copy = (uint32_t)cur;                          /* .. or the current one's next erased entry */
+    if (!e && !st_is_blank(obj, copy)) {
+        if (how & ST_NOERASE)
+            return 1;
+        if ((rc = st_erase(st_sector(obj, copy))) != 0)
+            return rc;
+    }
+    st_set_blank(obj, copy, 0);                        /* (from here it holds data, or a torn part of it) */
+    base = st_sector(obj, copy);
     for (off = 0; off < len; off++)
         st_buf[off] = ((const uint8_t *)src)[off];    /* the driver wants RAM sources */
-    if ((rc = st_erase(base)) != 0)
-        return rc;
     for (off = 0; off < len; off += 256u) {
         uint32_t n = len - off > 256u ? 256u : len - off;
-        if ((rc = st_prog(base + ST_PAYLOAD_OFF + off, st_buf + off, n)) != 0)
+        if (how & ST_NOERASE)
+            ST_PROG_SYNC();
+        if ((rc = st_prog(base + st_data(e) + off, st_buf + off, n)) != 0)
             return rc;
     }
     h.magic = ST_MAGIC;
     h.type = (uint16_t)obj;
-    h.slot = (uint16_t)(cur == 0 ? 1 : 0);
+    h.slot = (uint16_t)copy;
     h.seq = seq + 1u;
     h.len = len;
     h.crc = st_crc32(st_buf, len);
-    h.rsv[0] = h.rsv[1] = 0xFFFFFFFFu;
+    h.rsv[0] = e ? e : 0xFFFFFFFFu;
+    h.rsv[1] = 0xFFFFFFFFu;
     h.hcrc = st_crc32(&h, sizeof h - 4u);
-    if ((rc = st_prog(base, &h, sizeof h)) != 0)       /* the commit record, last */
+    if (how & ST_NOERASE)
+        ST_PROG_SYNC();
+    if ((rc = st_prog(base + st_entry(e), &h, sizeof h)) != 0)   /* the commit record, last */
         return rc;
     {   /* read back: a write-protected or failing part must not report SAVED */
         st_hdr_t chk;
-        uint32_t c = cur == 0 ? 1u : 0u;
-        if (st_head(obj, c, &chk) || memcmp(&chk, &h, sizeof h) || st_body(obj, c, &chk))
+        if (st_head(obj, copy, e, &chk) || memcmp(&chk, &h, sizeof h) || st_body(obj, copy, e, &chk))
             return -7;
     }
     return 0;
+}
+
+static int st_save(uint32_t obj, const void *src, uint32_t len)   /* the other copy, erased first: 0 written */
+{
+    return st_put(obj, src, len, ST_ROLL);
+}
+
+/* power-on: which copies, other than the current one, are erased already? (read: every byte 0xFF) */
+static void st_check_blank(uint32_t obj)
+{
+    uint32_t c, off, i;
+    uint8_t b[64];
+    st_hdr_t h;
+    int cur;
+    if (ST_BLOCKED() || obj >= OBJ_COUNT)
+        return;
+    cur = st_current(obj, &h);
+    for (c = 0; c < 2u; c++) {
+        if ((int)c == cur)
+            continue;
+        for (off = 0; off < ST_SECTOR; off += sizeof b) {
+            if (st_read(st_sector(obj, c) + off, b, sizeof b))
+                return;
+            for (i = 0; i < sizeof b && b[i] == 0xFFu; i++)
+                ;
+            if (i < sizeof b)
+                break;
+        }
+        if (off >= ST_SECTOR)
+            st_set_blank(obj, c, 1);
+    }
+}
+
+/* a quiet moment's work on a logged object (each erase holds the audio ~45 ms): the newest record moved to entry 0 of
+ * the other copy, where older firmware reads it, then the copy left behind erased for the next saves. One step a
+ * call: 1 one done, 0 nothing left, < 0 a flash error. The newest record stays readable at every point */
+static int st_tidy(uint32_t obj)
+{
+    st_hdr_t h;
+    uint32_t c;
+    int cur;
+    if (ST_BLOCKED() || obj >= OBJ_COUNT || (cur = st_current(obj, &h)) < 0)
+        return 0;
+    if (st_cur_e)                                      /* (st_put takes it from st_buf, where st_current left it) */
+        return st_put(obj, st_buf, h.len, ST_ROLL) ? -1 : 1;
+    c = cur == 0 ? 1u : 0u;
+    if (st_is_blank(obj, c))
+        return 0;
+    if (st_erase(st_sector(obj, c)))
+        return -1;
+    st_set_blank(obj, c, 1);
+    return 1;
 }

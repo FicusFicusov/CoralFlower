@@ -20,7 +20,7 @@
  * objects as flash keeps them; 0.3.1). ChoralRoot's 1 (its settings) and 40..49 (its loops) are refused (rc 1: the page
  * reports them skipped).
  *
- * Reads come from flash (the current copy of each A/B pair, checked at LIST) in 256-byte windows: no RAM copy, the audio
+ * Reads come from flash (the current record of each object, checked at LIST: storage.c st_current) in 256-byte windows: no RAM copy, the audio
  * keeps running. LIST first writes a settings or a sequencer change not yet saved. A PUT is staged in cfb_raw and checked whole
  * before one commit through storage.c's protocol (st_save: the other copy, the header last): a torn write leaves the
  * previous copy. A begin or a commit while the loop plays or records answers 3 (busy: the page retries); the commit's
@@ -64,7 +64,7 @@ _Static_assert(CFB_RAW_MAX <= ST_PAYLOAD_MAX, "backup: every object fits one sto
 
 static struct {
     uint8_t listed, put, id;                         /* a LIST snapshot; a PUT session and its id */
-    int8_t copy[CRB_N];                              /* the current copy at LIST (-1: none) */
+    uint32_t at[CRB_N];                              /* the current record's payload in flash at LIST (storage.c st_at) */
     uint32_t size[CRB_N];                            /* the object's size at LIST */
     uint32_t usb, len, crc, pos, ms;                 /* usb.resets at LIST / begin; the PUT */
     uint32_t reboot;                                 /* a restart is owed (72 RESTART; crb_leave): 0 none, 1 asked, 2 its
@@ -175,37 +175,6 @@ static int crb_fm6_old(const uint8_t *raw, uint32_t len)
     uint32_t magic = raw[0] | (uint32_t)raw[1] << 8 | (uint32_t)raw[2] << 16 | (uint32_t)raw[3] << 24;
     return magic == FM6_BANK_MAGIC && (len == CRB_FM6_MEL || (len == CRB_FM6_FEL && raw[4] == 1u && raw[6] == 27u));
 }
-static int crb_head(uint32_t id, uint32_t copy, st_hdr_t *h)   /* 0: a valid commit record */
-{
-    uint32_t type = crb_obj(id);
-    if (st_read(st_sector(type, copy), h, sizeof *h) || h->magic != ST_MAGIC || h->type != type || h->slot != copy ||
-        h->len > ST_PAYLOAD_MAX || h->hcrc != st_crc32(h, sizeof *h - 4u))
-        return -1;
-    return 0;
-}
-static int crb_body(uint32_t id, uint32_t copy, const st_hdr_t *h)   /* the payload (into st_buf) is intact: 0 */
-{
-    return st_read(st_sector(crb_obj(id), copy) + ST_PAYLOAD_OFF, st_buf, h->len) || st_crc32(st_buf, h->len) != h->crc
-           ? -1 : 0;
-}
-static int crb_current(uint32_t id, st_hdr_t *h)    /* storage.c st_current's choice: the newest intact copy */
-{
-    st_hdr_t a, b;
-    int va = crb_head(id, 0, &a) == 0, vb = crb_head(id, 1, &b) == 0;
-    if (vb && (!va || (b.seq != a.seq && b.seq - a.seq < 0x80000000u)) && crb_body(id, 1, &b) == 0) {
-        *h = b;
-        return 1;
-    }
-    if (va && crb_body(id, 0, &a) == 0) {
-        *h = a;
-        return 0;
-    }
-    if (vb && crb_body(id, 1, &b) == 0) {
-        *h = b;
-        return 1;
-    }
-    return -1;
-}
 /* busy: never since 0.4 (it was the looper playing or recording: a flash erase cut it). The sequencer plays from RAM;
  * a restore ends in a restart anyway */
 static int crb_busy(void) { return 0; }
@@ -216,14 +185,14 @@ static void crb_list(void)
     uint32_t i, crc[CRB_N];
     st_hdr_t h;
     if (!cr_safe && !cfs_restore_lock && cfs_fnv(&cs, sizeof cs) != cfs_saved)
-        cf_settings_write();                         /* a change not yet saved goes in first .. */
+        cf_settings_write(0);                        /* a change not yet saved goes in first .. */
     if (!cr_safe && !cfs_restore_lock && sq_dirty)
         sq_save_write();                             /* .. the sequencer's too (playing or not: a backup is taken now) */
     for (i = 0; i < CRB_N; i++) {
         uint32_t id = CRB_IDS[i];
-        crb.copy[i] = -1;
-        crb.size[i] = crc[i] = 0;
-        if (flash_ok && (crb.copy[i] = (int8_t)crb_current(id, &h)) >= 0) {
+        crb.at[i] = crb.size[i] = crc[i] = 0;
+        if (flash_ok && st_current(crb_obj(id), &h) >= 0) {   /* (the newest record, the settings' log too) */
+            crb.at[i] = st_at;
             crb.size[i] = h.len;
             crc[i] = h.crc;
         }
@@ -250,7 +219,7 @@ static void crb_get(const uint8_t *a, uint32_t n)
     else if (n != 8u || a[5] > 15u || i < 0 || !count || count > 256u || off > crb.size[i] || count > crb.size[i] - off)
         rc = 1;
     else
-        rc = st_read(st_sector(crb_obj(a[0]), (uint32_t)crb.copy[i]) + ST_PAYLOAD_OFF + off, CRB_DATA, count) ? 4u : 0u;
+        rc = st_read(crb.at[i] + off, CRB_DATA, count) ? 4u : 0u;
     crb_b(n ? a[0] : 127u);
     crb_b(rc);
     crb_u32(off);

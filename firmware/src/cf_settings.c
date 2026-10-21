@@ -2,19 +2,26 @@
  * CoralFlower: the settings in flash.
  *
  * One record keeps what the screens and GLO set (cf_set_t cs, the parts' sounds as places in the sound row with it).
- * It is read at power-on, before the first picture (cf_splash), and written a while after the last change, once
- * nothing sounds: a flash erase stops the audio for about 45 ms. SAFE MODE neither reads nor writes it.
+ * It is read at power-on, before the first picture (cf_splash), and written half a second after the last change, even
+ * while the unit sounds and never stops: the object keeps a log (storage.c ST_LOG_OBJ), so a change is two page
+ * programs of about 1 ms each, made when the audio has room, and no erase (a flash erase stops the audio for about
+ * 45 ms). A change switched off a second later is kept (the owner, 2026-10-21: "Бас почему-то выбранный не
+ * сохраняется"; BOOT SND set On, HOME, off: gone, its 5 s preview held the old save back; "Сохранять всё сразу").
+ * About 29 changes fit without a pause; a quiet moment (nothing sounding for a second, no change for 1.5 s) tidies the
+ * flash: the newest record where 0.4.1 and older read it, the other copy erased for the next ones (storage.c
+ * st_tidy). Only when the log is full does a change wait for that quiet moment. SAFE MODE neither reads nor writes it.
  *
  * Where: OBJ_PROJECT0 + 3 (0x9D000 / 0x9E000, storage.c's A/B pair), ChoralRoot's CZ-1 tone store, which CoralFlower
  * (no CZ engine) does not use. Anything there that is not our record (another magic, version or size, a bad check)
- * is ignored, and the first save replaces it.
+ * is ignored, and the first save replaces it. A record of 0.4.1 or older is the log's entry 0: read as it is.
  * Included after cf_ui.c, before cf_splash.c. */
 
 #define CF_SET_OBJ (OBJ_PROJECT0 + 3u)
 #define CF_SET_MAGIC 0x31534643u          /* "CFS1" */
 #define CF_SET_VERSION 2u                 /* bump when cf_set_t changes: an older record is then ignored */
-#define CF_SET_QUIET_MS 1500u             /* a change rests this long before it is written */
-#define CF_SET_SILENT_MS 1000u            /* .. and nothing has sounded for this long */
+#define CF_SET_QUICK_MS 500u              /* a change rests this long, then it is written */
+#define CF_SET_QUIET_MS 1500u             /* a quiet moment: no change for this long .. */
+#define CF_SET_SILENT_MS 1000u            /* .. and nothing has sounded for this long (an erase may go: st_tidy) */
 
 typedef struct {
     uint32_t magic;
@@ -22,12 +29,15 @@ typedef struct {
     uint32_t check;                       /* FNV-1a of s */
     cf_set_t s;
 } cf_rec_t;
+_Static_assert(sizeof(cf_rec_t) <= ST_LOG_MAX, "settings: a record fits one log entry");
+_Static_assert(OBJ_PROJECT0 + 3u == ST_LOG_OBJ, "settings: the object that keeps the log");
 
 static cf_rec_t cf_rec;
 static uint32_t cfs_saved, cfs_seen;      /* the check of what flash holds, of cs at the last poll */
 static uint32_t cfs_changed_ms, cfs_sound_ms, cfs_retry_ms;
 static uint8_t cfs_loaded;                /* cs came from flash at power-on */
 static uint8_t cfs_restore_lock;          /* a backup restored the record (cf_backup.c): no save until the restart */
+static uint8_t cfs_tidy;                  /* the flash is tidy (storage.c st_tidy): nothing to do in a quiet moment */
 
 static uint32_t cfs_fnv(const void *p, uint32_t n)
 {
@@ -119,10 +129,19 @@ static void cfs_sanitize(cf_set_t *s)
 /* power-on: cs from flash, if a good record is there (1), else cs stays as it is (the defaults) */
 static int cf_settings_load(void)
 {
-    int n;
+    int n, rc = 0;
+    uint32_t k;
     cfs_loaded = 0;
     if (cr_safe)
         return 0;
+    st_check_blank(CF_SET_OBJ);
+    for (k = 0; k < 3u; k++) {                    /* (power-on, the audio not running yet: an erase here is silent) */
+        rc = st_tidy(CF_SET_OBJ);
+        fm1_wdt_feed();
+        if (rc <= 0)
+            break;
+    }
+    cfs_tidy = rc == 0;
     n = st_load(CF_SET_OBJ, &cf_rec, sizeof cf_rec);
     /* an older build's record may be shorter (fields are only ever added at the end of cf_set_t): what it has is
      * taken, the rest stays at the defaults */
@@ -138,16 +157,20 @@ static int cf_settings_load(void)
     return 1;
 }
 
-static int cf_settings_write(void)
+/* cs to flash (storage.c st_put; how: ST_NOERASE while the audio plays): 1 written, 0 not now (the log full: a
+ * quiet moment makes room), -1 a flash error */
+static int cf_settings_write(uint32_t how)
 {
+    int rc;
     cf_rec.magic = CF_SET_MAGIC;
     cf_rec.version = CF_SET_VERSION;
     cf_rec.size = sizeof(cf_set_t);
     cf_rec.s = cs;
     cf_rec.check = cfs_fnv(&cf_rec.s, sizeof cf_rec.s);
-    if (st_save(CF_SET_OBJ, &cf_rec, sizeof cf_rec))
-        return 0;                             /* (st_save: 0 = written) */
+    if ((rc = st_put(CF_SET_OBJ, &cf_rec, sizeof cf_rec, how)) != 0)
+        return rc == 1 ? 0 : -1;
     cfs_saved = cf_rec.check;
+    cfs_tidy = 0;
     return 1;
 }
 
@@ -166,10 +189,11 @@ static int cfs_sounding(void)
     return 0;
 }
 
-/* every UI frame (main.c's main loop): a change, once it has rested and the unit is quiet, goes to flash */
+/* every UI frame (main.c's main loop): a change, once it has rested, goes to flash; a quiet moment tidies it */
 static void settings_poll(void)
 {
     uint32_t now = cu.now, h;
+    int quiet, rc;
     if (cr_safe || !cu.booted || cfs_restore_lock)
         return;
     if (cfs_sounding())
@@ -179,15 +203,30 @@ static void settings_poll(void)
         cfs_seen = h;
         cfs_changed_ms = now;
     }
-    if (h == cfs_saved || now - cfs_changed_ms < CF_SET_QUIET_MS || now - cfs_sound_ms < CF_SET_SILENT_MS ||
-        (cfs_retry_ms && (int32_t)(now - cfs_retry_ms) < 0))
+    if (cfs_retry_ms && (int32_t)(now - cfs_retry_ms) < 0)
+        return;                                   /* (a flash error, or the log full: once more a second later) */
+    cfs_retry_ms = 0;
+    quiet = now - cfs_changed_ms >= CF_SET_QUIET_MS && now - cfs_sound_ms >= CF_SET_SILENT_MS;
+    if (h == cfs_saved) {
+        if (!cfs_tidy && quiet) {
+            rc = st_tidy(CF_SET_OBJ);
+            cfs_tidy = rc == 0;
+            if (rc < 0)
+                cfs_retry_ms = now + 1000u;
+        }
         return;
-    cfs_retry_ms = cf_settings_write() ? 0u : now + 1000u;   /* (a flash error: once more a second later) */
+    }
+    if (now - cfs_changed_ms < CF_SET_QUICK_MS)
+        return;
+    if (!quiet && felucca_dbg.last_us * 20u > HALF_FRAMES * 1000000u / FS * 17u)
+        return;                                   /* (over 85 %: audio.c sheds voices; the write waits for room) */
+    if (cf_settings_write(quiet ? 0u : ST_NOERASE) <= 0)
+        cfs_retry_ms = now + 1000u;
 }
 
 /* main.c, after the power-on calibration: at once */
 static void settings_save(void)
 {
     if (!cr_safe && !cfs_restore_lock)
-        cf_settings_write();
+        cf_settings_write(0);
 }

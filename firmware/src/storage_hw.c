@@ -40,6 +40,18 @@ static int st_erase(uint32_t off)
     irq_restore(f);
     return rc;
 }
+#ifdef ST_LOG_OBJ
+/* a page program while the audio plays (storage.c ST_NOERASE: CoralFlower's settings) starts just after the audio ISR
+ * has rendered a half: its IRQs-off time (about 1 ms) then falls in the rest of that half, and the next half starts on
+ * time or a little late, well inside the 2.1 ms that audio.c's DMA forgives */
+static void st_after_render(void)
+{
+    uint32_t h = audio_halves, t = fm1_ms, i;
+    for (i = 0; audio_halves == h && fm1_ms - t < 5u && i < 4000000u; i++)
+        ;                                       /* (bounded twice: IRQs off would stop both counters) */
+}
+#define ST_PROG_SYNC() st_after_render()
+#endif
 static int st_prog(uint32_t off, const void *src, uint32_t n)
 {
     if (!FL_STORE_OK(off, n))                   /* only inside the storage areas */

@@ -5,7 +5,7 @@
  * requests fed to crb_handle as the main loop would, the replies taken at CRB_SEND.
  *   cc -std=gnu11 -O1 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/cf_backup_test tests/cf_backup_test.c -lm
  *   ./build/host/cf_backup_test
- * Checks: INFO (the version, the tags); LIST of the 14 objects; a sound, the settings, a loop and sequencer patterns
+ * Checks: INFO (the version, the tags); LIST of the 14 objects; a sound, the settings (the newest in their log), a loop and sequencer patterns
  * (a change not yet saved: LIST writes it) saved, then backed up whole (GET in 256-byte pieces, every CRC as LIST
  * says); the flash erased and everything restored (PUT): LIST and the bytes identical, the sound back in its list, the
  * patterns and song read in at the restart; refusals with nothing written: a CRC error, a settings record of another
@@ -211,8 +211,16 @@ int main(void)
 
     /* ---- content: a user sound, the settings, a loop ---- */
     CHECK(cf_snd_save(CF_PART_CHORD, 1, "BACKUP TEST") == 0, "a chord sound saved as new");
+    cs.bpm = 95;
+    CHECK(cf_settings_write(0) == 1, "the settings written");
+    cs.bpm = 96;
+    CHECK(cf_settings_write(ST_NOERASE) == 1, "a change written with no erase (the log)");
     cs.bpm = 97;
-    CHECK(cf_settings_write() == 1, "the settings written");
+    CHECK(cf_settings_write(ST_NOERASE) == 1, "another one");
+    {
+        st_hdr_t h;
+        CHECK(st_current(CF_SET_OBJ, &h) >= 0 && st_cur_e >= 2u, "the newest settings are in the log, not at its entry 0 (entry %u)", st_cur_e);
+    }
     make_loop(40, 1);
     sq_st.song.n = 3;                                /* patterns and a song, not saved yet (LIST writes them) */
     sq_st.song.pat[0] = 2, sq_st.song.pat[1] = 7, sq_st.song.pat[2] = 2;
@@ -259,7 +267,11 @@ int main(void)
     }
     {
         cf_rec_t r;
+        st_hdr_t h, h0;
         CHECK(st_load(CF_SET_OBJ, &r, sizeof r) > 0 && r.s.bpm == 97, "the restored settings hold the tempo 97");
+        CHECK(st_current(CF_SET_OBJ, &h) >= 0 && st_cur_e == 0u && st_read(st_sector(CF_SET_OBJ, h.slot), &h0, sizeof h0) == 0 &&
+              !memcmp(&h, &h0, sizeof h) && st_read(st_at, &r, sizeof r) == 0 && st_at == st_sector(CF_SET_OBJ, h.slot) + 256u &&
+              r.s.bpm == 97, "restored where 0.4.1 reads it: the header at the copy's start, the record at 256");
     }
     memset(&sq_st, 0, sizeof sq_st);                 /* the restart: the sequencer read in from flash */
     sq_load();

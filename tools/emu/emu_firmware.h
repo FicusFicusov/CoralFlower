@@ -92,6 +92,7 @@
 #define CF_FX_OWN 1                                   /* as coralflower.c: CoralFlower's effects chain (cf_fx.c) */
 #define FM6_PLAIN_NAMES 1                             /* as coralflower.c: "PAD", not "FM PAD" (eng_fm6.c) */
 #define CF_LOOP_STORE 1                               /* as coralflower.c: the looper's flash object */
+#define ST_LOG_OBJ (OBJ_PROJECT0 + 3u)                /* as coralflower.c: the settings' object keeps a log */
 #define CLN_TRIM 4096                                 /* as coralflower.c */
 static void cf_fx_chain(int32_t *l, int32_t *r, uint32_t n);
 #define FX_MIX_HOOK cf_fx_chain
