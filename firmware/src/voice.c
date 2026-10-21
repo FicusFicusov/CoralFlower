@@ -298,6 +298,10 @@ static voice_t *voice_alloc(track_t *t, uint32_t note, uint32_t vel)
             break;
         voice_kill(&vp->v[k]);
     }
+    if (voice_tight)                                     /* (tight: a released voice first, the steal below) */
+        for (i = 0; i < np && best == np; i++)
+            if (t->v[i].active && !t->v[i].gate && t->v[i].stage != 4u)
+                goto steal;
     if (t->p[P_ALLOC] || t->p[P_GLIDE]) {
         for (i = 0; i < np; i++) {
             int32_t d = t->v[i].pitch_cur - (int32_t)note * 16;
@@ -321,6 +325,7 @@ static voice_t *voice_alloc(track_t *t, uint32_t note, uint32_t vel)
     }
     if (best < np)
         return &t->v[best];
+steal:
     for (i = 0; i < np; i++)                             /* the lowest held note is protected */
         if (t->v[i].gate && (low == np || t->v[i].note < t->v[low].note))
             low = i;

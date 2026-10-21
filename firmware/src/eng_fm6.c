@@ -587,6 +587,9 @@ static uint32_t fm6_alloc(track_t *t, uint32_t note)
     k = best = P->pt.rr % FM6_POLY;
     for (i = 0; i < FM6_POLY; i++) {                     /* (Dexed's 16; ChoralRoot may cap it: FM6_POLY) */
         int32_t sc = (fm6_playing(t, k) ? 0 : 4) + (t->v[k].gate ? 0 : 2) + (P->v[k].played && t->v[k].note == note);
+        if (voice_tight && fm6_playing(t, k) && !t->v[k].gate)
+            sc = 7 + (P->v[k].played && t->v[k].note == note);   /* (the core near its end: a release tail before a free
+                                                          * voice, voice.c voice_tight) */
         if (sc > bs || (sc == bs && t->v[k].age < t->v[best].age)) {
             best = k;
             bs = sc;

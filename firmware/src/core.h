@@ -351,6 +351,12 @@ typedef struct {                 /* an engine (engines.c ENGINES[]; the eng_*.c 
      * rings). voice.c voice_victim gives up the quietest hit */
     int32_t (*level)(struct track *t, const voice_t *v);
 } engine_t;
+/* the core near its end (audio.c: the last half rendered in over 70 % of its time; 0 off the device): a new note takes
+ * a released voice of its part before a free one (voice.c voice_alloc, eng_fm6.c fm6_alloc), so the voices sounding
+ * stop growing (each release tail still rendered is a voice's cost). Without it, chords whose tails overlapped reached
+ * the overload guard, which silences held notes down to the lowest: "сначала играются по одной ноте" on 6-operator FM,
+ * the owner, 2026-10-21 */
+static uint8_t voice_tight;
 /* voice_start: what the voice it starts did just before (0 free, 1 released, 2 its key down: a steal or a move);
  * engine_t.note_on may read it */
 static uint8_t voice_was;

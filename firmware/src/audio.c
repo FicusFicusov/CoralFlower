@@ -263,6 +263,7 @@ void fm1_alnk0_irq(void)                       /* via isr_alnk0 (hal/fm1_isr.S) 
         }
         felucca_dbg.halves++;
         felucca_dbg.last_us = us;
+        voice_tight = (uint8_t)(us * 10u > (HALF_FRAMES * 1000000u / FS) * 7u);   /* (over 70 %: voice.c) */
         if (us > felucca_dbg.max_us)
             felucca_dbg.max_us = us;
         felucca_dbg.cpu_q8 = song.cpu_q8;
