@@ -44,6 +44,12 @@ static struct {
     cf_chord_t cm;               /* a pattern that follows the key: its steps' keys pressed again here (sq_resolve) */
     uint8_t ckey, lkey;          /* the chord, the layer sounding: its root key, 0xFF (the keys' lights) */
     uint16_t cbtns, lbtns;       /* .. its chord buttons */
+    uint8_t dn, dnote[6], droot, dsingle, dser;   /* the CHORDS track's chord sounding, its arpeggio's too, for HOME's
+                                  * flower and name (0.5, the owner: "то, что играется в секвенсоре я бы хотел, чтобы
+                                  * на главной отображалось на цветочке"): notes, root, single notes, + 1 a chord */
+    uint16_t dmask;              /* .. its pitch classes over the root */
+    uint8_t gn, gnote[6], gbn, gbass[2];   /* the last chord and bass struck (GLO > Play's Always glides from them) */
+    uint32_t gms, gbms;          /* .. when they were let go (cf_now_ms) */
     uint8_t next;                /* the pattern that comes in when this one ends (SQ_NPAT + k: the song from place k),
                                   * 0xFF none */
     uint8_t rec;                 /* a take: its track, 0xFF none */
@@ -126,6 +132,8 @@ static void sqp_off(uint32_t part, uint32_t note)
 static void sqp_chord_off(void)
 {
     uint32_t i, n = sqp.n;
+    if (n)
+        sqp.gms = cf_now_ms;                     /* (Always glides from it a few seconds after) */
     sqp.n = 0;                                   /* (first: sqp_holds no longer counts them) */
     sqp.ckey = 0xFF;
     sqp.cbtns = 0;
@@ -144,6 +152,8 @@ static void sqp_layer_off(void)
 static void sqp_bass_off(void)
 {
     uint32_t i, n = sqp.nb;
+    if (n)
+        sqp.gbms = cf_now_ms;
     sqp.nb = 0;
     for (i = 0; i < n; i++)
         sqp_off(1, sqp.bass[i]);
@@ -151,18 +161,111 @@ static void sqp_bass_off(void)
 
 static uint32_t sqp_bar_ticks(void) { return (uint32_t)cfm.beats * SQ_PPQN; }
 
-static void sqp_bass_on(const uint8_t *b, uint32_t n, uint32_t left)
+/* the chords' Glide on the sequencer (0.5, the owner: "glide работает как обычно, но влияет на аккорды из секвенсора
+ * ещё"): the chord sound's own (cf_play.c cfp_glide_g), in control blocks; 0: none (no Glide, or the keys sound on the
+ * chords' part: theirs glide) */
+static uint32_t sqp_glide_ticks(void)
 {
-    uint32_t i;
-    sqp_bass_off();
-    cfp_bass_mono();                             /* (one voice: a new note cuts the old one's tail) */
-    for (i = 0; i < n && i < 2u; i++) {
-        sqp.bass[i] = b[i];
-        if (!cfp_holds(1, b[i]))
-            cfp_on(1, b[i], cfp_cfg.vel);
+    int32_t g = trk[0].p[P_GLIDE];
+    if (g <= 0 || (cfp.n && cfp_cp == 0u))
+        return 0;
+    g = g > 127 ? 127 : g;
+    return 1u + (uint32_t)(g * g) / 8u;
+}
+
+/* the bass: ticks, the chords' Glide when it is the chords' own bass ("Басс по-умолчанию подвязывается"); a BASS
+ * track's own notes come with 0 ("Если бас прописан отдельно от аккордов, то не подвязывается") */
+static void sqp_bass_on(const uint8_t *b, uint32_t n, uint32_t left, uint32_t ticks)
+{
+    uint32_t i, on = sqp.nb, m = n < 2u ? n : 2u;
+    uint8_t from[2];
+    int legato = ticks && on && m, always = ticks && !on && m && cfp_cfg.glide_always && sqp.gbn &&
+                 cf_now_ms - sqp.gbms < 4000u;
+    for (i = 0; i < 2u; i++)
+        from[i] = legato ? sqp.bass[i < on ? i : 0u] : sqp.gbass[i < sqp.gbn ? i : 0u];
+    if (legato) {                                /* the bass voices move to the new notes, at the Glide time */
+        sqp.nb = 0;
+        for (i = m; i < on; i++)
+            sqp_off(1, sqp.bass[i]);
+        for (i = 0; i < m; i++) {
+            if (i < on)
+                cfp_move(1, from[i], b[i], ticks);
+            else
+                cfp_on_from(1, b[i], cfp_cfg.vel, from[0], ticks);
+            sqp.bass[i] = b[i];
+        }
+    } else {
+        sqp_bass_off();
+        cfp_bass_mono();                         /* (one voice: a new note cuts the old one's tail) */
+        for (i = 0; i < m; i++) {
+            sqp.bass[i] = b[i];
+            if (cfp_holds(1, b[i]))
+                continue;
+            if (always)                          /* (Always: out of the last bass, a few seconds after it) */
+                cfp_on_from(1, b[i], cfp_cfg.vel, from[i], ticks);
+            else
+                cfp_on(1, b[i], cfp_cfg.vel);
+        }
     }
-    sqp.nb = (uint8_t)(n < 2u ? n : 2u);
+    sqp.nb = (uint8_t)m;
+    sqp.gbn = (uint8_t)m;
+    for (i = 0; i < m; i++)
+        sqp.gbass[i] = b[i];
     sqp.left[1] = left;
+}
+
+/* a CHORDS step's chord with the Glide: legato (the last still sounds): its voices move to the new notes; Always
+ * (GLO > Play, the last let go a few seconds before): the new notes start out of the last chord's. Paired as the keys'
+ * (cf_play.c cf_match) */
+static void sqp_chord_glide(const sq_ev_t *e, uint32_t ticks, int legato)
+{
+    uint8_t old[6], pi[24], qj[24], up[6] = {0}, uq[6] = {0};
+    uint32_t n = legato ? sqp.n : sqp.gn, m = e->n < 6u ? e->n : 6u, i;
+    int k, x;
+    for (i = 0; i < n; i++)
+        old[i] = legato ? sqp.note[i] : sqp.gnote[i];
+    k = cf_match(old, (int)n, e->note, (int)m, pi, qj);
+    if (legato)
+        sqp.n = 0;                               /* (first: sqp_holds no longer counts the old ones) */
+    for (x = 0; x < k; x++) {
+        int a = pi[x], b = qj[x];
+        if (!up[a] && !uq[b]) {                  /* the first pairing: legato, the old voice moves; Always, the new
+                                                  * note starts out of the old one */
+            up[a] = uq[b] = 1;
+            if (legato)
+                cfp_move(0, old[a], e->note[b], ticks);
+            else if (old[a] != e->note[b])
+                cfp_on_from(0, e->note[b], cfp_cfg.vel, old[a], ticks);
+            else
+                cfp_on(0, e->note[b], cfp_cfg.vel);
+        } else if (!uq[b]) {                     /* a split: a new voice out of this old note */
+            uq[b] = 1;
+            cfp_on_from(0, e->note[b], cfp_cfg.vel, old[a], ticks);
+        } else if (legato && !up[a]) {           /* a merge: the old voice slides into the note another reaches and
+                                                  * lets go on the way (its tail not at the old pitch: the keys' too) */
+            voice_t *v = trk_voice_of(&trk[0], old[a]);
+            up[a] = 1;
+            if (v) {
+                if (old[a] != e->note[b])
+                    trk_retune(&trk[0], v, e->note[b], ticks);
+                v->gate = 0;
+                v->stage = 3;
+                cfp_midi(0x80u, cfp_ch(0), old[a], 0);
+            } else {
+                sqp_off(0, old[a]);
+            }
+        }
+    }
+    if (legato)
+        for (i = 0; i < n; i++)
+            if (!up[i])
+                sqp_off(0, old[i]);              /* (one no new note took: it goes) */
+    for (i = 0; i < m; i++) {
+        if (!uq[i])
+            cfp_on(0, e->note[i], cfp_cfg.vel);
+        sqp.note[i] = e->note[i];
+    }
+    sqp.n = (uint8_t)m;
 }
 
 /* drum l in kit k: the DRUM engine's eight knobs (SQ_KITS) on the engine's lane that plays it (eng_drum.c
@@ -230,7 +333,7 @@ static uint32_t sqp_drum_tick(const sq_pat_t *p, uint32_t i)
  * shorter than the pattern plays its own bars round (sq_trk_bar) */
 static void sqp_fire(const sq_pat_t *p, uint32_t tk, uint32_t u)
 {
-    uint32_t i, b = sqp.sb[tk];
+    uint32_t i, b = sqp.sb[tk], gt = 0;
     if (tk == SQ_DRUMS) {
         uint32_t l, any = 0, h = u;
         for (l = 0; l < SQ_NLANE; l++)
@@ -275,7 +378,7 @@ static void sqp_fire(const sq_pat_t *p, uint32_t tk, uint32_t u)
         sqp.lit[tk] = (uint8_t)u;
         sqp.lit_t[tk] = cf_now_ms;
         if (tk == SQ_BASS) {
-            sqp_bass_on(e->note, 1, off);
+            sqp_bass_on(e->note, 1, off, 0);   /* (its own notes: no Glide of the chords') */
             return;
         }
         if (tk == SQ_LAYER && sqp_arp_trk(p, SQ_LAYER)) {   /* (ARP on the track: its arpeggiator plays it) */
@@ -321,23 +424,38 @@ static void sqp_fire(const sq_pat_t *p, uint32_t tk, uint32_t u)
             sqp.lbtns = e->btns;
             return;
         }
-        sqp_chord_off();                         /* (a chord strikes again whole: a sequencer's stab) */
-        if (sqp_arp_trk(p, SQ_CHORDS)) {         /* (ARP on the track: its arpeggiator plays the chord) */
-            sqp_arp_on(SQ_CHORDS, e);
+        gt = sqp_arp_trk(p, SQ_CHORDS) ? 0u : sqp_glide_ticks();
+        if (gt && (sqp.n || (cfp_cfg.glide_always && sqp.gn && cf_now_ms - sqp.gms < 4000u))) {
+            sqp_chord_glide(e, gt, sqp.n != 0);  /* (the Glide: out of the last chord, as the keys' do) */
         } else {
-            for (j = 0; j < e->n; j++) {
-                sqp.note[j] = e->note[j];
-                if (!cfp_holds(0, e->note[j]))
-                    cfp_on(0, e->note[j], cfp_cfg.vel);
+            sqp_chord_off();                     /* (a chord strikes again whole: a sequencer's stab) */
+            if (sqp_arp_trk(p, SQ_CHORDS)) {     /* (ARP on the track: its arpeggiator plays the chord) */
+                sqp_arp_on(SQ_CHORDS, e);
+            } else {
+                for (j = 0; j < e->n; j++) {
+                    sqp.note[j] = e->note[j];
+                    if (!cfp_holds(0, e->note[j]))
+                        cfp_on(0, e->note[j], cfp_cfg.vel);
+                }
+                sqp.n = e->n;
             }
-            sqp.n = e->n;
         }
+        sqp.gn = e->n < 6u ? e->n : 6u;
+        for (j = 0; j < sqp.gn; j++)
+            sqp.gnote[j] = e->note[j];
         sqp.left[0] = off;
         sqp.ckey = e->rootkey;
         sqp.cbtns = e->btns;
+        sqp.dn = e->n < 6u ? e->n : 6u;          /* (HOME shows it: cf_ui.c cf_feed_plant) */
+        for (j = 0; j < sqp.dn; j++)
+            sqp.dnote[j] = e->note[j];
+        sqp.droot = e->root;
+        sqp.dmask = e->mask;
+        sqp.dsingle = !e->btns;
+        sqp.dser++;
         if (!sq_own(p, SQ_BASS) && e->nb && !((p->mute >> SQ_BASS) & 1u))   /* no bass steps: the chord's
                                                   * own bass (BASS muted: none; it sounded for a tick) */
-            sqp_bass_on(e->bass, e->nb, off);
+            sqp_bass_on(e->bass, e->nb, off, gt);   /* (the chords' own bass: with their Glide) */
         return;
     }
 }
@@ -346,10 +464,14 @@ static void sqp_fire(const sq_pat_t *p, uint32_t tk, uint32_t u)
 static void sqp_now(void)
 {
     const sq_pat_t *p = &sq_st.pat[sqp.pat % SQ_NPAT];
-    uint32_t tk;
-    if (sqp.n && !sqp.left[0])
+    uint32_t tk, gl = sqp_glide_ticks();
+    /* with the Glide a chord (and the bass made of it) that ends in this tick goes at its end, after what begins in
+     * it, so a chord that meets the next slides into it, as the keys' held chords do (the LAYER's legato, below) */
+    if (sqp.n && !sqp.left[0] && !gl)
         sqp_chord_off();
-    if (sqp.nb && !sqp.left[1])
+    if (!sqp.left[0])
+        sqp.dn = 0;                              /* (its chord over, an arpeggio's too: HOME's flower lets go) */
+    if (sqp.nb && !sqp.left[1] && !(gl && !sq_own(p, SQ_BASS)))
         sqp_bass_off();
     if (!sqp.left[0])
         sqp_arp_off(SQ_CHORDS);                  /* (its chord over: the arpeggio ends with it) */
@@ -374,6 +496,10 @@ static void sqp_now(void)
     if (sq_empty(p)) {
         if (sqp.ln && !sqp.left[2])
             sqp_layer_off();
+        if (sqp.n && !sqp.left[0])
+            sqp_chord_off();
+        if (sqp.nb && !sqp.left[1])
+            sqp_bass_off();
         return;
     }
     while (sqp.nu < SQ_U && sqp.t >= sqp.nu * sqp_bar_ticks() / SQ_U) {
@@ -389,6 +515,10 @@ static void sqp_now(void)
     }
     if (sqp.ln && !sqp.left[2])                  /* (a mono or legato LAYER whose note ended and none began) */
         sqp_layer_off();
+    if (sqp.n && !sqp.left[0])                   /* (the Glide: a chord that ended and none began) */
+        sqp_chord_off();
+    if (sqp.nb && !sqp.left[1])
+        sqp_bass_off();
 }
 
 /* the next bar: the pattern's next, or the song's next pattern (an empty one passed over) */
@@ -574,6 +704,7 @@ static void sqp_begin(uint32_t pat, uint32_t slot, int cin)
         sqp.lit[i] = 0xFFu;
     sqp.ckey = sqp.lkey = 0xFF;
     sqp.cbtns = sqp.lbtns = 0;
+    sqp.dn = 0;
     sqp.on = 1;
     cfm_restart();
     cfm.running = 1;

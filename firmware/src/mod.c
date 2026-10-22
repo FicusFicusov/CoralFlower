@@ -56,7 +56,7 @@ static struct {                  /* a part's matrix in its block (mix_part) */
     int8_t vamt[NMSLOT];
     uint8_t kid[NMSLOT];         /* per-block: the parameter, its stored value */
     int16_t keep[NMSLOT];
-} mod_tab[NPART];                  /* per part: ChoralRoot's core 1 renders part 1 while core 0 renders part 0
+} mod_tab[NPART + CF_NTAIL];                  /* per part: ChoralRoot's core 1 renders part 1 while core 0 renders part 0
                                   * (docs/DUALCORE.md); one part at a time otherwise, as before */
 #define MODP(t) mod_tab[(t) - trk]
 

@@ -44,6 +44,9 @@
 #define DRUM_LANE_KNOBS 1          /* as coralflower.c: each drum its own kit */
 #define ENG_STATE_NPART 3u
 #define VA_NPART 3u
+#define CF_NTAIL 1u                /* as coralflower.c: the tail */
+#define TRK_GLIDE(t) ((t) == &trk[2] ? (t)->p[P_GLIDE] : 0)   /* voice.c: only the LAYER's sound glides itself; the
+                                    * chords glide by their player (cf_play.c), the bass with them */
 #ifndef MIX_NPART
 #define MIX_NPART 4u
 #endif

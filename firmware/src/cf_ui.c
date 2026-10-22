@@ -18,6 +18,7 @@ static void cf_message(const char *s);
 static void cf_pop(uint32_t kind, uint32_t ms);
 static int cf_editing_part(void);
 static void cf_edited(uint32_t part);
+static void cf_glide_migrate(void);
 static void ui_snd_heard(uint32_t part);
 static void cf_save_open(void);
 static void cf_save_name_init(void);
@@ -32,7 +33,6 @@ static void cf_send_config(void)                 /* the chord settings -> the au
 {
     fm1_irq_off();
     cfc_shadow = cs.chord;
-    cfp_cfg.glide_ms = cs.glide_ms;
     cfp_cfg.glide_always = cs.glide_always;
     cfp_cfg.vel = cs.vel;
     cfp_cfg.bass_on = cs.bass_on;
@@ -180,12 +180,12 @@ static void ui_knob_info(int k, cf_knob_t *o)
             o->dis = cs.chord.quantize == CF_Q_OFF;
             break;
         default:
-            kfmt(o->name, 12, "GLIDE");
-            if (cs.glide_ms)
-                kint(o->val, cs.glide_ms, "ms");
+            kfmt(o->name, 12, "GLIDE");          /* (the chord sound's own, 0.5: cf_play.c cfp_glide_g) */
+            if (trk[CF_PART_CHORD].p[P_GLIDE] > 0)
+                kint(o->val, (int)cfe_glide_ms(trk[CF_PART_CHORD].p[P_GLIDE]), "ms");
             else
                 kfmt(o->val, 14, "Off");
-            o->bar = (int16_t)(cs.glide_ms * 255 / 2000);
+            o->bar = (int16_t)(clampi(trk[CF_PART_CHORD].p[P_GLIDE], 0, 127) * 255 / 127);
             break;
         }
         break;
@@ -391,14 +391,23 @@ static void ui_knob_turn(int k, int d)
                                                   * owner, 2026-10-20, after a reboot: "key и scale заблокировались") */
             cf_message(CF_MSG_QOFF);
         else if (k == 3) {
-            int g = cs.glide_ms;          /* 0, then 5 ms steps to 50, 10 to 200, 25 to 500, 100 to 2000 */
-            int step = g < 50 ? 5 : g < 200 ? 10 : g < 500 ? 25 : 100;
-            if (d < 0 && g <= 50)
-                step = 5;
-            g = clampi(g + d * step, 0, 2000);
-            if (g > 0 && g < 5)
-                g = d > 0 ? 5 : 0;
-            cs.glide_ms = (uint16_t)g;
+            /* GLIDE: the chord sound's (0.5, the owner: "Если переключается инструмент, глайд переключается на тот
+             * что был у другого инструмента"): an edit of the sound, kept as the others are (a pattern's own sound:
+             * in the pattern; SAVE) */
+            /* steps of about a quarter more each: Off, 6, 13, 23, 33, 44, 57, 71, 87, 105, 131, 160, 192, 236, 285,
+             * 349, 420, 510, 625, 768, 944, 1158, 1463 ms (voice.c's TIME: 1 + g^2 / 8 control blocks) */
+            static const uint8_t GS[] = {0, 8, 12, 16, 19, 22, 25, 28, 31, 34, 38, 42, 46, 51, 56, 62, 68, 75, 83, 92,
+                                         102, 113, 127};
+            int g = trk[CF_PART_CHORD].p[P_GLIDE], i = 0;
+            while (i + 1 < (int)NELEM(GS) && GS[i + 1] <= g)
+                i++;
+            if (d < 0 && GS[i] < g)
+                i++;                             /* (a value between two steps: down goes to the lower) */
+            g = GS[clampi(i + d, 0, (int)NELEM(GS) - 1)];
+            fm1_irq_off();
+            trk[CF_PART_CHORD].p[P_GLIDE] = (int16_t)g;
+            fm1_irq_on();
+            cf_edited(CF_PART_CHORD);
         }
         cu_spell_update();
         cf_send_config();
@@ -1258,6 +1267,7 @@ static void cf_ui_input(void)
     int32_t d;
     sq_home_poll();                              /* (a take from HOME ended: its bars, before its undo is kept) */
     sq_snd_poll();                               /* (the current pattern's sounds: 0.5) */
+    cf_glide_migrate();                          /* (the old GLIDE into HOME's sound, once) */
     sq_undo_poll();                              /* (before the input: the state an edit starts from) */
     cf_ui_pump();
     cf_save_poll();
@@ -1556,21 +1566,59 @@ static void cf_leds(void)
     }
 }
 
+/* the GLIDE of 0.4.x / 0.5-rc1, one setting for every sound: HOME's chord sound takes it, as an edit of it, the
+ * first time it is the one playing (not a pattern's own: 0.5, each sound its own, cf_play.c cfp_glide_g); the setting
+ * goes to 0 for good. Every frame until then (cheap) */
+static void cf_glide_migrate(void)
+{
+    uint32_t want, g = 0;
+    if (!cs.glide_ms || cfk_own[CF_PART_CHORD] != 0u || cf_stage[CF_PART_CHORD].ready)
+        return;
+    want = (uint32_t)cs.glide_ms * FS / (1000u * CTL);
+    while (g < 127u && 1u + g * g / 8u < want)
+        g++;
+    if (!trk[CF_PART_CHORD].p[P_GLIDE] && g) {
+        fm1_irq_off();
+        trk[CF_PART_CHORD].p[P_GLIDE] = (int16_t)g;
+        fm1_irq_on();
+        cf_edited(CF_PART_CHORD);
+    }
+    cs.glide_ms = 0;
+}
+
 /* ------------------------------------------------------------ the plant --- */
 static uint32_t cu_last_serial;
-static uint8_t cu_last_onset, cu_last_arp;
+static uint8_t cu_last_onset, cu_last_arp, cu_last_src;
+/* a sequencer chord's flower quality from its pitch classes over the root (the keys' come from their type) */
+static uint8_t cf_fl_quality(uint32_t mask, int single)
+{
+    if (single)
+        return FL_Q_SINGLE;
+    if (mask & 1u << 4)
+        return (mask & 1u << 8) && !(mask & 1u << 7) ? FL_Q_AUG : FL_Q_MAJOR;
+    if (mask & 1u << 3)
+        return (mask & 1u << 6) && !(mask & 1u << 7) ? FL_Q_DIM : FL_Q_MINOR;
+    return mask & 1u << 5 ? FL_Q_SUS4 : mask & 1u << 2 ? FL_Q_SUS2 : FL_Q_MAJOR;
+}
 static void cf_feed_plant(uint32_t dt)
 {
     const cf_chord_out_t *o = &cf_sn.out;
-    uint32_t i, lvl = 0;
+    uint32_t i, lvl = 0, src, ser;
     /* the Top algorithms grow a plant, the Side ones a coral coloured by the key */
     flora_set_species(&flo, cs.chord.algo >= CF_ALG_SIDE ? FL_SP_CORAL : FL_SP_PLANT);
     flora_set_key(&flo, cs.chord.tonic);
     flo.backdrop = cs.backdrop;
-    if (o->serial != cu_last_serial) {
+    /* what the flower shows: the keys' chord while they sound, else the sequencer's CHORDS track's while it plays,
+     * as if played by hand (0.5, the owner: "то, что играется в секвенсоре я бы хотел, чтобы на главной
+     * отображалось на цветочке"), else nothing */
+    src = o->sounding && o->n ? 1u : cf_sn.sq_on && cf_sn.sq_dn ? 2u : 0u;
+    ser = src == 2u ? cf_sn.sq_dser : o->serial;
+    if (src != cu_last_src || ser != cu_last_serial) {
         fl_chord_t c;
-        cu_last_serial = o->serial;
-        if (o->sounding && o->n) {
+        int strike = src == 2u && (ser != cu_last_serial || cu_last_src != 2u);
+        cu_last_src = (uint8_t)src;
+        cu_last_serial = ser;
+        if (src == 1u) {
             static const uint8_t QT[CF_NTYPES] = {FL_Q_SINGLE, FL_Q_MAJOR, FL_Q_MINOR, FL_Q_DIM, FL_Q_AUG,
                                                    FL_Q_SUS2, FL_Q_SUS4, FL_Q_MAJOR};
             c.n = (uint8_t)(o->n > 8 ? 8 : o->n);
@@ -1580,6 +1628,17 @@ static void cf_feed_plant(uint32_t dt)
             c.quality = o->single ? FL_Q_SINGLE : QT[o->type < CF_NTYPES ? o->type : 1];
             c.bass = (int8_t)(cf_sn.nb ? cf_sn.bass[cf_sn.nb - 1] : -1);
             flora_set_chord(&flo, &c);
+        } else if (src == 2u) {
+            c.n = cf_sn.sq_dn;
+            for (i = 0; i < c.n; i++)
+                c.note[i] = cf_sn.sq_dnote[i];
+            c.root = (uint8_t)(cf_sn.sq_droot % 12u);
+            c.quality = cf_fl_quality(cf_sn.sq_dmask, cf_sn.sq_dsingle);
+            c.bass = (int8_t)(cf_sn.sq_bn ? cf_sn.sq_bass[cf_sn.sq_bn - 1] : -1);
+            flora_set_chord(&flo, &c);
+            if (strike)                          /* (each chord the sequencer strikes sparkles, as the keys' onset) */
+                for (i = 0; i < c.n; i++)
+                    flora_note_on(&flo, c.note[i], cs.vel);
         } else {
             c.n = 0;
             flora_set_chord(&flo, &c);
@@ -1664,6 +1723,7 @@ static void cf_ui_init(void)
     sq_home_poll();                              /* (the pattern PLAY plays, if none was kept) */
     sq_snd_force = 1;
     sq_snd_poll();                               /* (.. its own sounds, every sound's tweak on it: 0.5) */
+    cf_glide_migrate();
     cu.env_tgt = cs.env_link ? 0u : 1u;
     cu.arp_on = cs.arp_keep;                     /* (the arpeggiator as it was at the power-off: cf_settings.c) */
     if (cs.env_link)

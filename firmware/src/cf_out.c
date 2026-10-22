@@ -633,6 +633,9 @@ typedef struct {
     uint32_t sq_cin;             /* .. count-in ticks left */
     uint8_t sq_ckey, sq_lkey;    /* .. the chord, the layer sounding: its root key (0xFF), its buttons */
     uint16_t sq_cbtns, sq_lbtns;
+    uint8_t sq_dn, sq_dnote[6], sq_droot, sq_dsingle, sq_dser, sq_bn, sq_bass[2];   /* .. the CHORDS track's chord
+                                  * for HOME (cf_seqp.c sqp.dn ..), the bass sounding */
+    uint16_t sq_dmask;
 } cf_sn_t;
 static cf_sn_t cf_sn;
 
@@ -685,5 +688,15 @@ static void cf_snapshot(void)
     cf_sn.sq_cbtns = sqp.on && sqp.n ? sqp.cbtns : 0u;
     cf_sn.sq_lkey = sqp.on && sqp.ln ? sqp.lkey : 0xFFu;
     cf_sn.sq_lbtns = sqp.on && sqp.ln ? sqp.lbtns : 0u;
+    cf_sn.sq_dn = sqp.on ? sqp.dn : 0u;
+    for (i = 0; i < 6u; i++)
+        cf_sn.sq_dnote[i] = sqp.dnote[i];
+    cf_sn.sq_droot = sqp.droot;
+    cf_sn.sq_dmask = sqp.dmask;
+    cf_sn.sq_dsingle = sqp.dsingle;
+    cf_sn.sq_dser = sqp.dser;
+    cf_sn.sq_bn = sqp.on ? sqp.nb : 0u;
+    cf_sn.sq_bass[0] = sqp.bass[0];
+    cf_sn.sq_bass[1] = sqp.bass[1];
     fm1_irq_on();
 }

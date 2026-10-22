@@ -45,7 +45,7 @@ static int sqp_holds(uint32_t part, uint32_t note);   /* (cf_seqp.c: a note the 
 
 enum { CF_NI_KEYS = 0, CF_NI_ROOTS, CF_NI_DIRECT, CF_NI_N };   /* NOTES IN (0.5): the FM-1's keys, roots, as before */
 typedef struct {
-    uint16_t glide_ms;          /* 0 = Off */
+    uint16_t glide_ms;          /* (unused since 0.5: the chord sound's own P_GLIDE, cfp_glide_g) */
     uint8_t glide_always;       /* 1 Always: a chord after a release glides from the last one; 0 Legato: only held */
     uint8_t vel;                /* the keys have no velocity: this one */
     uint8_t bass_on;
@@ -96,9 +96,24 @@ static struct {
     uint32_t sms;                                    /* .. while the slide runs), and when it began (cf_now_ms) */
 } cfp;
 
+/* the Glide (0.5, the owner: "glide работает как обычно, но влияет на аккорды из секвенсора ещё. Если переключается
+ * инструмент, глайд переключается на тот что был у другого инструмента. Басс по-умолчанию подвязывается, леер нет"):
+ * the chord sound's own, its P_GLIDE (HOME K4, voice.c glide_set's TIME: 1 + g^2 / 8 control blocks), so it comes and
+ * goes with the sound (a pattern's own, PRESETS, a tweak, SAVE); the bass the keys play follows it. Keys on the LAYER:
+ * the LAYER's sound glides by itself (voice.c TRK_GLIDE), none here */
+static uint32_t cfp_glide_g(void)
+{
+    int32_t g = trk[0].p[P_GLIDE];
+    return cfp_cp == 2u || g <= 0 ? 0u : g > 127 ? 127u : (uint32_t)g;
+}
 static uint32_t cfp_ticks(void)                      /* Glide in control blocks (CTL samples) */
 {
-    return (uint32_t)cfp_cfg.glide_ms * FS / (1000u * CTL);
+    uint32_t g = cfp_glide_g();
+    return g ? 1u + g * g / 8u : 0u;
+}
+static uint32_t cfp_glide_ms(void)
+{
+    return cfp_ticks() * CTL * 1000u / FS;
 }
 
 /* a part's MIDI out channel: the chord's, the bass's, the sequencer's LAYER's and DRUMS' (GLO > Channels; the
@@ -207,7 +222,7 @@ static void cfp_change(uint32_t part, uint8_t *old, uint8_t *pn, const uint8_t *
         for (i = 0; i < n; i++)
             if (!has(nw, m, old[i])) {
                 cfp_off(part, old[i]);
-                if (old[i] == cfp.sfrom && cf_now_ms - cfp.sms < cfp_cfg.glide_ms)
+                if (old[i] == cfp.sfrom && cf_now_ms - cfp.sms < cfp_glide_ms())
                     cfp_fade_note(part, old[i]);     /* (the note a slide is leaving: its tail at the old pitch hid the
                                                       * slide; one of two held notes let go later rings out) */
             }
@@ -429,9 +444,9 @@ static void cfp_sync(int how)
     int mb = cfp_cp ? 0 : cfp_bo ? cfp_bass_alone(nb) : cfp_bass_notes(nb);   /* (the LAYER: no bass) */
     /* RETRIG Off: a chord changed while the last one still sounds under held keys (another chord button, another
      * root) moves its voices there with no new attack, at the Glide time (0: at once) */
-    int glide = (cfp_cfg.glide_ms || cfp_cfg.retrig != CF_RT_STRIKE) && cfp.n && m;
+    int glide = (cfp_glide_g() || cfp_cfg.retrig != CF_RT_STRIKE) && cfp.n && m;
     /* Always: a chord struck after a release glides from the last one, if that was within a few seconds */
-    int always = cfp_cfg.glide_ms && cfp_cfg.glide_always && !cfp.n && m && cfp.nl &&
+    int always = cfp_glide_g() && cfp_cfg.glide_always && !cfp.n && m && cfp.nl &&
                  (uint32_t)(cf_now_ms - cfp.last_ms) < 4000u;
     /* RETRIG Chord: a chord changed while one sounds strikes all its notes again, the shared ones too (the owner,
      * 2026-10-15: the whole chord, not just the tones that change), each sliding from the last chord's at the Glide time */
@@ -440,7 +455,7 @@ static void cfp_sync(int how)
     /* single notes (no chord button, or Off) with a Glide time: a new note slides from the last one struck, while one
      * is held (Legato) or a few seconds after (Always); the held ones stay (the owner, 2026-10-19: they glided not at
      * all, the chords only) */
-    int sglide = o->single && cfp_cfg.glide_ms && m && cfp.slast &&
+    int sglide = o->single && cfp_glide_g() && m && cfp.slast &&
                  (cfp.n || (cfp_cfg.glide_always && (uint32_t)(cf_now_ms - cfp.last_ms) < 4000u));
     /* the voices are moved only on a polyphonic sound: a mono, legato or unison one (the LAYER's Glide page) keeps its
      * notes in voice.c's stack, which moving them went round: notes stuck (a review, 2026-10-19); it glides itself */

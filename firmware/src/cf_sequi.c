@@ -696,11 +696,15 @@ static void sq_copy_pattern(uint32_t from, uint32_t to)
 }
 /* hold EDIT, turn SELECT: the frame's chord moves with the frame; let go of EDIT and it lands there as a chord written
  * there would (what starts within it goes, what sounds into it is cut where it begins). One action, one undo; EDIT
- * let go without a turn changes nothing. CHORDS / BASS / LAYER, the frame shown */
+ * let go without a turn changes nothing. CHORDS / BASS / LAYER. The frame hidden after a take: EDIT shows it where it
+ * was; on an empty step the turn walks it to the next chord, the next turn carries that (the owner on 0.5-rc1:
+ * "сочетание edit и селект не работает во время воспроизведения": after a take the hidden frame took the press, and
+ * on an empty step the frame stood still) */
 static void sq_edit_press(void)
 {
-    if (squ.trk == SQ_DRUMS || squ.nofr || squ_rec_on())
+    if (squ.trk == SQ_DRUMS || squ_rec_on())
         return;
+    squ.nofr = 0;
     squ.edit_down = cu.now ? cu.now : 1u;
     squ.mv = 0;
 }
@@ -708,9 +712,19 @@ static void sq_carry_turn(int d)                  /* SELECT in a track: the fram
 {
     sq_pat_t *p = sq_cur();
     if (squ.edit_down && !squ.mv && !squ.nofr) {
-        int i = sq_at(p, squ.trk, squ.bar, squ.step);
-        if (i < 0)
-            return;                              /* (no chord in the frame: nothing to carry, the frame stays) */
+        int i = sq_at(p, squ.trk, squ.bar, squ.step), k;
+        if (i < 0 && (squ.sel_down || squ.oct_down))
+            return;                              /* (SEL's eraser or OCT+'s copy held as well: none of it) */
+        if (i < 0) {                             /* (no chord in the frame: a click takes it to the next chord that
+                                                  * way, round the pattern; none in the track: it stays) */
+            uint8_t b0 = squ.bar, s0 = squ.step;
+            for (k = 0; k < 2048; k++) {
+                sq_select(d < 0 ? -1 : 1);
+                if (sq_at(p, squ.trk, squ.bar, squ.step) >= 0 || (squ.bar == b0 && squ.step == s0))
+                    break;
+            }
+            return;
+        }
         sqh.busy = 0;                            /* (an action of its own: the undo puts it back) */
         sq_undo_poll();
         squ.mv = 1;

@@ -58,17 +58,17 @@ typedef struct {
 #define FM6_POLY NVOICE          /* engine_t.poly: Dexed's 16 voices (docs/FM6.md, Polyphony: the CPU at 16 measured) */
 #endif
 
-static uint8_t fm6_patch[NTRK][FP_SIZE + 1u];   /* the tracks' patches (main loop writes, then fm6_pgen) */
-static volatile uint8_t fm6_pgen[NTRK];          /* +1 after each write of fm6_patch[t] */
-static volatile uint8_t fm6_lgen[NTRK];          /* +1 when the write was a new voice (a load): the notes stop */
-static uint8_t fm6_slot[NTRK];                   /* the PTCH value last loaded (main loop); 0xFF = none */
-static uint8_t fm6_on[NTRK];                     /* the operator switches (bit k: the sixth first), all on at a load */
+static uint8_t fm6_patch[NSND][FP_SIZE + 1u];   /* the tracks' patches (main loop writes, then fm6_pgen) */
+static volatile uint8_t fm6_pgen[NSND];          /* +1 after each write of fm6_patch[t] */
+static volatile uint8_t fm6_lgen[NSND];          /* +1 when the write was a new voice (a load): the notes stop */
+static uint8_t fm6_slot[NSND];                   /* the PTCH value last loaded (main loop); 0xFF = none */
+static uint8_t fm6_on[NSND];                     /* the operator switches (bit k: the sixth first), all on at a load */
 static struct {                                  /* the patch through the macros: the audio ISR's copy */
     uint8_t p[FP_SIZE + 1u];
     uint8_t gen, ok;
     int16_t e[7];                                /* P_E0..P_E6 it was made with */
     int32_t dt[6];                               /* DTUN: per operator, Q24 log2 */
-} fm6_eff[NTRK];
+} fm6_eff[NSND];
 
 /* ------------------------------------------------------- patch formats --- */
 /* the highest value of each byte of the 155-byte voice */
@@ -256,7 +256,7 @@ static void fm6_put_patch(uint32_t tr, const uint8_t *v, int load)
 /* .. a load when its name or TRANSPOSE is another (a patch sent whole, an undo, a project), else an edit */
 static void fm6_set_patch(uint32_t tr, const uint8_t *v)
 {
-    const uint8_t *o = fm6_patch[tr % NTRK];
+    const uint8_t *o = fm6_patch[tr % NSND];
     fm6_put_patch(tr, v, memcmp(o + FP_NAME, v + FP_NAME, 10) || o[FP_TRNSP] != v[FP_TRNSP]);
 }
 
@@ -280,7 +280,7 @@ static void fm6_load_slot(uint32_t tr, uint32_t s)
     fm6_slot_get(s, pk);
     fm6_unpack(pk, v);
     fm6_put_patch(tr, v, 1);
-    fm6_slot[tr % NTRK] = (uint8_t)s;
+    fm6_slot[tr % NSND] = (uint8_t)s;
 }
 
 /* ChoralRoot: a user slot's patch (fm6_ustore.c): fm6_user_pending = the slot + 1 being loaded (upreset.c up_values),
@@ -363,7 +363,7 @@ static int fm6_eff_build(const track_t *t)
     uint32_t tr = (uint32_t)(t - trk), k, j, car, n = 0;
     const int16_t *e = &t->p[P_E0];
     int32_t meg, step;
-    if (tr >= NTRK)
+    if (tr >= NSND)
         return 0;
     if (fm6_eff[tr].ok && fm6_eff[tr].gen == fm6_pgen[tr]) {
         for (k = 0; k < 7u && fm6_eff[tr].e[k] == e[k]; k++)
@@ -441,7 +441,7 @@ typedef struct {                                         /* a part's (engines.c 
 static fm6_part_t *fm6_part(uint32_t part);             /* engines.c (0: a part without one, ENG_STATE_NPART: the
                                                          * engine's entries below leave it alone, it is silent) */
 #define FM6P(t) fm6_part((uint32_t)((t) - trk))
-#define FM6F(t) fm6_fn[(uint32_t)((t) - trk) % NTRK]   /* the track's function settings */
+#define FM6F(t) fm6_fn[(uint32_t)((t) - trk) % NSND]   /* the track's function settings */
 
 static void fm6_lfo_step(fm6_lfo_t *l, const uint8_t *ed)   /* one block of the LFO: Lfo::getsample, getdelay */
 {
@@ -543,12 +543,12 @@ static void fm6_ctl_block(track_t *t, const uint8_t *ed)
 
 /* ------------------------------------------------------------ the voice --- */
 static fm6_voice_t *fm6_state(const track_t *t, const voice_t *v) { return &FM6P(t)->v[v - t->v]; }
-static const uint8_t *fm6_ed(const track_t *t) { return fm6_eff[(uint32_t)(t - trk) % NTRK].p; }
+static const uint8_t *fm6_ed(const track_t *t) { return fm6_eff[(uint32_t)(t - trk) % NSND].p; }
 static uint32_t fm6_note(const track_t *t, const voice_t *v)   /* the note the DX7 rules see: + TRANSPOSE */
 {
     return (uint32_t)clamp((int32_t)v->note + fm6_ed(t)[FP_TRNSP] - 24, 0, 127);
 }
-static int fm6_op_on(const track_t *t, uint32_t k) { return (fm6_on[(uint32_t)(t - trk) % NTRK] >> k) & 1u; }
+static int fm6_op_on(const track_t *t, uint32_t k) { return (fm6_on[(uint32_t)(t - trk) % NSND] >> k) & 1u; }
 
 /* the operators' pitch, level and rate scaling for the voice's note and velocity (Dx7Note::init / update) */
 static void fm6_keyed(fm6_voice_t *s, const uint8_t *ed, uint32_t note)
@@ -857,7 +857,7 @@ static int fm6_done(track_t *t, voice_t *v) { return !FM6P(t) || fm6_state(t, v)
 static void fm6_control(track_t *t, voice_t *v, fm6_voice_t *s, const vmod_t *m)
 {
     fm6_part_t *P = FM6P(t);
-    uint32_t tr = (uint32_t)(t - trk) % NTRK, alg, k, dead = 1;
+    uint32_t tr = (uint32_t)(t - trk) % NSND, alg, k, dead = 1;
     const uint8_t *ed = fm6_ed(t);
     int32_t lv[6], lfo = P->lfo.val, dly = P->lfo.depth, pm, sens, pbase, amd, a1, a2, tune, fbv;
     /* MLVL and FLT: the modulators' level, 0.75 dB / 32 steps (microsteps, as the output levels), Q24 */
@@ -1021,7 +1021,7 @@ static void fm6_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const v
 static void fm6_sync(track_t *t, const voice_t *self)
 {
     fm6_part_t *P = FM6P(t);
-    uint32_t tr = (uint32_t)(t - trk) % NTRK, i, h = 2166136261u;
+    uint32_t tr = (uint32_t)(t - trk) % NSND, i, h = 2166136261u;
     const uint8_t *ed;
     int panic;
     if (!fm6_eff_build(t) && P->pt.hash && P->pt.on == fm6_on[tr] && P->pt.lgen == fm6_lgen[tr])

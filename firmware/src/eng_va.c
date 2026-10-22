@@ -26,6 +26,7 @@
 #ifndef VA_NPART
 #define VA_NPART 2u              /* parts with a VA patch (ChoralRoot: chord, bass; CoralFlower: and its LAYER) */
 #endif
+#define VA_NSLOT (VA_NPART + CF_NTAIL)   /* .. and the tail's (core.h CF_NTAIL: after the parts', va_tr) */
 #define VA_POLY 8                /* engine_t.poly (docs/VA.md: CPU) */
 #define VA_BLOB 110u             /* packed patch: 2 bytes magic / version, VA_NP values, zero padding */
 #define VA_MAGIC 0x56u           /* 'V' */
@@ -233,13 +234,13 @@ static va_rng_t va_range(uint32_t i)
 }
 
 /* the state lives in the pool (zero-initialised; per-voice side state as PHYS's phys_slot): RAM is the scarce one */
-static int8_t va_patch[VA_NPART][VA_NP] __attribute__((section(".pool")));   /* the parts' patches (main loop and
+static int8_t va_patch[VA_NSLOT][VA_NP] __attribute__((section(".pool")));   /* the parts' patches (main loop and
                                                                                * va_block write, the ISR reads) */
-static int16_t va_mlast[VA_NPART][8] __attribute__((section(".pool")));      /* P_E0..P_E7 as last put in the patch */
+static int16_t va_mlast[VA_NSLOT][8] __attribute__((section(".pool")));      /* P_E0..P_E7 as last put in the patch */
 static uint8_t va_user_pending;                  /* upreset.c up_values: a VA user slot + 1 is being loaded */
 static int (*va_store_read)(uint32_t k, uint8_t *blob);   /* va_store.c: slot k's blob, 0 = there is one */
-static int8_t va_pan_off[VA_NPART];              /* the matrix's PAN (fx.c mix_part adds it) */
-static int8_t va_rate_off[VA_NPART][4] __attribute__((section(".pool")));   /* the matrix's RATE1..4 (the latest note) */
+static int8_t va_pan_off[VA_NSLOT];              /* the matrix's PAN (fx.c mix_part adds it) */
+static int8_t va_rate_off[VA_NSLOT][4] __attribute__((section(".pool")));   /* the matrix's RATE1..4 (the latest note) */
 static struct {                                  /* per part: the LFOs */
     uint32_t ph[4], rnd[4];
     int16_t out[4];                              /* this block's value x DEPTH, Q15 bipolar */
@@ -249,7 +250,7 @@ static struct {                                  /* per part: the LFOs */
     uint32_t wrnd;                               /* VINYL's wow: a slow random walk (va_block) */
     int32_t wow, wowt;                           /* .. its value and its target, Q15 */
     uint16_t wown;                               /* .. blocks to the next target */
-} va_lfo[VA_NPART] __attribute__((section(".pool")));
+} va_lfo[VA_NSLOT] __attribute__((section(".pool")));
 typedef struct {
     uint32_t ph4;                                /* OSC 4 (OSC 1..3: voice_t.ph) */
     int32_t env[4];                              /* Q24 */
@@ -263,12 +264,16 @@ typedef struct {
     uint8_t stage[4];                            /* 0 off, 1 attack, 2 hold, 3 decay / sustain, 4 release */
     uint8_t live;
 } va_voice_t;
-static va_voice_t va_vs[VA_NPART][VA_POLY] __attribute__((section(".pool")));   /* (its cap: VA_POLY voices) */
+static va_voice_t va_vs[VA_NSLOT][VA_POLY] __attribute__((section(".pool")));   /* (its cap: VA_POLY voices) */
 
 static const uint8_t VA_MACRO[8] = {VA_CUT, VA_RES, VA_FENV, VA_DRIVE, VA_OMIX, VA_DETUNE, VA_ENV(0, VE_ATK),
                                     VA_ENV(0, VE_REL)};
 
-static uint32_t va_tr(const track_t *t) { return (uint32_t)(t - trk); }
+static uint32_t va_tr(const track_t *t)          /* the part's VA slot: the parts', then the tail's; VA_NSLOT: none */
+{
+    uint32_t p = (uint32_t)(t - trk);
+    return p < VA_NPART ? p : CF_NTAIL && p == NTRK ? VA_NPART : VA_NSLOT;
+}
 
 static void va_init_patch(int8_t *p)
 {
@@ -343,7 +348,7 @@ static int va_unpack(const uint8_t *b, int8_t *p)
 static void va_macros_out(track_t *t)
 {
     uint32_t tr = va_tr(t), k;
-    if (tr >= VA_NPART)
+    if (tr >= VA_NSLOT)
         return;
     for (k = 0; k < 8u; k++) {
         int16_t v = va_patch[tr][VA_MACRO[k]];
@@ -745,7 +750,7 @@ static void va_block(track_t *t)
 {
     uint32_t tr = va_tr(t), k;
     int8_t *p;
-    if (tr >= VA_NPART)
+    if (tr >= VA_NSLOT)
         return;
     p = va_patch[tr];
     for (k = 0; k < 8u; k++)                     /* a knob, the editor, the matrix, motion moved a macro */
@@ -787,7 +792,7 @@ static void va_block(track_t *t)
 static va_voice_t *va_voice(track_t *t, voice_t *v)
 {
     uint32_t tr = va_tr(t), i = (uint32_t)(v - t->v);
-    return tr < VA_NPART && i < VA_POLY ? &va_vs[tr][i] : 0;
+    return tr < VA_NSLOT && i < VA_POLY ? &va_vs[tr][i] : 0;
 }
 
 static void va_note_on(track_t *t, voice_t *v)
@@ -1332,7 +1337,7 @@ static void va_render_mono(track_t *t, voice_t *v, int32_t *out, uint32_t n, con
 static int32_t va_pan(const track_t *t, int32_t pan)
 {
     uint32_t tr = va_tr(t);
-    if (t->engine != ENGI_VA || tr >= VA_NPART || !va_pan_off[tr])
+    if (t->engine != ENGI_VA || tr >= VA_NSLOT || !va_pan_off[tr])
         return pan;
     return clamp(pan + va_pan_off[tr], -64, 63);
 }
@@ -1386,6 +1391,34 @@ static const eng_deep_t VA_DEEP = {
     .mod_dst = va_mod_dst,
 };
 
+
+/* the voices a patch may sound at once (engine_t.cap): VA_POLY for a light patch, fewer for a heavy one, so a player's
+ * release tails cannot take the core past its time (CoralFlower 0.5, the owner's "Только программа": the heaviest pads
+ * keep fewer voices in fast playing). A voice's cost, measured in the emulator (host instructions per block, rc2):
+ * ~2.5 % of the block, + ~0.35 an oscillator sounding, + ~0.4 more for a MORPH one, + ~1.3 for a second SVF (SPREAD, a
+ * filter between two types, USPREAD); AURORA ~7.2. In twentieths of a percent, over a budget of ~32 % a part */
+static uint32_t va_cap(const track_t *t)
+{
+    uint32_t tr = va_tr(t), k, c = 50u, on = 0;
+    const int8_t *p;
+    if (tr >= VA_NPART)
+        return VA_POLY;
+    p = va_patch[tr];
+    for (k = 0; k < 4u; k++)
+        on |= (uint32_t)(p[VA_OSC(k, VO_LEVEL)] > 0) << k;
+    if ((on & 2u) && p[VA_SYNC2])
+        on |= 1u;                                /* (OSC 1 drives OSC 2's sync, OSC 3 OSC 4's ring) */
+    if ((on & 8u) && p[VA_RING4])
+        on |= 4u;
+    for (k = 0; k < 4u; k++)
+        if ((on >> k) & 1u)
+            c += p[VA_OMODE0 + k] == VOM_MORPH ? 15u : 7u;
+    if (p[VA_FSPREAD] || (p[VA_FTYPE] & 31) || p[VA_USPREAD])
+        c += 26u;
+    k = 640u / c;
+    return k < 4u ? 4u : k > VA_POLY ? VA_POLY : k;
+}
+
 static const engine_t ENG_VA = {
     .name = "VA",
     .page_title = {"FILTER", "MACRO"},
@@ -1403,6 +1436,7 @@ static const engine_t ENG_VA = {
     .npresets = NELEM(VA_PRESETS),
     .knob = {P_E0, P_E1, P_E6, P_E7},
     .poly = VA_POLY,
+    .cap = va_cap,
     .keep = 0x03,                /* the filter */
     .note_on = va_note_on,
     .render = va_render_mono,

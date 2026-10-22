@@ -23,6 +23,11 @@
 #endif
 #define NPART 4                  /* synth parts: tracks 1..4 */
 #define NTRK NPART               /* tracks (the formats and the protocol count these): every track is a part */
+#ifndef CF_NTAIL
+#define CF_NTAIL 0u              /* tracks after the parts that only sound (CoralFlower 0.5: one, the tail, cf_sound.c:
+                                  * an outgoing sound rings out there); no format, protocol, MIDI or sequencer sees them */
+#endif
+#define NSND (NTRK + CF_NTAIL)   /* the tracks that render */
 #define NSTEP 64
 #define HALF_FRAMES 128          /* I2S half buffer: 2.9 ms at 44.1 kHz (a key waits 0..1 half, then plays 1 half later) */
 #ifndef FELUCCA_SLICE
@@ -478,7 +483,7 @@ typedef struct {
     int32_t batt_raw;            /* smoothed ADC ch3 (battery divider), 0 = not read yet */
 } song_t;
 
-static track_t trk[NTRK];        /* the instrument: four parts */
+static track_t trk[NSND];        /* the instrument: four parts (and the tail, CF_NTAIL) */
 static song_t song;
 #include "cr_cpu1.h"             /* the second core and the ISR's stage profile (cr_dbg) */
 #define TSEL (&trk[song.sel])    /* the selected track */

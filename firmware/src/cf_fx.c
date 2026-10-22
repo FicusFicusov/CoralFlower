@@ -648,7 +648,7 @@ static void cf_boot_mix(int32_t *l, int32_t *r, uint32_t n)
 static int cf_boot_yield(void)
 {
     if (!cfb.on)
-        return 0;
+        return voice_tail_yield();               /* (then the tail ringing out: CF_NTAIL, voice.c) */
     cfb.yield = 1;
     return 1;
 }

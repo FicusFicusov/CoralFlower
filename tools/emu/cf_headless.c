@@ -19,6 +19,8 @@
 
 extern void web_boot(void);
 extern void web_step(uint32_t n);
+extern void web_perf_reset(void);
+extern void web_perf_print(const char *label);
 extern void web_buttons(uint32_t m);
 extern void web_keys(uint32_t m);
 extern int web_midi_in(uint32_t pkt);           /* a USB-MIDI packet (a 1-byte message: 0x0F | status << 8) */
@@ -213,6 +215,11 @@ int main(int argc, char **argv)
         } else if (!strcmp(cmd, "shot")) {
             step(40);
             shot(dir, a);
+        } else if (!strcmp(cmd, "perf")) {         /* perf reset | perf LABEL: the audio blocks' cost since the reset */
+            if (!strcmp(a, "reset"))
+                web_perf_reset();
+            else
+                web_perf_print(a);
         } else if (!strcmp(cmd, "dump")) {
             uint32_t on = 0, c;
             web_dump();

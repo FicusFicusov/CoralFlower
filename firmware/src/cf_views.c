@@ -391,7 +391,10 @@ static void view_play(int x0)
     int xl = x0 + 20, xr = x0 + 196, mid = x0 + 104, gap = cs.glide_always ? 14 : 0, gl, i, x;
     int yb = VIEW_Y + 34, ye = VIEW_Y + 60, eh = 20, pk = eh * cs.vel / 127, sus = pk * 5 / 8;
     int a1 = mid - gap / 2, b0 = mid + gap / 2;
-    gl = cs.glide_ms ? 6 + (int)(cs.glide_ms > 1000u ? 1000u : cs.glide_ms) * 24 / 1000 : 0;
+    {
+        uint32_t gms = trk[CF_PART_CHORD].p[P_GLIDE] > 0 ? cfe_glide_ms(trk[CF_PART_CHORD].p[P_GLIDE]) : 0u;
+        gl = gms ? 6 + (int)(gms > 1000u ? 1000u : gms) * 24 / 1000 : 0;
+    }
     /* the roll: 2 px a semitone */
     for (i = 0; i < 3; i++) {
         int ya = yb - A[i] * 2, ybb = yb - B[i] * 2;

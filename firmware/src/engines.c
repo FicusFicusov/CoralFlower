@@ -83,7 +83,7 @@ static union {
 #if FELUCCA_CZ
     cz_part_t cz;                /* CZ-1's voices: six envelopes each, vibrato, noise */
 #endif
-} eng_state[ENG_STATE_NPART] __attribute__((section(".pool")));
+} eng_state[ENG_STATE_NPART + CF_NTAIL] __attribute__((section(".pool")));   /* (the tail's after the parts') */
 #if FELUCCA_PHYS
 static phys_slot_t *phys_slots(uint32_t part) { return part < ENG_STATE_NPART ? eng_state[part].phys : 0; }
 #endif
@@ -92,7 +92,10 @@ static drw_part_t *drw_of(const track_t *t)
     uint32_t part = (uint32_t)(t - trk);
     return part < ENG_STATE_NPART ? &eng_state[part].wheel : 0;
 }
-static fm6_part_t *fm6_part(uint32_t part) { return part < ENG_STATE_NPART ? &eng_state[part].fm6 : 0; }
+static fm6_part_t *fm6_part(uint32_t part)
+{
+    return part < ENG_STATE_NPART ? &eng_state[part].fm6 : CF_NTAIL && part == NTRK ? &eng_state[ENG_STATE_NPART].fm6 : 0;
+}
 #if FELUCCA_CZ
 static cz_part_t *cz_part(uint32_t part) { return part < ENG_STATE_NPART ? &eng_state[part].cz : 0; }
 /* CZ-1's envelope definitions of a part's tone (eng_cz.c cz_defs_t, 412 B a part): not in eng_state, where another

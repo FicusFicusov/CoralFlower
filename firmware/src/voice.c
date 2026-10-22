@@ -13,6 +13,10 @@
  * over one block (stage 4: the envelope goes to 0, the block's amplitude ramp
  * declicks it); one of the part's own is restarted in place, as before. Extra UNISON
  * voices only start when there is room. */
+#ifndef TRK_GLIDE
+#define TRK_GLIDE(t) ((t)->p[P_GLIDE])               /* a part's portamento (CoralFlower: the LAYER's alone; the chords'
+                                                      * glide is its player's, cf_play.c) */
+#endif
 static uint32_t vage;                                   /* voice ages: one clock for every part */
 static int32_t lfo_wave(track_t *t, uint32_t ph)
 {
@@ -90,7 +94,8 @@ static uint32_t voices_busy_of(const track_t *self)        /* budget units of th
                                                          * parts that share self's budget */
 {
     uint32_t p, i, n, u = 0, sp = (uint32_t)(self - trk);
-    for (p = 0; p < NPART; p++) {
+    for (p = 0; p < NPART; p++) {                       /* (not the tail's, CF_NTAIL: the core's load rules it, not the
+                                                         * budget: voice_tail_yield) */
         if (!VB_SAME(p, sp))
             continue;
         for (i = n = 0; i < NVOICE; i++)
@@ -247,11 +252,31 @@ static void vsq_drop(track_t *t, uint32_t note)            /* note 128: all */
     vsq[p].n = (uint8_t)k;
 }
 
+/* CoralFlower's tail (core.h CF_NTAIL, cf_sound.c): an outgoing sound ringing out goes first when the core is tight
+ * (the owner's "Только программа", 0.5): its oldest voice fades over a block. 1: one went */
+static int voice_tail_yield(void)
+{
+#if CF_NTAIL
+    track_t *t = &trk[NTRK];
+    uint32_t i, best = NVOICE;
+    for (i = 0; i < NVOICE; i++)
+        if (t->v[i].active && t->v[i].stage != 4u && (best == NVOICE || t->v[i].age < t->v[best].age))
+            best = i;
+    if (best < NVOICE) {
+        voice_kill(&t->v[best]);
+        return 1;
+    }
+#endif
+    return 0;
+}
+
 static voice_t *voice_alloc(track_t *t, uint32_t note, uint32_t vel)
 {
     const engine_t *e = ENGINES[t->engine];
     uint32_t i, np = trk_nvoice(t), best = np, low = np, nfree = 0;
     int32_t bd = 0x7FFFFFFF;
+    if (voice_tight)
+        voice_tail_yield();                             /* (a new note on a tight core: the tail's oldest goes) */
     if (voice_fade_steal) {                             /* already waiting for a fade: its velocity, once */
         uint32_t p = (uint32_t)(t - trk);
         for (i = 0; p < NPART && i < vsq[p].n; i++)
@@ -302,7 +327,7 @@ static voice_t *voice_alloc(track_t *t, uint32_t note, uint32_t vel)
         for (i = 0; i < np && best == np; i++)
             if (t->v[i].active && !t->v[i].gate && t->v[i].stage != 4u)
                 goto steal;
-    if (t->p[P_ALLOC] || t->p[P_GLIDE]) {
+    if (t->p[P_ALLOC] || TRK_GLIDE(t)) {
         for (i = 0; i < np; i++) {
             int32_t d = t->v[i].pitch_cur - (int32_t)note * 16;
             if (t->v[i].active)
@@ -497,7 +522,7 @@ static void trk_note_on(track_t *t, uint32_t note, uint32_t vel)
         if (!v)
             return;                                     /* (voice_fade_steal: it starts next block) */
         v->fine = 0;
-        voice_start(t, v, note, vel, t->p[P_GLIDE] != 0 && !ENGINES[t->engine]->oneshot);
+        voice_start(t, v, note, vel, TRK_GLIDE(t) != 0 && !ENGINES[t->engine]->oneshot);
         return;
     }
     {
@@ -512,9 +537,9 @@ static void trk_note_on(track_t *t, uint32_t note, uint32_t vel)
         if (sounding && want == t->mono_note)
             return;                                     /* LOW / HIGH priority: this key does not win */
         if (mode == V_MONO)                             /* MONO: always retrigger, glide when GLIDE is set */
-            mono_play(t, want, vel, 1, t->p[P_GLIDE] != 0 || t->slide_glide);
+            mono_play(t, want, vel, 1, TRK_GLIDE(t) != 0 || t->slide_glide);
         else                                            /* LEGATO / UNISON: glide only between held notes */
-            mono_play(t, want, vel, !sounding, sounding && (t->p[P_GLIDE] != 0 || t->slide_glide));
+            mono_play(t, want, vel, !sounding, sounding && (TRK_GLIDE(t) != 0 || t->slide_glide));
     }
 }
 
@@ -534,7 +559,7 @@ static void trk_note_off(track_t *t, uint32_t note)
         if (t->mono_note == note) {
             uint32_t next = mono_pick(t);
             if (next) {                                 /* fall back to a held note, legato */
-                mono_play(t, next, t->v[0].vel, 0, t->p[P_GLIDE] != 0);
+                mono_play(t, next, t->v[0].vel, 0, TRK_GLIDE(t) != 0);
             } else {
                 for (i = 0; i < nv; i++)
                     if (t->v[i].gate) {
@@ -729,7 +754,7 @@ static int32_t env_tick(track_t *t, voice_t *v)
  * also renders a stereo side into part_side: part_side_on = 1 when a voice added to it (fx.c mix_part plays the
  * part as mid - side / mid + side), else the part is mono as before */
 /* Channel bend is live performance state, outside projects/presets. Q8 semitones. */
-static int32_t midi_bend_q8[NTRK], midi_bend_target[NTRK];
+static int32_t midi_bend_q8[NSND], midi_bend_target[NSND];
 static int32_t part_side[CTL];
 static uint8_t part_side_on;
 /* side / side_on: the part's stereo side (part_side, or core 1's own: fx.c); lfo_pre: 0 = tick the LFO here, else the

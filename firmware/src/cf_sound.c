@@ -150,13 +150,15 @@ static uint32_t cf_snd_index(uint32_t part, uint32_t e, uint32_t pos)
 
 static void cf_part_voice(track_t *t, uint32_t part)
 {
-    /* the chords and the bass are polyphonic, without a glide of their own: the bass part for the octaver's second
-     * note (cf_play.c keeps the bass monophonic: a new bass note cuts the old one's release tail), HOME's GLIDE
-     * glides both. The LAYER keeps the sound's voice and glide (cf_edit.c's Glide page, saved with the sound) */
+    /* the chords and the bass are polyphonic: the bass part for the octaver's second note (cf_play.c keeps the bass
+     * monophonic: a new bass note cuts the old one's release tail). The chord sound keeps its glide, HOME's GLIDE
+     * (0.5: the sound's own, cf_play.c cfp_glide_g), which glides the bass with it; the bass sound has none. The
+     * LAYER keeps the sound's voice and glide (cf_edit.c's Glide page, saved with the sound) */
     if (part == CF_PART_LAYER)
         return;
     t->p[P_VOICE] = V_POLY;
-    t->p[P_GLIDE] = 0;
+    if (part == CF_PART_BASS)
+        t->p[P_GLIDE] = 0;                       /* (the chord sound's is HOME's GLIDE: cf_play.c cfp_glide_g) */
 }
 
 /* engine e's factory preset pi into part (the sound only, not the part's own parameters) */
@@ -370,7 +372,8 @@ static void cf_snd_build(uint32_t part, uint32_t e, uint32_t pos, cf_stage_t *s)
     }
     if (part != CF_PART_LAYER) {                 /* (cf_part_voice) */
         s->p[P_VOICE] = V_POLY;
-        s->p[P_GLIDE] = 0;
+        if (part == CF_PART_BASS)
+            s->p[P_GLIDE] = 0;
     }
     s->blen = 0;
     d = ENGINES[eng_idx(s->engine)]->deep;
@@ -442,6 +445,74 @@ static void cf_snd_meta(uint32_t e, uint32_t pos, cf_snd_t *m)
 
 /* the audio side, a pattern coming in (cf_seqp.c): each part's sound made ready for it goes on now. The part's notes
  * stop first, here, before the pattern's own first notes (a release asked of events_block would come after them) */
+#if CF_NTAIL
+/* THE TAIL (core.h CF_NTAIL, the owner 2026-10-21: "Дозвучивает всегда"; 2026-10-22: "Одна дорожка", chord > Layer >
+ * bass). At the bar line where a pattern's sound comes in (cf_stage_in, audio ISR), once the part's notes were let go:
+ * its voices, still ringing, move to trk[NTRK] with the sound they play (the track, its engine's state), and the part
+ * takes the new sound with none, so the old sound rings out as itself, any engine to any. One tail: while it rings
+ * with a part of a higher rank, a part changing at the same time lets its notes go as before; a part of the same or a
+ * higher rank takes it over (what still rang there stops). The shared voice budget leaves the tail out (it counts the
+ * VA voices twice an FM one's, though the two cost about the same: it would end every tail at once); the core's load
+ * rules it: a new note on a tight core (over 70 %) takes one of its voices, an overload sheds them first (voice.c
+ * voice_tail_yield, cf_fx.c SHED_FIRST). fx.c mixes it while it rings */
+static const uint8_t CF_TAIL_RANK[3] = {3u, 1u, 2u};   /* chord, bass, LAYER */
+static uint8_t cf_tail_part = 0xFFu;             /* whose sound rings there */
+static int cf_tail_rings(void)
+{
+    uint32_t i;
+    for (i = 0; i < NVOICE; i++)
+        if (trk[NTRK].v[i].active)
+            return 1;
+    return 0;
+}
+static void cf_tail_take(uint32_t part)
+{
+    track_t *s = &trk[part], *d = &trk[NTRK];
+    uint32_t i, any = 0;
+    if (part > 2u || s->xf_on || s->eng_req != s->engine)
+        return;                                  /* (mid engine switch: its notes wait in xp_note, none ring) */
+    for (i = 0; i < NVOICE; i++)
+        any |= s->v[i].active && s->v[i].stage != 4u;
+    if (!any || (cf_tail_rings() && cf_tail_part < 3u && CF_TAIL_RANK[cf_tail_part] > CF_TAIL_RANK[part]))
+        return;
+    if (s->engine == ENGI_FM6) {                 /* the engine's state of the part, into the tail's slot */
+        memcpy(&eng_state[ENG_STATE_NPART].fm6, &eng_state[part].fm6, sizeof eng_state[0].fm6);
+        memcpy(fm6_patch[NTRK], fm6_patch[part], sizeof fm6_patch[0]);
+        memcpy(&fm6_eff[NTRK], &fm6_eff[part], sizeof fm6_eff[0]);
+        memcpy(fm6_fn[NTRK], fm6_fn[part], sizeof fm6_fn[0]);
+        fm6_pgen[NTRK] = fm6_pgen[part];
+        fm6_lgen[NTRK] = fm6_lgen[part];
+        fm6_slot[NTRK] = fm6_slot[part];
+        fm6_on[NTRK] = fm6_on[part];
+    } else if (s->engine == ENGI_VA) {
+        memcpy(va_patch[VA_NPART], va_patch[part], sizeof va_patch[0]);
+        memcpy(va_mlast[VA_NPART], va_mlast[part], sizeof va_mlast[0]);
+        memcpy(va_rate_off[VA_NPART], va_rate_off[part], sizeof va_rate_off[0]);
+        memcpy(&va_lfo[VA_NPART], &va_lfo[part], sizeof va_lfo[0]);
+        memcpy(va_vs[VA_NPART], va_vs[part], sizeof va_vs[0]);
+        va_pan_off[VA_NPART] = va_pan_off[part];
+    } else {
+        return;                                  /* (an engine without a tail slot: as before) */
+    }
+    memcpy(d, s, sizeof *d);
+    d->eng_req = d->engine;
+    d->nmono = 0;
+    d->mono_note = 0;
+    d->xp_n = 0;
+    memcpy(fx_sg[NTRK], fx_sg[part], sizeof fx_sg[0]);
+    midi_bend_q8[NTRK] = midi_bend_q8[part];
+    midi_bend_target[NTRK] = midi_bend_target[part];
+    for (i = 0; i < NVOICE; i++) {               /* the part: no voice of its own left, the new sound starts afresh */
+        s->v[i].active = s->v[i].gate = 0;
+        s->v[i].stage = 0;
+        s->v[i].env = s->v[i].env_out = 0;
+    }
+    s->nmono = 0;
+    s->mono_note = 0;
+    cf_tail_part = (uint8_t)part;
+}
+#endif
+
 static void cf_stage_in(uint32_t pat)
 {
     uint32_t part, i;
@@ -455,6 +526,9 @@ static void cf_stage_in(uint32_t pat)
             cr_mchan(part)->pedal = 0;
         cr_mforget(part);
         trk_all_off(t);
+#if CF_NTAIL
+        cf_tail_take(part);                      /* (what rings, with its sound, to the tail) */
+#endif
         t->eng_req = s->engine;
         t->preset = s->preset;
         t->user = s->user;

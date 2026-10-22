@@ -41,6 +41,9 @@
                                     * own) have an engine's state; the drums need none */
 #define VA_NPART 3u                /* eng_va.c: .. and a VA patch */
 #define MIX_NPART 4u               /* fx.c: all four parts sound */
+#define CF_NTAIL 1u                /* core.h: the tail, trk[NTRK] (cf_sound.c cf_tail_take): an outgoing sound rings out */
+#define TRK_GLIDE(t) ((t) == &trk[2] ? (t)->p[P_GLIDE] : 0)   /* voice.c: only the LAYER's sound glides itself; the
+                                    * chords glide by their player (cf_play.c), the bass with them */
 #define FELUCCA_ANALOG 0
 #define FELUCCA_PHASE 0
 #define FELUCCA_LOFI 0

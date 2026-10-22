@@ -118,7 +118,7 @@ static int32_t lim_env = LIM_T;
 static uint8_t fx_smooth;
 #if CR_FX
 static volatile uint8_t fx_off;       /* ChoralRoot's FX tap at off (cr_ui.c cu_fx_apply): no part sends into the buses */
-static int32_t fx_sg[NPART][3];       /* each part's send gains as the last block left them (Q15: chorus, delay, reverb):
+static int32_t fx_sg[NPART + CF_NTAIL][3];       /* each part's send gains as the last block left them (Q15: chorus, delay, reverb):
                                        * a new send, FX on / off, a CC is reached as a ramp over the block, not as a step
                                        * in what the delay and the reverb are fed (a click at every detent of Send) */
 #endif
@@ -1267,6 +1267,12 @@ static void mix_block(int32_t *out, uint32_t n)
         mix_part(&trk[i], n);
     for (; i < NPART; i++)
         mix_part_idle(&trk[i], n);
+#if CF_NTAIL
+    for (i = 0; i < NVOICE && !trk[NTRK].v[i].active; i++)
+        ;
+    if (i < NVOICE)                                     /* the tail, while it rings (CoralFlower: cf_sound.c) */
+        mix_part(&trk[NTRK], n);
+#endif
 #if FELUCCA_PERFORM
     if (perf)
         perf_pre(mix_l, mix_r, send_d, send_r, n);
