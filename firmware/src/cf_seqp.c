@@ -72,6 +72,9 @@ typedef struct {
 } sqr_ev_t;
 static sqr_ev_t sqp_rq[SQR_N];
 static volatile uint32_t sqp_rw;                 /* (the UI's read index: cf_sequi.c squ.rr) */
+/* a pattern comes in: the sounds made ready for it go on its parts now, before its first notes (cf_sound.c) */
+static void cf_stage_in(uint32_t pat);
+
 static void sqp_rpush(const sqr_ev_t *e)
 {
     sqp_rq[sqp_rw % SQR_N] = *e;
@@ -429,6 +432,7 @@ static void sqp_next_bar(void)
 #ifdef CF_TRACE
         fprintf(stderr, "%6u seq comes in: %s%c\n", (unsigned)cf_now_ms, sqp.song ? "the song, " : "", 'A' + sqp.pat);
 #endif
+        cf_stage_in(sqp.pat);
         sqp_bars();
         return;
     }
@@ -438,6 +442,7 @@ static void sqp_next_bar(void)
         if (!sq_empty(&sq_st.pat[sqp.pat]))
             break;
     }
+    cf_stage_in(sqp.pat);
     sqp_bars();
 }
 
@@ -560,6 +565,7 @@ static void sqp_begin(uint32_t pat, uint32_t slot, int cin)
         sqp.dsk[i] = 0;
     sqp.bar = 0;
     sqp.nbar = 0;
+    cf_stage_in(sqp.pat);
     sqp_bars();
     sqp.t = 0;
     sqp.acc = 0;

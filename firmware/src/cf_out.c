@@ -189,6 +189,24 @@ static void __attribute__((noinline)) midi_event(uint32_t st, uint32_t p, uint32
     }
 }
 
+/* the keys' chord and bass still held (HOLD, or fingers) after their part's notes were released for another sound:
+ * struck again on it (the owner, 2026-10-21: "Играет дальше новым пэдом"). At the bar line a pattern's sound comes in
+ * (cf_sound.c cf_stage_in); stopped, a load is now (PRESETS, another pattern opened: panic_req, below). An arpeggio
+ * strikes its next note itself */
+static void cf_restrike(uint32_t part)
+{
+    track_t *t = &trk[part];
+    uint32_t i;
+    if (cfa.on)
+        return;
+    if (part == cfp_cp)
+        for (i = 0; i < cfp.n; i++)
+            trk_note_on(t, cfp.note[i], cfp_cfg.vel);
+    if (part == 1u)
+        for (i = 0; i < cfp.nb; i++)
+            trk_note_on(t, cfp.bass[i], cfp_cfg.vel);
+}
+
 /* fx.c's, between two rendered blocks (after cr_audio_block): the releases asked for, the engine switches. A MIDI in
  * queue that overflowed (a lost note-off) is dropped and every part released: no stuck note */
 static void events_block(uint32_t n)
@@ -208,6 +226,7 @@ static void events_block(uint32_t n)
                 cr_mchan(i)->pedal = 0;
             cr_mforget(i);
             trk_all_off(&trk[i]);
+            cf_restrike(i);                      /* (the keys' held notes on the new sound) */
         }
         engine_block(&trk[i]);                   /* engine switch: fade, then switch (voice.c) */
     }
@@ -227,6 +246,7 @@ enum {
     CFE_SEQ,          /* the sequencer: a 0 stop, 1 play pattern b (SQ_NPAT: the song from place v), 2 drum b heard (kit v),
                        * 3 pattern b next (the song from place v), 4 a take on pattern b, track v, 5 the take ends,
                        * 6 a take from HOME on pattern b, track v (8 bars at most) */
+    CFE_ROOT,         /* a root from outside (NOTES IN Roots): a its MIDI note, b its age in ms, v down */
 };
 typedef struct { uint8_t op, a, b, rsv; int16_t v; } cf_ev_in_t;   /* (CFE_KEY: a key, b its age in ms, v down) */
 #define CF_EVQ 128u                              /* a power of two */
@@ -418,6 +438,26 @@ static void cf_click_mix(int32_t *out, uint32_t n)
 }
 
 /* ------------------------------------------------------------- MIDI in --- */
+/* ISR -> UI: the notes an outside keyboard plays when NOTES IN is not Direct (the UI makes them the FM-1's keys, or
+ * roots: cf_ui.c cf_ui_pump). One producer (the audio ISR), one consumer (the main loop); a full queue drops a note-on
+ * (its note-off then finds nothing down) */
+#define CF_XQ 64u                                /* a power of two */
+static uint16_t cf_xq[CF_XQ];                    /* note | down << 7 */
+static uint32_t cf_xq_ms[CF_XQ];                 /* when it came (fm1_ms) */
+static volatile uint32_t cf_xq_w, cf_xq_r;
+static void cf_xq_put(uint32_t note, uint32_t down, uint32_t ms)
+{
+    uint32_t w = cf_xq_w;
+    if (w - cf_xq_r >= CF_XQ && down)
+        return;
+    if (w - cf_xq_r >= CF_XQ)
+        cf_xq_r++;                               /* (a note-off never lost: the oldest goes) */
+    cf_xq[w % CF_XQ] = (uint16_t)(note | (down ? 0x80u : 0u));
+    cf_xq_ms[w % CF_XQ] = ms;
+    RING_PUBLISH();
+    cf_xq_w = w + 1u;
+}
+
 /* usb.c's midi_in_q (USB and TRS) is drained here: notes on the chord / bass channels play the parts directly
  * (cr_midi.c crm_map, ChoralRoot's), with the pedal, bend and controllers (midi_event above) */
 static void cf_midi_in(void)
@@ -451,6 +491,10 @@ static void cf_midi_in(void)
             }
             continue;
         }
+        if (cfp_cfg.notes_in != CF_NI_DIRECT && (status & 0xE0u) == 0x80u) {   /* a note on or off, any channel */
+            cf_xq_put(d1, (status & 0xF0u) == 0x90u && d2, midi_in_ms[at]);
+            continue;
+        }
         if (status >= 0x80u && status < 0xF0u) {
             crm_act_t a[2];
             int i, n = crm_map(status, d1, d2, en, ch, a);
@@ -471,6 +515,11 @@ static void cf_apply(const cf_ev_in_t *e)
         if (e->v)
             sqp.rage = e->b;                     /* (its age, ms: a take puts it back where it was played) */
         cfp_key(e->a, e->v);
+        break;
+    case CFE_ROOT:
+        if (e->v)
+            sqp.rage = e->b;
+        cfp_key(CF_KEY_EXT + e->a, e->v);
         break;
     case CFE_CONFIG: cfp_config(); break;
     case CFE_PANIC:

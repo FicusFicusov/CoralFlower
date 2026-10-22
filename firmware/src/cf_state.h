@@ -61,7 +61,15 @@ typedef struct {
                                   * (the behaviour before WAIT); CF_RT_STRIKE the new notes strike; CF_RT_CHORD
                                   * the whole new chord strikes, the shared tones too, gliding from the last chord */
     cf_arp_t arp;                /* the arpeggiator's settings (ARP; on / off is not kept: off at power-on) */
-    cf_loop_t loop;              /* the looper's settings up to 0.3.1 (unused: kept for the record's layout) */
+    /* four bytes that held 0.3.1's looper settings (unused since 0.4, kept as they were: BARS 0..4, MODE 0..1, QUANT
+     * 0..2, COUNT-IN 0..1). 0.5 marks its record in the third (CF_SET_MARK05): a record without it is an older build's,
+     * whose first two bytes are a looper's, not NOTES IN and the ARP (cf_settings.c cfs_sanitize). 0.4.x reads the
+     * mark as a QUANT out of range and resets the four in its memory only; if it saves, 0.5 later finds no mark and
+     * takes NOTES IN and the ARP at their defaults */
+    uint8_t notes_in;            /* GLO > MIDI > NOTES IN (0.5): CF_NI_KEYS, CF_NI_ROOTS, CF_NI_DIRECT */
+    uint8_t arp_keep;            /* the arpeggiator was on: on again after a power-on (0.5, the owner: "Арпеджиатор бы
+                                  * ещё было прикольно сохранять") */
+    uint8_t mark, rsv_ci;        /* CF_SET_MARK05; (the looper's COUNT-IN byte: kept at 1) */
     uint8_t clock_in;            /* GLO > MIDI > CLOCK: 0 Off; 1 In, MIDI clock's pulses run the beat; 2 Out, the unit sends its beat as MIDI clock */
     uint8_t boot_sound;          /* GLO > Display > BOOT SOUND: the chime with the intro */
     uint8_t level_chord, level_layer, level_drums;   /* the parts' P_LEVEL (the sequencer's tracks, K1; the bass's:
@@ -77,6 +85,7 @@ typedef struct {
 } cf_set_t;
 #define CF_RESUME_ON 0x80u
 #define CF_RESUME_SONG 0x40u
+#define CF_SET_MARK05 0xC5u    /* cs.mark: the record is 0.5's or later (out of 0.4.x's QUANT range, 0..2) */
 
 static cf_set_t cs;
 
@@ -106,10 +115,12 @@ static void cs_defaults(cf_set_t *s)
     s->retrig = CF_RT_WAIT;
     {
         static const cf_arp_t A = CF_ARP_DEFAULT;
-        static const cf_loop_t L = CF_LOOP_DEFAULT;
         s->arp = A;
-        s->loop = L;
     }
+    s->notes_in = CF_NI_KEYS;
+    s->arp_keep = 0;
+    s->mark = CF_SET_MARK05;
+    s->rsv_ci = 1;
     s->boot_sound = 1;
     s->level_chord = s->level_layer = 104;       /* (params.c P_LEVEL's own) */
     s->level_drums = 104;
@@ -129,7 +140,8 @@ typedef struct {
     uint8_t edit_part;           /* EDIT: the sound edited, 0 chord 1 bass */
     uint8_t env_tgt;             /* ENV: 0 chord + bass, 1 chord, 2 bass, 3 the sequencer's LAYER */
     uint8_t fx_pos;              /* FX: the selected place in the chain */
-    uint8_t arp_on;              /* the arpeggiator plays (the ARP button; off at power-on, as the stock FM-1's) */
+    uint8_t arp_on;              /* the arpeggiator plays (K1 on the ARP page; since 0.5 as it was at the power-off:
+                                  * cs.arp_keep) */
     uint8_t save_new;            /* SAVE: as a new sound (else over itself) */
     char save_name[13];          /* .. its name, being edited */
     uint8_t save_cur;            /* .. the letter K3 changes */
@@ -139,7 +151,11 @@ typedef struct {
     uint8_t save_del;            /* .. ACTION Delete (a user sound only) */
     uint32_t now, last_ms;       /* ms */
     uint32_t frame_dt;           /* ms since the frame before */
-    uint32_t keys;               /* the note keys down (as last read) */
+    uint32_t keys;               /* the note keys down: the FM-1's own (pkeys) and an outside keyboard's (xkeys) */
+    uint32_t pkeys, xkeys;       /* .. as last read; .. held from outside (NOTES IN FM-1 keys: cf_ui.c cf_xq_drain) */
+    uint8_t xcnt[27];            /* .. outside notes down on each key (two octaves of one key fold onto it) */
+    uint8_t xnote[128];          /* each outside note down: 0 up, key + 1, or 0xFF a root (NOTES IN Roots) */
+    uint8_t xroots;              /* .. roots down from outside */
     uint32_t knob_ms[4];         /* when each knob last moved (its cell lights) */
     uint8_t knob_last;
     /* popups over the plant */

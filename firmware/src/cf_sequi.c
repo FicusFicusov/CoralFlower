@@ -552,6 +552,8 @@ static void sq_write_poll(void)
                                                   * the last one down; several single notes at once: none, they play
                                                   * as written. The lowest held made a legato change the chord before) */
             e.rootkey = (uint8_t)(o->single && o->n > 1u ? 0xFFu : cfc.nroots ? cfc.root_key[cfc.nroots - 1u] : 0xFFu);
+            if (e.rootkey >= CF_NKEYS)
+                e.rootkey = 0xFF;                /* (a root from outside: as written, no key's light; 0.4.x reads it) */
             fm1_irq_on();
             e.btns = (uint16_t)o->buttons;
             e.algo_oct = (uint8_t)((cs.chord.algo & 3u) | (uint32_t)(cs.chord.octave + 3) << 2);
@@ -563,7 +565,7 @@ static void sq_write_poll(void)
             squ.writing = 1;
         }
     }
-    if (squ.writing && !cu.keys)                 /* every key up: the gesture is over. The frame stays on the step
+    if (squ.writing && !cu.keys && !cu.xroots)  /* every key up: the gesture is over. The frame stays on the step
                                                   * (the owner, 2026-10-18: it jumped on after every chord; SELECT
                                                   * moves it, only) */
         squ.writing = 0;
@@ -668,6 +670,26 @@ static void sq_copy_pattern(uint32_t from, uint32_t to)
     }
     sq_touch_pat(to);
     sq_st.pat[to] = sq_st.pat[from];
+    {                                            /* (its own sounds with it, tweaked or not: 0.5) */
+        uint32_t t;
+        for (t = 0; t < 3u; t++) {
+            int st = cfk_find(from + 1u, t);
+            cfps.r[to][t] = cfps.r[from][t];
+            cfk_drop(to + 1u, t);
+            if (st >= 0 && st_load(cfk_obj((uint32_t)st), &cfk_rec, sizeof cfk_rec) == (int)sizeof cfk_rec &&
+                cfk_valid(&cfk_rec, t) && cfk_rec.edited) {
+                uint8_t keep = cfk_own[t];
+                int to_st;
+                cfk_own[t] = (uint8_t)(to + 1u);   /* (a free store for the copy's owner) */
+                to_st = cfk_store_for(t);
+                cfk_own[t] = keep;
+                cfk_rec.pat1 = (uint8_t)(to + 1u);
+                cfk_rec.check = cfs_fnv(&cfk_rec, (uint32_t)__builtin_offsetof(cfk_rec_t, check));
+                if (to_st < 3 || cfk_write((uint32_t)to_st, &cfk_rec, 0u) != 0)
+                    cf_message("8 pattern sounds tweaked:\ncopied without its tweak");
+            }
+        }
+    }
     str_cpy(m + 9, " copied to  ", 13);
     m[str_len(m) - 1u] = (char)('A' + to);
     cf_message(m);
@@ -1358,6 +1380,170 @@ static void sq_from_loop(void)
         cf_message(m);
     }
 }
+/* ------------------------------------------------------- the patterns' own sounds --- */
+/* 0.5: what you hear is the current pattern's sound (the owner's map, 2026-10-21): the pattern playing (the song's
+ * block's), else the one PLAY plays (on a pattern's page: that one). Its track's own sound (cf_settings.c cfps), else
+ * HOME's. Stopped, a change loads at once; playing, the next pattern's sounds are made ready (cf_sound.c cf_snd_build)
+ * and the audio side puts them in at the bar line where it comes in (cf_stage_in) */
+static uint8_t sq_snd_force;                     /* (power-on: every part's sound taken again, its tweak with it) */
+static uint32_t sq_cur_pat(void)                 /* 0xFF: none (HOME's sounds) */
+{
+    if (sqp.on)                                  /* (the player's own: cf_sn's copy is a frame behind a swap) */
+        return sqp.pat % SQ_NPAT;
+    if (sq_screen(cu.scr) && squ.pat < SQ_NPAT && sq_has(squ.pat))
+        return squ.pat;
+    if (sqk.song && sq_st.song.n)
+        return sq_st.song.pat[squ.slot < sq_st.song.n ? squ.slot : 0u] % SQ_NPAT;
+    return sqk.last < SQ_NPAT ? sqk.last : 0xFFu;
+}
+static void sq_snd_want(uint32_t pat, uint32_t part, uint32_t *e, uint32_t *pos)   /* part's sound under pat */
+{
+    if (pat < SQ_NPAT && cfps_where(pat, part, e, pos))
+        return;
+    cf_snd_at(part, part == CF_PART_LAYER ? cs.snd_layer : cs.snd[part], e, pos);
+}
+static uint32_t sq_next_pat(void)                /* playing: the pattern that comes in next (0xFF: the same, round) */
+{
+    uint32_t nx = sqp.next, i, slot;
+    if (nx != 0xFFu)
+        return nx < SQ_NPAT ? nx : sq_st.song.n ? sq_st.song.pat[(nx - SQ_NPAT) % sq_st.song.n] % SQ_NPAT : 0xFFu;
+    if (!sqp.song || !sq_st.song.n)
+        return 0xFFu;
+    slot = sqp.slot;
+    for (i = 0; i < sq_st.song.n; i++) {          /* (as the player goes on: an empty one passed over) */
+        slot = (slot + 1u) % sq_st.song.n;
+        if (!sq_empty(&sq_st.pat[sq_st.song.pat[slot] % SQ_NPAT]))
+            return sq_st.song.pat[slot] % SQ_NPAT;
+    }
+    return 0xFFu;
+}
+/* every frame: the parts' sounds as the current pattern wants them; playing, the next one's made ready */
+static int sq_snd_tweaked(uint32_t o1, uint32_t part)   /* owner o1 (0 HOME, pattern + 1) keeps a tweak for part */
+{
+    int st = cfk_find(o1, part);
+    return st >= 0 && cfk_st[st].edited;
+}
+static void sq_snd_poll(void)
+{
+    uint32_t cur = sq_cur_pat(), nx = sqp.on ? sq_next_pat() : 0xFFu, part, e, pos, ne, np, follow = 0;
+    for (part = 0; part < 3u; part++) {
+        cf_stage_t *s = &cf_stage[part];
+        uint32_t o = cur < SQ_NPAT && cfps.r[cur][part].own ? cur + 1u : 0u;
+        int diff;
+        if (s->taken) {                          /* (the audio side put one in at the bar line) */
+            s->taken = 0;
+            cf_snd[part] = s->meta;
+            cf_snd_gen[part]++;
+            cfk_own[part] = s->own1;             /* (its tweak came with it) */
+            cfk_on[part] = s->tw;
+            cfk_gen[part] = cf_snd_gen[part];
+            cfk_full[part] = 0;
+            if (s->tw)
+                cu.edited[part] = 1;
+            follow |= part < 2u;
+        }
+        sq_snd_want(cur, part, &e, &pos);
+        diff = cf_snd[part].engine != e || cf_snd[part].pos != pos;
+        /* another sound, or the same one of another owner (HOME's and a pattern's own, two patterns': their tweaks
+         * are theirs) */
+        if (sq_snd_force || ((diff || cfk_own[part] != o) && !(s->ready && s->pat == cur))) {
+            if (diff || cfk_edited(part))
+                cf_pool_load(part, e, pos);      /* (stopped, or it came in without one ready: now; the same sound
+                                                  * again without the last owner's tweak) */
+            cfk_take(part, o);                   /* (its owner's tweak on it; edits from now on go to it) */
+#ifdef CF_TRACE
+            fprintf(stderr, "%6u sound loaded now: part %u %s%s\n", (unsigned)cf_now_ms, (unsigned)part, cf_snd[part].name,
+                    cf_sn.sq_on ? " (playing: none was ready)" : "");
+#endif
+            follow |= part < 2u;
+        }
+        if (nx < SQ_NPAT && nx != cur) {
+            uint32_t o1 = cfps.r[nx][part].own ? nx + 1u : 0u;
+            sq_snd_want(nx, part, &ne, &np);
+            if (ne == cf_snd[part].engine && np == cf_snd[part].pos && !cfk_edited(part) && !sq_snd_tweaked(o1, part)) {
+                s->ready = 0;                    /* (the same sound, no tweak on either: nothing to change; its owner
+                                                  * is taken at the bar line, above) */
+            } else if (!(s->ready && s->pat == nx && s->meta.engine == ne && s->meta.pos == np && s->own1 == o1)) {
+                uint32_t i;
+                int st = cfk_find(o1, part);
+                s->ready = 0;
+                cf_snd_build(part, ne, np, s);
+                s->own1 = (uint8_t)o1;
+                s->tw = 0;
+                if (st >= 0 && cfk_read((uint32_t)st, part, &s->meta) && cfk_rec.blen == s->blen) {
+                    for (i = 0; i < P_COUNT; i++)   /* (its owner's tweak on it, as cfk_take would put it) */
+                        if (!param_kept(i))
+                            s->p[i] = cfk_rec.p[i];
+                    memcpy(s->blob, cfk_rec.blob, s->blen);
+                    s->tw = 1;
+                }
+                s->pat = (uint8_t)nx;
+                RING_PUBLISH();
+                s->ready = 1;
+            }
+        } else {
+            s->ready = 0;
+        }
+    }
+    sq_snd_force = 0;
+    if (follow && cs.env_link)
+        cf_env_follow();                         /* (linked: the bass takes the chord sound's envelope) */
+}
+/* HOME's sounds as what they are, and back as places in the row once a SAVE or a delete moved it (the parts may play
+ * a pattern's own: HOME's are not theirs) */
+static void sq_home_keep(cf_sref_t k[3])
+{
+    uint32_t part, e, pos;
+    cf_snd_t m;
+    for (part = 0; part < 3u; part++) {
+        cf_snd_at(part, part == CF_PART_LAYER ? cs.snd_layer : cs.snd[part], &e, &pos);
+        cf_snd_meta(e, pos, &m);
+        cfps_ref_of(&k[part], &m);
+    }
+}
+static void sq_home_put(const cf_sref_t k[3])
+{
+    uint32_t part, e, pos, i;
+    for (part = 0; part < 3u; part++) {
+        i = cfps_ref_where(&k[part], &e, &pos) ? cf_snd_index(part, e, pos) : cf_snd_pos(part);   /* (gone: the live one) */
+        if (part == CF_PART_LAYER)
+            cs.snd_layer = (uint16_t)i;
+        else
+            cs.snd[part] = (uint16_t)i;
+    }
+}
+/* a track's sound turned on a pattern's page (K2 on its row, PRESETS there or in its track): that pattern's own.
+ * The choices go round: HOME, then HOME's own sound and the row on from it, so one turn right keeps what HOME plays
+ * now for this pattern, and one left from it is HOME again */
+static void sq_snd_turn(uint32_t pat, uint32_t part, int d)
+{
+    uint32_t n = cf_snd_count(part), home = (part == CF_PART_LAYER ? cs.snd_layer : cs.snd[part]) % (n ? n : 1u);
+    uint32_t e, pos, at = 0, m = n + 1u;          /* at: 0 HOME, k the row's (home + k - 1) */
+    cf_snd_t mt;
+    if (!n || pat >= SQ_NPAT)
+        return;
+    if (cfps_where(pat, part, &e, &pos))
+        at = (cf_snd_index(part, e, pos) + n - home) % n + 1u;
+    at = (uint32_t)(((int32_t)at + d) % (int32_t)m + (int32_t)m) % m;
+    cfk_drop(pat + 1u, part);                    /* (another sound: its tweak goes) */
+    if (!at) {
+        cfps_set(pat, part, 0);
+        return;
+    }
+    cf_snd_at(part, (home + at - 1u) % n, &e, &pos);
+    cf_snd_meta(e, pos, &mt);
+    cfps_set(pat, part, &mt);
+}
+static const char *sq_snd_name(uint32_t pat, uint32_t part)   /* its K2 cell: HOME or the sound's name */
+{
+    static cf_snd_t mt;
+    uint32_t e, pos;
+    if (!cfps_where(pat, part, &e, &pos))
+        return "HOME";
+    cf_snd_meta(e, pos, &mt);
+    return mt.name;
+}
+
 /* power-on, the patterns read in (cf_ui.c cf_ui_init): PLAY on HOME plays what it played before the power-off, the
  * pattern or the song from the block its frame was on (the owner, 2026-10-21: "Как оставил"; stopped, on HOME) */
 _Static_assert(SQ_SONG <= 64u && SQ_NPAT <= 8u, "settings: cs.resume holds a block or a pattern");
@@ -1456,17 +1642,14 @@ static void sq_presets(int d)
         cf_message(m);
         return;
     }
-    if (squ.trk == SQ_BASS) {
-        cf_snd_step(CF_PART_BASS, d);
-        cs.snd[1] = (uint16_t)cf_snd_pos(CF_PART_BASS);
-        if (cs.env_link)
-            cf_env_follow();
-        cf_pop(POP_SOUND_BASS, 1200);
-        return;
+    {                                            /* the pattern's own sound (0.5): as K2 on its row */
+        uint32_t part = squ.trk == SQ_LAYER ? CF_PART_LAYER : squ.trk == SQ_BASS ? CF_PART_BASS : CF_PART_CHORD;
+        char m[24];
+        sq_snd_turn(squ.pat, part, d);
+        str_cpy(m, part == CF_PART_BASS ? "Bass: " : part == CF_PART_LAYER ? "Layer: " : "Chords: ", sizeof m);
+        str_cpy(m + str_len(m), sq_snd_name(squ.pat, part), 13);
+        cf_message(m);
     }
-    cf_snd_step(CF_PART_LAYER, d);
-    cs.snd_layer = (uint16_t)cf_snd_pos(CF_PART_LAYER);
-    cf_pop(POP_SOUND_LAYER, 1200);
 }
 
 /* the metronome's knobs (METRONOME) */
@@ -1563,7 +1746,8 @@ static void sq_knob_info(int k, cf_knob_t *o)
                 o->dis = (uint8_t)sq_empty(p);
             } else {
                 kfmt(o->name, 12, "SOUND");
-                kfmt(o->val, 14, cf_snd[t == SQ_LAYER ? CF_PART_LAYER : t == SQ_BASS ? CF_PART_BASS : CF_PART_CHORD].name);
+                kfmt(o->val, 14, sq_snd_name(squ.pat, t == SQ_LAYER ? CF_PART_LAYER : t == SQ_BASS ? CF_PART_BASS :
+                                             CF_PART_CHORD));
             }
             break;
         case 2:
@@ -1674,17 +1858,8 @@ static void sq_knob_turn(int k, int d)
             if (t == SQ_DRUMS) {
                 if (!sq_empty(p))
                     sq_kit_turn(p, d);
-            } else {
-                uint32_t part = t == SQ_LAYER ? CF_PART_LAYER : t == SQ_BASS ? CF_PART_BASS : CF_PART_CHORD;
-                cf_snd_step(part, d);
-                if (part == CF_PART_CHORD)
-                    cs.snd[0] = (uint16_t)cf_snd_pos(part);
-                else if (part == CF_PART_BASS)
-                    cs.snd[1] = (uint16_t)cf_snd_pos(part);
-                else
-                    cs.snd_layer = (uint16_t)cf_snd_pos(part);
-                if (cs.env_link && part != CF_PART_LAYER)   /* (as PRESETS / SELECT do) */
-                    cf_env_follow();
+            } else {                             /* the pattern's own sound (0.5), HOME first */
+                sq_snd_turn(squ.pat, t == SQ_LAYER ? CF_PART_LAYER : t == SQ_BASS ? CF_PART_BASS : CF_PART_CHORD, d);
             }
         } else if (k == 2 && t == SQ_DRUMS) {    /* DRUMS: SWING, 5 % a detent */
             if (!sq_empty(p)) {

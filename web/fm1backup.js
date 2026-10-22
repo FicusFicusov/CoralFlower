@@ -25,7 +25,9 @@ export const CR_BACKUP_IDS = [1, 6, 7, 8, 9, 10, 11, 12, 13, ...CR_CZ_BANK_IDS, 
                                          // CZ-1 banks, 22: the FM TONE patches, 40..49: loops)
 export const CF_SEQ_IDS = [50, 51, 52, 53, 54, 55];
 export const CF_EDIT_IDS = [56, 57, 58];          // the chord, bass and LAYER sounds' unsaved edits (0.4.2)
-export const CF_BACKUP_IDS = [6, 7, 8, 9, 10, 11, 30, 31, ...CF_SEQ_IDS, ...CF_EDIT_IDS];   // CoralFlower's (firmware/src/cf_backup.c)
+export const CF_PSND_ID = 59;                     // the patterns' own sounds (0.5)
+export const CF_TWK_IDS = [60, 61, 62, 63, 64, 65, 66, 67];   // the tweaked pattern sounds (0.5)
+export const CF_BACKUP_IDS = [6, 7, 8, 9, 10, 11, 30, 31, ...CF_SEQ_IDS, ...CF_EDIT_IDS, CF_PSND_ID, ...CF_TWK_IDS];   // CoralFlower's (firmware/src/cf_backup.c)
 const KNOWN = new Set([...BACKUP_IDS, ...CR_BACKUP_IDS, ...CF_BACKUP_IDS]);
 export const BACKUP_CMD = { INFO: 1, LIST: 65, GET: 66, PUT: 67, RESTART: 72 };
 const BACKUP_CHUNK = 256;
@@ -48,6 +50,7 @@ export function objectName(id) {
   if (id === 31) return "CoralFlower loop";
   if (CF_SEQ_IDS.includes(id)) return "CoralFlower patterns and song";
   if (CF_EDIT_IDS.includes(id)) return "CoralFlower unsaved sound edits";
+  if (id === CF_PSND_ID || CF_TWK_IDS.includes(id)) return "CoralFlower pattern sounds";
   return `object ${id}`;
 }
 // the names of a list of ids, each once (the sequencer's six parts read as one)

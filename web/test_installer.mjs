@@ -719,7 +719,7 @@ async function readyPage(dev, opts = {}) {
 }
 {
   // CoralFlower 0.3.1: the sequencer's patterns and song in the file and back; on 0.3 (no such objects) kept in the file
-  const CF031 = CF_BACKUP_IDS.filter((id) => !CF_EDIT_IDS.includes(id));   // (0.3.1 lists no sound edits: 0.4.2's)
+  const CF031 = CF_BACKUP_IDS.filter((id) => id < 56);   // (0.3.1 lists neither 0.4.2's sound edits nor 0.5's pattern sounds)
   const cf = backupSide("CoralFlower 0.3.1", CF031, cfData());
   const dev = new FakeFM1(image, { identity: "FM-1_930", bk: () => cf });
   const p = runPage({ navigator: midiOf(dev) });

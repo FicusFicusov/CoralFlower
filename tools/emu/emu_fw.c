@@ -362,9 +362,22 @@ void emu_fw_dump(void)
                (unsigned)(sqk.song ? squ.slot : sqk.last));
         for (k = 0; k < 3u; k++) {
             cfk_build(k, &cfk_rec);
-            printf(" %s %s %08X%s", k == 0 ? "chord" : k == 1 ? "bass" : "layer", cfk_rec.edited ? "edited" : "-",
-                   (unsigned)cfk_rec.check, cfk_rec.check == cfk_saved[k] ? "" : " (not written)");
+            printf(" %s %s %c %08X", k == 0 ? "chord" : k == 1 ? "bass" : "layer", cfk_rec.edited ? "edited" : "-",
+                   cfk_own[k] ? (char)('A' + cfk_own[k] - 1) : 'H', (unsigned)cfk_rec.check);
         }
+        printf(" (owner H: HOME), chord attack %d", cf_env_get(0, 0));
+        printf("\n  pattern sounds (current %c):", sq_cur_pat() < SQ_NPAT ? (char)('A' + sq_cur_pat()) : '-');
+        for (k = 0; k < SQ_NPAT; k++) {
+            uint32_t t;
+            for (t = 0; t < 3u; t++)
+                if (cfps.r[k][t].own)
+                    printf(" %c.%s=%s", (char)('A' + k), t == 0 ? "chords" : t == 1 ? "bass" : "layer", sq_snd_name(k, t));
+        }
+        printf("%s\n  tweak stores:", cfps_check() == cfps_saved ? "" : " (not written)");
+        for (k = 0; k < CFK_NST; k++)
+            if (cfk_st[k].edited)
+                printf(" %u:%s%c.%u=%s", (unsigned)k, cfk_st[k].pat1 ? "" : "HOME", cfk_st[k].pat1 ? (char)('A' + cfk_st[k].pat1 - 1) : ' ',
+                       (unsigned)cfk_st[k].part, cfk_st[k].name);
         printf("\n");
     }
     {

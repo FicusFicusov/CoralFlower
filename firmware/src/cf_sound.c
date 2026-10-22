@@ -298,6 +298,182 @@ static void cf_pool_load(uint32_t part, uint32_t e, uint32_t pos)
     cf_snd_gen[part % 3u]++;
 }
 
+/* ------------------------------------------------------ a sound made ready ahead --- */
+/* 0.5, a pattern's own sounds: the next pattern's sound for a part is built here (the main loop: a user sound's patch
+ * comes from flash) and put in by the audio side at the bar line where that pattern starts (cf_stage_in, from
+ * cf_seqp.c): its parameters but the part's own (cr_bank.c param_kept), its engine with them (an engine change fades
+ * the old voices first: voice.c), and that engine's patch blob (eng_deep_t.blob_set: RAM only, quick) */
+typedef struct {
+    volatile uint8_t ready;      /* 1: built for pattern pat; the audio side takes it when pat comes in */
+    volatile uint8_t taken;      /* .. it did: the UI names the part's sound (meta) */
+    uint8_t pat, engine, preset, user, blen;
+    uint8_t own1, tw;            /* whose the sound is (cf_settings.c cfk_own: 0 HOME's, pattern + 1); its tweak on it */
+    int8_t trim;
+    int16_t p[P_COUNT];
+    uint8_t blob[ENG_BLOB_MAX];
+    cf_snd_t meta;
+} cf_stage_t;
+static cf_stage_t cf_stage[3];
+
+/* place pos of engine e as part's sound, into s (the part itself untouched: what cf_pool_load and the engines'
+ * track_loaded would make of it) */
+static void cf_snd_build(uint32_t part, uint32_t e, uint32_t pos, cf_stage_t *s)
+{
+    pool_ent_t pe;
+    const engine_t *en;
+    const eng_deep_t *d;
+    uint32_t i;
+    uint8_t vpend = va_user_pending, fpend = fm6_user_pending;   /* (up_values marks a load under way: put back) */
+    e %= NENGINES;
+    pe = pool_entry(e, pos);
+    en = ENGINES[e];
+    for (i = 0; i < P_COUNT; i++)
+        s->p[i] = trk[part].p[i];
+    s->engine = (uint8_t)e;
+    s->preset = s->user = 0;
+    s->trim = 0;
+    memset(&s->meta, 0, sizeof s->meta);
+    if (pe.kind == PK_USER && up_used(pe.slot)) {
+        int16_t v[P_COUNT];
+        const up_rec_t *r = up_rec(pe.slot);
+        up_values(r, v);
+        s->engine = (uint8_t)(eng_ok(r->engine) ? r->engine : ENGI_FM6);
+        for (i = 0; i < P_COUNT; i++)
+            if (!param_kept(i))
+                s->p[i] = v[i];
+        s->user = (uint8_t)(pe.slot + 1u);
+        if (pe.fk != PF_NONE)
+            s->trim = cb_trim(e, pe.fk);
+        up_name(pe.slot, s->meta.name);
+    } else if (pe.kind == PK_FACTORY && en->npresets) {
+        const preset_t *pr = &en->presets[pe.fk % en->npresets];
+        for (i = 0; i < P_E0; i++)
+            if (!param_kept(i))
+                s->p[i] = TP[i].def;
+        for (i = 0; i < 8u; i++)
+            s->p[P_E0 + i] = (int16_t)pr->e[i];
+        s->p[P_ATK] = pr->env[0];
+        s->p[P_DEC] = pr->env[1];
+        s->p[P_SUS] = pr->env[2];
+        s->p[P_REL] = pr->env[3];
+        s->p[P_ED_FLT] = pr->fenv;
+        s->preset = (uint8_t)(pe.fk % en->npresets);
+        s->trim = cb_trim(e, pe.fk);
+        str_cpy(s->meta.name, pr->name, sizeof s->meta.name);
+    } else {
+        for (i = 0; i < P_E0; i++)
+            if (!param_kept(i))
+                s->p[i] = TP[i].def;
+        for (i = 0; i < 8u; i++)
+            s->p[P_E0 + i] = en->edit[i].def;
+        str_cpy(s->meta.name, "INIT", sizeof s->meta.name);
+    }
+    if (part != CF_PART_LAYER) {                 /* (cf_part_voice) */
+        s->p[P_VOICE] = V_POLY;
+        s->p[P_GLIDE] = 0;
+    }
+    s->blen = 0;
+    d = ENGINES[eng_idx(s->engine)]->deep;
+    if (d && d->blob_set && d->blob_size && d->blob_size <= ENG_BLOB_MAX) {
+        if (s->engine == ENGI_FM6) {             /* (fm6_track_loaded: a user slot's own blob, else the PTCH slot's) */
+            if (!(s->user && fm6_store_read && !fm6_store_read(s->user - 1u, s->blob))) {
+                uint8_t pk[FM6_PACKED], v[FP_SIZE + 1u];
+                if (s->user && s->p[P_E7] >= (int16_t)FM6_NFACTORY && s->p[P_E7] < (int16_t)(FM6_NFACTORY + 27u))
+                    s->p[P_E7] = (int16_t)(s->p[P_E7] + FM6_NROM);
+                fm6_slot_get((uint32_t)clamp(s->p[P_E7], 0, FM6_NSLOT - 1), pk);
+                fm6_unpack(pk, v);
+                fm6_blob_make(v, FM6_FNDEF, s->blob);
+            }
+            s->blen = (uint8_t)d->blob_size;
+        }
+#if FELUCCA_VA
+        else if (s->engine == ENGI_VA) {         /* (va_track_loaded: a user slot's patch, a preset's, or INIT + macros) */
+            int8_t vp[VA_NP];
+            uint32_t k;
+            if (s->user && va_store_read && !va_store_read(s->user - 1u, s->blob) && va_unpack(s->blob, vp)) {
+            } else {
+                for (k = 0; k < 8u && !s->user && s->preset < VA_NPRESETS && s->p[P_E0 + k] == VA_PRESETS[s->preset].e[k]; k++)
+                    ;
+                if (k == 8u) {
+                    va_preset_patch(s->preset, vp);
+                } else {
+                    va_init_patch(vp);
+                    for (k = 0; k < 8u; k++)
+                        vp[VA_MACRO[k]] = va_clampv(VA_MACRO[k], s->p[P_E0 + k]);
+                }
+                va_pack(vp, s->blob);
+            }
+            for (k = 0; k < 8u; k++)             /* (va_macros_out: the knobs read back from the patch) */
+                s->p[P_E0 + k] = vp[VA_MACRO[k]];
+            s->blen = (uint8_t)d->blob_size;
+        }
+#endif
+    }
+    va_user_pending = vpend;
+    fm6_user_pending = fpend;
+    s->meta.engine = (uint8_t)e;
+    s->meta.kind = pe.kind;
+    s->meta.fk = pe.fk;
+    s->meta.slot = pe.slot;
+    s->meta.pos = (uint16_t)pos;
+}
+
+/* place pos of engine e as cf_snd_t names it (nothing loaded) */
+static void cf_snd_meta(uint32_t e, uint32_t pos, cf_snd_t *m)
+{
+    pool_ent_t pe;
+    const engine_t *en;
+    e %= NENGINES;
+    pe = pool_entry(e, pos);
+    en = ENGINES[e];
+    memset(m, 0, sizeof *m);
+    if (pe.kind == PK_USER && up_used(pe.slot))
+        up_name(pe.slot, m->name);
+    else if (pe.kind == PK_FACTORY && en->npresets)
+        str_cpy(m->name, en->presets[pe.fk % en->npresets].name, sizeof m->name);
+    else
+        str_cpy(m->name, "INIT", sizeof m->name);
+    m->engine = (uint8_t)e;
+    m->kind = pe.kind;
+    m->fk = pe.fk;
+    m->slot = pe.slot;
+    m->pos = (uint16_t)pos;
+}
+
+/* the audio side, a pattern coming in (cf_seqp.c): each part's sound made ready for it goes on now. The part's notes
+ * stop first, here, before the pattern's own first notes (a release asked of events_block would come after them) */
+static void cf_stage_in(uint32_t pat)
+{
+    uint32_t part, i;
+    for (part = 0; part < 3u; part++) {
+        cf_stage_t *s = &cf_stage[part];
+        track_t *t = &trk[part];
+        const eng_deep_t *d;
+        if (!s->ready || s->pat != pat)
+            continue;
+        if (part < 2u)
+            cr_mchan(part)->pedal = 0;
+        cr_mforget(part);
+        trk_all_off(t);
+        t->eng_req = s->engine;
+        t->preset = s->preset;
+        t->user = s->user;
+        t->trim = s->trim;
+        for (i = 0; i < P_COUNT; i++)
+            if (!param_kept(i))
+                t->p[i] = s->p[i];
+        d = ENGINES[eng_idx(s->engine)]->deep;
+        if (d && s->blen)
+            d->blob_set(t, s->blob);
+        cf_restrike(part);                       /* (the keys' chord and bass held over the line: cf_out.c) */
+        s->ready = 0;
+        s->taken = 1;
+#ifdef CF_TRACE
+        fprintf(stderr, "%6u sound in at the bar line: part %u %s\n", (unsigned)cf_now_ms, (unsigned)part, s->meta.name);
+#endif
+    }
+}
+
 /* the part's place in the one row of sounds, and a step through it */
 static uint32_t cf_snd_pos(uint32_t part) { return cf_snd_index(part, cf_snd[part].engine, cf_snd[part].pos); }
 static void cf_snd_load_index(uint32_t part, uint32_t idx)

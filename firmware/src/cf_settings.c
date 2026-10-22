@@ -32,6 +32,9 @@ typedef struct {
 _Static_assert(sizeof(cf_rec_t) <= ST_LOG_MAX, "settings: a record fits one log entry");
 _Static_assert(sizeof(cf_set_t) == 188u, "settings: 0.4.1 takes a record of this size (a new field fits the padding, "
                "or a downgrade loses the settings)");
+_Static_assert(__builtin_offsetof(cf_set_t, notes_in) == 172u && __builtin_offsetof(cf_set_t, mark) == 174u &&
+               __builtin_offsetof(cf_set_t, rsv_ci) == 175u,
+               "settings: NOTES IN, the ARP's byte and 0.5's mark sit where 0.4.x keeps the looper's four");
 _Static_assert(OBJ_PROJECT0 + 3u == ST_LOG_OBJ, "settings: the object that keeps the log");
 
 static cf_rec_t cf_rec;
@@ -114,8 +117,16 @@ static void cfs_sanitize(cf_set_t *s)
         s->arp.gate < 20u || s->arp.gate > 100u || s->arp.swing < 50u || s->arp.swing > 75u || s->arp.latch > 1u ||
         s->arp.strum_ms < 5u || s->arp.strum_ms > 250u)
         s->arp = d.arp;
-    if (s->loop.bars >= CF_LOOP_NBARS || s->loop.mode > 1u || s->loop.quant > 2u || s->loop.count_in > 1u)
-        s->loop = d.loop;
+    if (s->mark != CF_SET_MARK05) {               /* (an older build's record: these two bytes were its looper's BARS
+                                                   * and MODE, set in 0.3.1 or never) */
+        s->notes_in = d.notes_in;
+        s->arp_keep = d.arp_keep;
+    }
+    if (s->notes_in >= CF_NI_N)
+        s->notes_in = d.notes_in;
+    s->arp_keep = s->arp_keep != 0;
+    s->mark = CF_SET_MARK05;
+    s->rsv_ci = 1;                                /* (0.4.x reads it as the looper's COUNT-IN) */
     {                                     /* the chain: each effect once, in some order; the values in range */
         uint32_t seen = 0, e;
         for (i = 0; i < CFX_N; i++)
@@ -146,7 +157,9 @@ static int cf_settings_load(void)
             break;
     }
     cfs_tidy = rc == 0;
-    for (n = 0; n < 3; n++) {                     /* .. the sounds' edits' objects too (put back later: cfk_load) */
+    for (n = 0; n < (int)(OBJ_CFTWK7 - OBJ_CFEDIT0 + 1u); n++) {   /* .. the sounds' edits', the pattern sounds' and
+                                                   * the tweaked pattern sounds' objects too (read later: cfk_load,
+                                                   * cfps_load) */
         st_check_blank((uint32_t)OBJ_CFEDIT0 + (uint32_t)n);
         for (k = 0; k < 3u && st_tidy((uint32_t)OBJ_CFEDIT0 + (uint32_t)n) > 0; k++)
             fm1_wdt_feed();
@@ -198,33 +211,190 @@ static int cfs_sounding(void)
     return 0;
 }
 
-/* ------------------------------------------------------ the sounds' unsaved edits --- */
-/* The owner, 2026-10-21: "Огибающая адср для баса не сохранилась", then "Как оставил": a part's sound edited on ENV or
- * EDIT and not SAVEd comes back after a power-off as it was left. Each part (chord, bass, LAYER) keeps one record in
- * an object of its own (storage.c OBJ_CFEDIT0..2, a log of 512-byte entries: 13 edits in a row with no erase): the
- * sound the edits were made on (engine, kind, factory preset, user slot, name) and the sound as edited (the
- * parameters a sound holds, cr_bank.c param_kept's left out, and its engine's patch, engine_t.blob_get), or "not
- * edited". At power-on, once the sounds are loaded (cf_ui.c cf_ui_init), a record made on the sound the part has
- * again is put back on it; one made on another sound (a user sound deleted, or replaced by a restored backup) is
- * dropped. Another sound loaded, or the sound SAVEd, the record says "not edited" (cf_sound.c cf_snd_gen). Written as
- * the settings are: half a second after a change, no erase while it sounds, a quiet moment tidies */
+/* ------------------------------------------------------- the patterns' own sounds --- */
+/* 0.5 (the owner, 2026-10-21: "в каждый паттерн можно было свой звук подгрузить на каждый инструмент"): each pattern's
+ * CHORDS, BASS and LAYER sound its own, or HOME's ("HOME": it follows what HOME plays). A sound is kept by what it is
+ * (its engine, factory preset, user slot and a check of its name), so the row moving or a user sound gone is found
+ * out (gone: the track follows HOME again). An object of its own (storage.c OBJ_CFPSND, a log as the settings'): the
+ * patterns' store keeps its format, so 0.4.x reads the patterns. Written as the settings are */
+#define CFPS_MAGIC 0x31524643u                     /* "CFR1" */
+typedef struct {
+    uint8_t own;                                  /* 1: the pattern's own sound; 0: HOME's */
+    uint8_t engine, kind, fk, slot, nck;          /* (cf_snd_t's; nck: a user sound's name, summed) */
+    uint16_t pos;                                 /* (an INIT: its place) */
+} cf_sref_t;
+typedef struct {
+    uint32_t magic;
+    uint8_t npat, ntrk, rsv[2];
+    cf_sref_t r[SQ_NPAT][3];                      /* the tracks: 0 CHORDS (part 0), 1 BASS (part 1), 2 LAYER (part 2) */
+    uint32_t check;
+} cfps_rec_t;
+_Static_assert(sizeof(cfps_rec_t) <= ST_LMAX(OBJ_CFPSND), "pattern sounds: the record fits one log entry");
+static cfps_rec_t cfps;                             /* (RAM: what the patterns have) */
+static uint32_t cfps_saved, cfps_seen, cfps_changed_ms, cfps_retry_ms;
+static uint8_t cfps_tidy;
+
+static uint8_t cfps_nck(const char *n)
+{
+    uint32_t h = 0;
+    while (*n)
+        h = h * 31u + (uint8_t)*n++;
+    return (uint8_t)(h ^ h >> 8 ^ h >> 16);
+}
+static void cfps_ref_of(cf_sref_t *r, const cf_snd_t *m)   /* m 0: HOME */
+{
+    memset(r, 0, sizeof *r);
+    if (!m)
+        return;
+    r->own = 1;
+    r->engine = m->engine;
+    r->kind = m->kind;
+    r->fk = m->fk;
+    r->slot = m->slot;
+    r->nck = cfps_nck(m->name);
+    r->pos = m->pos;
+}
+static void cfps_set(uint32_t pat, uint32_t t3, const cf_snd_t *m) { cfps_ref_of(&cfps.r[pat % SQ_NPAT][t3 % 3u], m); }
+/* a pattern's track's own sound as a place in its engine's pool: 1, or 0 (HOME's, or its sound gone) */
+static int cfps_ref_where(const cf_sref_t *r, uint32_t *e, uint32_t *pos)   /* a kept sound's place now: 1 */
+{
+    uint32_t en = r->engine % NENGINES;
+    if (!r->own)
+        return 0;
+    *e = en;
+    if (r->kind == PK_USER) {
+        char nm[13];
+        if (!up_used(r->slot))
+            return 0;
+        up_name(r->slot, nm);
+        if (cfps_nck(nm) != r->nck)
+            return 0;
+        *pos = cb_bound(r->slot) != PF_NONE ? pool_pos_factory(en, cb_bound(r->slot)) : pool_pos_slot(en, r->slot);
+        return 1;
+    }
+    if (r->kind == PK_FACTORY) {
+        *pos = pool_pos_factory(en, r->fk);
+        return 1;
+    }
+    *pos = 0;                                     /* (INIT: the pool's first place) */
+    return 1;
+}
+static int cfps_where(uint32_t pat, uint32_t t3, uint32_t *e, uint32_t *pos)
+{
+    return cfps_ref_where(&cfps.r[pat % SQ_NPAT][t3 % 3u], e, pos);
+}
+static uint32_t cfps_check(void)
+{
+    cfps.magic = CFPS_MAGIC;
+    cfps.npat = SQ_NPAT;
+    cfps.ntrk = 3;
+    return cfs_fnv(&cfps, (uint32_t)__builtin_offsetof(cfps_rec_t, check));
+}
+static int cfps_valid(const cfps_rec_t *r)
+{
+    return r->magic == CFPS_MAGIC && r->npat == SQ_NPAT && r->ntrk == 3u &&
+           r->check == cfs_fnv(r, (uint32_t)__builtin_offsetof(cfps_rec_t, check));
+}
+/* power-on, before the sounds load (cf_ui.c cf_ui_init): what the patterns have (none kept: every track HOME's) */
+static void cfps_load(void)
+{
+    static cfps_rec_t r;
+    memset(&cfps, 0, sizeof cfps);
+    cfps_saved = cfps_seen = cfps_check();
+    cfps_tidy = 0;
+    if (cr_safe)
+        return;
+    st_check_blank(OBJ_CFPSND);
+    if (st_load(OBJ_CFPSND, &r, sizeof r) == (int)sizeof r && cfps_valid(&r)) {
+        cfps = r;
+        cfps_saved = cfps_seen = r.check;
+    }
+}
+static void cfps_poll(uint32_t now, int silent)
+{
+    uint32_t h;
+    int rc, quiet;
+    if (cfps_retry_ms && (int32_t)(now - cfps_retry_ms) < 0)
+        return;
+    cfps_retry_ms = 0;
+    h = cfps_check();
+    if (h != cfps_seen) {
+        cfps_seen = h;
+        cfps_changed_ms = now;
+    }
+    quiet = silent && now - cfps_changed_ms >= CF_SET_QUIET_MS;
+    if (h == cfps_saved) {
+        if (!cfps_tidy && quiet) {
+            rc = st_tidy(OBJ_CFPSND);
+            cfps_tidy = rc == 0;
+            if (rc < 0)
+                cfps_retry_ms = now + 1000u;
+        }
+        return;
+    }
+    if (now - cfps_changed_ms < CF_SET_QUICK_MS)
+        return;
+    if (!quiet && felucca_dbg.last_us * 20u > HALF_FRAMES * 1000000u / FS * 17u)
+        return;
+    cfps.check = h;
+    rc = st_put(OBJ_CFPSND, &cfps, sizeof cfps, quiet ? 0u : ST_NOERASE);
+    if (rc == 0) {
+        cfps_saved = h;
+        cfps_tidy = 0;
+    } else {
+        cfps_retry_ms = now + 1000u;
+    }
+}
+static void cfps_flush(void)                       /* a backup's LIST: what is not written yet, now */
+{
+    uint32_t h = cfps_check();
+    cfps.check = h;
+    if (h != cfps_saved && st_put(OBJ_CFPSND, &cfps, sizeof cfps, 0u) == 0) {
+        cfps_saved = h;
+        cfps_tidy = 0;
+    }
+}
+
+/* ------------------------------------------------------------ the sounds' tweaks --- */
+/* A sound tweaked on ENV or EDIT keeps its tweak where the sound belongs, with no SAVE (0.4.2, the owner: "Огибающая
+ * адср для баса не сохранилась", "Как оставил"; 0.5: "Сама в паттерн"): HOME's sound on each part (chord, bass, LAYER)
+ * in a store of its own (storage.c OBJ_CFEDIT0..2), a pattern's own sound in one of eight stores (OBJ_CFTWK0..7, a
+ * pattern and a track each); a ninth asks for a SAVE. A store's record: whose it is (HOME's: pat1 0, else the pattern
+ * + 1, and the part), the sound tweaked (engine, kind, factory preset, user slot, name), the sound as tweaked (the
+ * parameters a sound holds, cr_bank.c param_kept's left out, and its engine's patch, eng_deep_t.blob_get), or "not
+ * tweaked". A part loading a sound takes its owner's tweak with it, when made on that very sound (cfk_take; the bar
+ * line's ready sound too: cf_sequi.c sq_snd_poll); one made on another sound (a user sound deleted or replaced) is
+ * left. The tweak goes when its owner's sound changes (PRESETS, K2, SAVE: cfk_drop). Each store a log of 512-byte
+ * entries (13 tweaks in a row with no erase), written as the settings are */
+static void cf_message(const char *s);           /* (cf_ui.c) */
+static uint32_t sq_cur_pat(void);                /* (cf_sequi.c) */
 #define CFK_MAGIC 0x314B4643u                     /* "CFK1" */
-#define CFK_OBJ(part) ((uint32_t)OBJ_CFEDIT0 + (part))
+#define CFK_NSLOT 8u                              /* tweaked pattern sounds kept at once */
+#define CFK_NST (3u + CFK_NSLOT)                  /* the stores: 0..2 HOME's sound on part 0..2, then the slots */
 typedef struct {
     uint32_t magic;
     uint8_t part, edited, engine, kind, fk, slot, np, blen;   /* np: P_COUNT; blen: the engine's blob_size */
     char name[13];
-    uint8_t rsv[3];
+    uint8_t pat1, rsv[2];                         /* whose: 0 HOME's sound, else the pattern + 1 (0.4.2's: 0) */
     int16_t p[P_COUNT];                           /* (param_kept's: 0) */
     uint8_t blob[ENG_BLOB_MAX];
     uint32_t check;                               /* FNV-1a of what is before it */
 } cfk_rec_t;
-_Static_assert(sizeof(cfk_rec_t) <= ST_LMAX(OBJ_CFEDIT0), "edits: a record fits one log entry");
+_Static_assert(sizeof(cfk_rec_t) <= ST_LMAX(OBJ_CFEDIT0) && sizeof(cfk_rec_t) <= ST_LMAX(OBJ_CFTWK0),
+               "tweaks: a record fits one log entry");
+#define CFK_OBJ(part) ((uint32_t)OBJ_CFEDIT0 + (part))
+static uint32_t cfk_obj(uint32_t st) { return st < 3u ? (uint32_t)OBJ_CFEDIT0 + st : (uint32_t)OBJ_CFTWK0 + st - 3u; }
 
 static cfk_rec_t cfk_rec;                         /* (one, built and checked in turn) */
-static uint8_t cfk_on[3], cfk_gen[3];             /* an edit (cf_ui.c cf_edited), on the sound load cfk_gen */
-static uint8_t cfk_tidy[3];                       /* the part's object is tidy (storage.c st_tidy) */
-static uint32_t cfk_saved[3], cfk_seen[3], cfk_changed_ms[3], cfk_retry_ms;
+static struct {                                   /* each store's record, as far as finding it goes */
+    uint8_t edited, pat1, part, engine, kind, fk, slot, tidy, drop;   /* drop: "not tweaked" owed to flash */
+    char name[13];
+    uint32_t saved;                               /* the check of what flash holds */
+} cfk_st[CFK_NST];
+static uint8_t cfk_on[3], cfk_gen[3];             /* the live part tweaked since its load (cf_ui.c cf_edited), on load cfk_gen */
+static uint8_t cfk_own[3];                        /* .. whose its sound is: 0 HOME's, the pattern + 1 */
+static uint8_t cfk_full[3];                       /* .. a ninth pattern sound tweaked: told once */
+static uint32_t cfk_seen[3], cfk_changed_ms[3], cfk_retry_ms;
 
 static int cfk_edited(uint32_t part) { return cfk_on[part] && cfk_gen[part] == cf_snd_gen[part]; }
 static const eng_deep_t *cfk_deep(const track_t *t)   /* the engine's patch blob (FM6, VA), 0 none */
@@ -232,7 +402,38 @@ static const eng_deep_t *cfk_deep(const track_t *t)   /* the engine's patch blob
     const eng_deep_t *d = ENGINES[eng_idx(t->eng_req)]->deep;
     return d && d->blob_get && d->blob_set && d->blob_size && d->blob_size <= ENG_BLOB_MAX ? d : 0;
 }
-static void cfk_build(uint32_t part, cfk_rec_t *r)   /* the part's record as it stands */
+static int cfk_valid(const cfk_rec_t *r, uint32_t part)
+{
+    return r->magic == CFK_MAGIC && r->part == part && r->np == P_COUNT && r->blen <= ENG_BLOB_MAX &&
+           r->check == cfs_fnv(r, (uint32_t)__builtin_offsetof(cfk_rec_t, check));
+}
+static void cfk_head(uint32_t st, const cfk_rec_t *r)   /* the store's index from its record */
+{
+    cfk_st[st].edited = r->edited;
+    cfk_st[st].pat1 = r->pat1;
+    cfk_st[st].part = r->part;
+    cfk_st[st].engine = r->engine;
+    cfk_st[st].kind = r->kind;
+    cfk_st[st].fk = r->fk;
+    cfk_st[st].slot = r->slot;
+    memcpy(cfk_st[st].name, r->name, sizeof cfk_st[st].name);
+}
+static int cfk_same(uint32_t st, const cf_snd_t *m)   /* the store's tweak was made on sound m */
+{
+    return cfk_st[st].edited && cfk_st[st].engine == m->engine && cfk_st[st].kind == m->kind &&
+           cfk_st[st].fk == m->fk && cfk_st[st].slot == m->slot && !memcmp(cfk_st[st].name, m->name, sizeof m->name);
+}
+static int cfk_find(uint32_t pat1, uint32_t part)   /* the store of an owner's tweak: -1 none */
+{
+    uint32_t st;
+    if (!pat1)
+        return (int)part;
+    for (st = 3u; st < CFK_NST; st++)
+        if (cfk_st[st].edited && cfk_st[st].pat1 == pat1 && cfk_st[st].part == part)
+            return (int)st;
+    return -1;
+}
+static void cfk_build(uint32_t part, cfk_rec_t *r)   /* the live part's record (tweaked or not) */
 {
     const track_t *t = &trk[part];
     const eng_deep_t *d = cfk_deep(t);
@@ -243,6 +444,7 @@ static void cfk_build(uint32_t part, cfk_rec_t *r)   /* the part's record as it 
     r->np = (uint8_t)P_COUNT;
     if (cfk_edited(part)) {
         r->edited = 1;
+        r->pat1 = cfk_own[part];
         r->engine = cf_snd[part].engine;
         r->kind = cf_snd[part].kind;
         r->fk = cf_snd[part].fk;
@@ -257,86 +459,164 @@ static void cfk_build(uint32_t part, cfk_rec_t *r)   /* the part's record as it 
     }
     r->check = cfs_fnv(r, (uint32_t)__builtin_offsetof(cfk_rec_t, check));
 }
-static int cfk_valid(const cfk_rec_t *r, uint32_t part)
+/* the tweak of store st as it is kept, read into cfk_rec (made on sound m, for part): 1 */
+static int cfk_read(uint32_t st, uint32_t part, const cf_snd_t *m)
 {
-    return r->magic == CFK_MAGIC && r->part == part && r->np == P_COUNT && r->blen <= ENG_BLOB_MAX &&
-           r->check == cfs_fnv(r, (uint32_t)__builtin_offsetof(cfk_rec_t, check));
+    if (st >= CFK_NST || !cfk_same(st, m))
+        return 0;
+    return st_load(cfk_obj(st), &cfk_rec, sizeof cfk_rec) == (int)sizeof cfk_rec && cfk_valid(&cfk_rec, part) &&
+           cfk_rec.edited;
 }
-/* power-on, the sounds loaded (cf_ui.c cf_ui_init): each part's unsaved edits back on its sound (reads only: the
- * audio runs already, an erase waits for a quiet moment) */
+/* a part has loaded a sound of owner pat1 (cf_sequi.c sq_snd_poll; power-on): its tweak back on it, if made on it */
+static void cfk_take(uint32_t part, uint32_t pat1)
+{
+    track_t *t = &trk[part];
+    const eng_deep_t *d = cfk_deep(t);
+    int st = cfk_find(pat1, part);
+    uint32_t i;
+    cfk_own[part] = (uint8_t)pat1;
+    cfk_on[part] = 0;
+    cfk_gen[part] = cf_snd_gen[part];
+    cfk_full[part] = 0;
+    if (st < 0 || !cfk_read((uint32_t)st, part, &cf_snd[part]) || cfk_rec.blen != (d ? d->blob_size : 0u))
+        return;
+    fm1_irq_off();
+    for (i = 0; i < P_COUNT; i++)
+        if (!param_kept(i))
+            t->p[i] = cfk_rec.p[i];
+    fm1_irq_on();
+    if (d)
+        d->blob_set(t, cfk_rec.blob);
+    cfk_on[part] = 1;
+    cu.edited[part] = 1;                          /* (SAVE offers to keep it over itself) */
+    cfk_build(part, &cfk_rec);
+    cfk_seen[part] = cfk_rec.check;               /* (as kept: nothing to write) */
+}
+/* an owner's sound changed (PRESETS, K2, SAVE): its tweak goes ("not tweaked" written by the poll) */
+static void cfk_drop(uint32_t pat1, uint32_t part)
+{
+    int st = cfk_find(pat1, part);
+    if (st < 0 || !cfk_st[st].edited)
+        return;
+    cfk_st[st].edited = 0;
+    cfk_st[st].drop = 1;
+    if (cfk_own[part] == pat1)
+        cfk_on[part] = 0;
+}
+/* power-on, before the sounds load: what each store holds (put on the parts by their loads: cfk_take) */
 static void cfk_load(void)
 {
-    uint32_t part, i;
-    if (cr_safe)
-        return;
-    for (part = 0; part < 3u; part++) {
-        track_t *t = &trk[part];
-        const eng_deep_t *d = cfk_deep(t);
+    uint32_t st;
+    memset(cfk_st, 0, sizeof cfk_st);
+    for (st = 0; st < CFK_NST; st++) {
         int n;
-        cfk_on[part] = 0;
-        cfk_gen[part] = cf_snd_gen[part];
-        st_check_blank(CFK_OBJ(part));
-        n = st_load(CFK_OBJ(part), &cfk_rec, sizeof cfk_rec);
-        if (n < 0) {                              /* (nothing kept: as "not edited") */
-            cfk_build(part, &cfk_rec);
-            cfk_saved[part] = cfk_seen[part] = cfk_rec.check;
-            cfk_tidy[part] = 1;
+        cfk_st[st].part = (uint8_t)(st < 3u ? st : 0u);
+        if (cr_safe)
             continue;
+        st_check_blank(cfk_obj(st));
+        n = st_load(cfk_obj(st), &cfk_rec, sizeof cfk_rec);
+        if (n == (int)sizeof cfk_rec && cfk_valid(&cfk_rec, cfk_rec.part) && (st < 3u ? cfk_rec.part == st &&
+            !cfk_rec.pat1 : cfk_rec.pat1 != 0u && cfk_rec.pat1 <= SQ_NPAT && cfk_rec.part < 3u)) {
+            cfk_head(st, &cfk_rec);
+            cfk_st[st].saved = cfk_rec.check;
+        } else {
+            cfk_st[st].saved = n < 0 ? 1u : 0u;   /* (nothing there: nothing owed; a bad record: one owed) */
+            cfk_st[st].drop = n >= 0;
         }
-        cfk_saved[part] = n == (int)sizeof cfk_rec && cfk_valid(&cfk_rec, part) ? cfk_rec.check : 0u;
-        if (!cfk_saved[part] || !cfk_rec.edited || cfk_rec.engine != cf_snd[part].engine ||
-            cfk_rec.kind != cf_snd[part].kind || cfk_rec.fk != cf_snd[part].fk || cfk_rec.slot != cf_snd[part].slot ||
-            memcmp(cfk_rec.name, cf_snd[part].name, sizeof cfk_rec.name) || cfk_rec.blen != (d ? d->blob_size : 0u))
-            continue;                             /* (made on another sound: the poll writes "not edited") */
-        fm1_irq_off();
-        for (i = 0; i < P_COUNT; i++)
-            if (!param_kept(i))
-                t->p[i] = cfk_rec.p[i];
-        fm1_irq_on();
-        if (d)
-            d->blob_set(t, cfk_rec.blob);
-        cfk_on[part] = 1;
-        cu.edited[part] = 1;                      /* (SAVE offers to keep it over itself, as before the power-off) */
     }
 }
-/* a part whose record changed: written half a second after (quiet: an erase may go), one write a frame; nothing to
- * write, a quiet moment tidies */
+/* the store a tweak of the live part goes to: HOME's, or its pattern's slot (a free one taken: one not tweaked, or
+ * one whose pattern has another sound now); -1 none free */
+static int cfk_store_for(uint32_t part)
+{
+    uint32_t pat1 = cfk_own[part], st, e, pos;
+    int f = cfk_find(pat1, part);
+    cf_snd_t m;
+    if (f >= 0)
+        return f;
+    for (st = 3u; st < CFK_NST; st++) {
+        uint32_t pp = cfk_st[st].pat1;
+        if (!cfk_st[st].edited)
+            break;
+        if (pp && pp <= SQ_NPAT && cfps_where(pp - 1u, cfk_st[st].part, &e, &pos)) {
+            cf_snd_meta(e, pos, &m);
+            if (cfk_same(st, &m))
+                continue;
+        }
+        break;                                    /* (its pattern plays another sound now: the tweak is lost anyway) */
+    }
+    if (st >= CFK_NST)
+        return -1;
+    cfk_st[st].edited = 0;
+    return (int)st;
+}
+static int cfk_write(uint32_t st, const cfk_rec_t *r, uint32_t how)
+{
+    int rc = st_put(cfk_obj(st), r, sizeof *r, how);
+    if (rc == 0) {
+        cfk_head(st, r);
+        cfk_st[st].saved = r->check;
+        cfk_st[st].tidy = 0;
+        cfk_st[st].drop = 0;
+    }
+    return rc;
+}
+/* every frame: a tweak, once it has rested, to its owner's store; "not tweaked" owed; a quiet moment tidies. One
+ * write a frame */
 static void cfk_poll(uint32_t now, int silent)
 {
-    uint32_t part;
+    uint32_t part, st;
     int rc, quiet;
     if (cfk_retry_ms && (int32_t)(now - cfk_retry_ms) < 0)
         return;
     cfk_retry_ms = 0;
     for (part = 0; part < 3u; part++) {
+        int s;
         cfk_build(part, &cfk_rec);
         if (cfk_rec.check != cfk_seen[part]) {
             cfk_seen[part] = cfk_rec.check;
             cfk_changed_ms[part] = now;
         }
-        quiet = silent && now - cfk_changed_ms[part] >= CF_SET_QUIET_MS;
-        if (cfk_rec.check == cfk_saved[part]) {
-            if (!cfk_tidy[part] && quiet) {
-                rc = st_tidy(CFK_OBJ(part));
-                cfk_tidy[part] = rc == 0;
-                if (rc < 0)
-                    cfk_retry_ms = now + 1000u;
-                return;
+        if (!cfk_rec.edited || now - cfk_changed_ms[part] < CF_SET_QUICK_MS)
+            continue;
+        s = cfk_store_for(part);
+        if (s < 0) {
+            if (!cfk_full[part]) {
+                cfk_full[part] = 1;
+                cf_message("8 pattern sounds tweaked:\nSAVE one to keep this");
             }
             continue;
         }
-        if (now - cfk_changed_ms[part] < CF_SET_QUICK_MS)
+        if (cfk_rec.check == cfk_st[s].saved)
             continue;
+        quiet = silent && now - cfk_changed_ms[part] >= CF_SET_QUIET_MS;
         if (!quiet && felucca_dbg.last_us * 20u > HALF_FRAMES * 1000000u / FS * 17u)
             return;                               /* (over 85 %: the write waits for room) */
-        rc = st_put(CFK_OBJ(part), &cfk_rec, sizeof cfk_rec, quiet ? 0u : ST_NOERASE);
-        if (rc == 0) {
-            cfk_saved[part] = cfk_rec.check;
-            cfk_tidy[part] = 0;
-        } else {
+        if (cfk_write((uint32_t)s, &cfk_rec, quiet ? 0u : ST_NOERASE) != 0)
             cfk_retry_ms = now + 1000u;           /* (the log full while it sounds, or a flash error) */
-        }
         return;
+    }
+    for (st = 0; st < CFK_NST; st++) {
+        quiet = silent && now - cfk_changed_ms[0] >= CF_SET_QUIET_MS && now - cfk_changed_ms[1] >= CF_SET_QUIET_MS &&
+                now - cfk_changed_ms[2] >= CF_SET_QUIET_MS;
+        if (cfk_st[st].drop) {                    /* ("not tweaked") */
+            memset(&cfk_rec, 0, sizeof cfk_rec);
+            cfk_rec.magic = CFK_MAGIC;
+            cfk_rec.part = cfk_st[st].part;
+            cfk_rec.np = (uint8_t)P_COUNT;
+            cfk_rec.check = cfs_fnv(&cfk_rec, (uint32_t)__builtin_offsetof(cfk_rec_t, check));
+            if (cfk_write(st, &cfk_rec, quiet ? 0u : ST_NOERASE) != 0)
+                cfk_retry_ms = now + 1000u;
+            return;
+        }
+        if (!cfk_st[st].tidy && quiet) {
+            rc = st_tidy(cfk_obj(st));
+            cfk_st[st].tidy = rc == 0;
+            if (rc < 0)
+                cfk_retry_ms = now + 1000u;
+            if (rc)
+                return;
+        }
     }
 }
 /* a backup's LIST: what is not written yet, now */
@@ -344,11 +624,10 @@ static void cfk_flush(void)
 {
     uint32_t part;
     for (part = 0; part < 3u; part++) {
+        int s;
         cfk_build(part, &cfk_rec);
-        if (cfk_rec.check != cfk_saved[part] && st_put(CFK_OBJ(part), &cfk_rec, sizeof cfk_rec, 0u) == 0) {
-            cfk_saved[part] = cfk_rec.check;
-            cfk_tidy[part] = 0;
-        }
+        if (cfk_rec.edited && (s = cfk_store_for(part)) >= 0 && cfk_rec.check != cfk_st[s].saved)
+            (void)cfk_write((uint32_t)s, &cfk_rec, 0u);
     }
 }
 
@@ -361,12 +640,15 @@ static void settings_poll(void)
         return;
     if (cfs_sounding())
         cfs_sound_ms = now;
+    if (cs.arp_keep != cu.arp_on)                 /* (the ARP's on / off, kept: cf_ui.c cf_ui_init) */
+        cs.arp_keep = cu.arp_on;
     h = cfs_fnv(&cs, sizeof cs);
     if (h != cfs_seen) {
         cfs_seen = h;
         cfs_changed_ms = now;
     }
     cfk_poll(now, now - cfs_sound_ms >= CF_SET_SILENT_MS);   /* (the sounds' edits) */
+    cfps_poll(now, now - cfs_sound_ms >= CF_SET_SILENT_MS);   /* (the patterns' own sounds) */
     if (cfs_retry_ms && (int32_t)(now - cfs_retry_ms) < 0)
         return;                                   /* (a flash error, or the log full: once more a second later) */
     cfs_retry_ms = 0;

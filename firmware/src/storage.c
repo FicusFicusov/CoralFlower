@@ -30,7 +30,9 @@
  * flash); 0xB4000 / 0xB5000 the session (cr_settings.c, OBJ_SESSION: where the unit was left, 0.18);
  * 0xB6000..0xC7FFF stays free (CoralFlower: 0xB6000 / 0xB7000 its loop, OBJ_CFLOOP; 0xB8000..0xC3FFF its sequencer's
  * patterns and song, OBJ_CFSEQ0..5, six A/B pairs; 0xC4000..0xC7FFF and 0xC8000 / 0xC9000 (ChoralRoot's loop slots,
- * not used here) the parts' unsaved sound edits, OBJ_CFEDIT0..2, three A/B pairs, cf_settings.c) */
+ * not used here) the parts' unsaved sound edits, OBJ_CFEDIT0..2, three A/B pairs, cf_settings.c; 0xCA000 / 0xCB000
+ * the patterns' own sounds, OBJ_CFPSND, 0.5; 0xCC000 .. 0xDBFFF, the rest of ChoralRoot's loop slots, eight tweaked
+ * pattern sounds, OBJ_CFTWK0..7, 0.5) */
 enum { OBJ_SETTINGS, OBJ_PROJECT0, OBJ_UPRESET0 = OBJ_PROJECT0 + 4, OBJ_FM6BANK = OBJ_UPRESET0 + 2,
 #if FELUCCA_CZ && FELUCCA_QUAD
        OBJ_CZSTORE1, OBJ_CZBANK0, OBJ_QUADSTORE = OBJ_CZBANK0 + 8, OBJ_SESSION, OBJ_COUNT
@@ -43,6 +45,9 @@ enum { OBJ_SETTINGS, OBJ_PROJECT0, OBJ_UPRESET0 = OBJ_PROJECT0 + 4, OBJ_FM6BANK 
        OBJ_CFSEQ5 = OBJ_CFSEQ0 + 5,
        OBJ_CFEDIT0,                            /* .. the chord, bass and LAYER sounds' unsaved edits (cf_settings.c): 0xC4000.. */
        OBJ_CFEDIT2 = OBJ_CFEDIT0 + 2,
+       OBJ_CFPSND,                             /* .. the patterns' own sounds (0.5, cf_settings.c): 0xCA000 / 0xCB000 */
+       OBJ_CFTWK0,                             /* .. eight tweaked pattern sounds (0.5, cf_settings.c): 0xCC000 .. 0xDBFFF */
+       OBJ_CFTWK7 = OBJ_CFTWK0 + 7,
 #endif
        OBJ_COUNT
 #endif
@@ -103,6 +108,10 @@ static uint32_t st_sector(uint32_t obj, uint32_t copy)  /* flash offset of copy 
         return 0xB8000u + (obj - OBJ_CFSEQ0) * 2u * ST_SECTOR + copy * ST_SECTOR;
     if (obj >= OBJ_CFEDIT0 && obj <= OBJ_CFEDIT2)
         return 0xC4000u + (obj - OBJ_CFEDIT0) * 2u * ST_SECTOR + copy * ST_SECTOR;
+    if (obj == OBJ_CFPSND)
+        return 0xCA000u + copy * ST_SECTOR;
+    if (obj >= OBJ_CFTWK0 && obj <= OBJ_CFTWK7)
+        return 0xCC000u + (obj - OBJ_CFTWK0) * 2u * ST_SECTOR + copy * ST_SECTOR;
 #endif
     if (obj >= OBJ_UPRESET0)
         return 0xDC000u + (obj - OBJ_UPRESET0) * 2u * ST_SECTOR + copy * ST_SECTOR;
@@ -111,8 +120,9 @@ static uint32_t st_sector(uint32_t obj, uint32_t copy)  /* flash offset of copy 
 
 static uint8_t st_buf[ST_PAYLOAD_MAX] __attribute__((aligned(4)));
 
-/* Some objects keep a log (CoralFlower: its settings, ST_LOG_OBJ, and the sounds' unsaved edits, OBJ_CFEDIT0..2; both
- * written half a second after a change while the audio plays). Entries of S bytes (the settings 256, the edits 512):
+/* Some objects keep a log (CoralFlower: its settings, ST_LOG_OBJ, the sounds' unsaved edits, OBJ_CFEDIT0..2, and the
+ * patterns' own sounds, OBJ_CFPSND; written half a second after a change while the audio plays). Entries of S bytes
+ * (the edits 512, the others 256):
  * entry 0 is the record above (its header at 0, its payload at 256: all that 0.4.1 and older firmware read); entry e
  * of 1 .. (3840 / S) - 1 sits at 256 + S e, its header first, then its payload (up to S - 32 bytes), rsv[0] = e: 15
  * entries a copy for the settings, 7 for an edit. A save appends to the current copy's next erased entry: page
@@ -120,8 +130,8 @@ static uint8_t st_buf[ST_PAYLOAD_MAX] __attribute__((aligned(4)));
  * Only that needs an erase (about 45 ms of silence), so the caller picks a quiet moment for it (st_tidy). The current
  * copy is the one whose entry 0 is newer, as older firmware picks it; in it the last intact entry wins */
 #ifdef ST_LOG_OBJ
-#define ST_LOGGED(obj) ((obj) == (uint32_t)(ST_LOG_OBJ) || ((obj) >= OBJ_CFEDIT0 && (obj) <= OBJ_CFEDIT2))
-#define ST_LSZ(obj) ((obj) == (uint32_t)(ST_LOG_OBJ) ? 256u : 512u)
+#define ST_LOGGED(obj) ((obj) == (uint32_t)(ST_LOG_OBJ) || ((obj) >= OBJ_CFEDIT0 && (obj) <= OBJ_CFTWK7))
+#define ST_LSZ(obj) ((obj) == (uint32_t)(ST_LOG_OBJ) || (obj) == OBJ_CFPSND ? 256u : 512u)
 #else
 #define ST_LOGGED(obj) 0
 #define ST_LSZ(obj) 256u

@@ -5,7 +5,7 @@
  * requests fed to crb_handle as the main loop would, the replies taken at CRB_SEND.
  *   cc -std=gnu11 -O1 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/cf_backup_test tests/cf_backup_test.c -lm
  *   ./build/host/cf_backup_test
- * Checks: INFO (the version, the tags); LIST of the 17 objects; a sound, the settings (the newest in their log), the bass sound's
+ * Checks: INFO (the version, the tags); LIST of the 26 objects; a sound, the settings (the newest in their log), the bass sound's
  * unsaved edits (put back at the restart), a loop and sequencer patterns
  * (a change not yet saved: LIST writes it) saved, then backed up whole (GET in 256-byte pieces, every CRC as LIST
  * says); the flash erased and everything restored (PUT): LIST and the bytes identical, the sound back in its list, the
@@ -207,7 +207,7 @@ int main(void)
     CHECK(a && a[1] == 5, "GET before LIST: 5");
 
     /* ---- a fresh device: the 8 objects, nothing stored but what the boot wrote ---- */
-    CHECK(t_list() == 0 && nman == 17, "LIST on a fresh flash: 17 objects (%u)", nman);
+    CHECK(t_list() == 0 && nman == 26, "LIST on a fresh flash: 26 objects (%u)", nman);
     CHECK(t_find(50) && !t_find(50)->size && t_find(55) && !t_find(55)->size, "LIST: no patterns stored yet");
 
     /* ---- content: a user sound, the settings, a loop ---- */
@@ -287,7 +287,9 @@ int main(void)
         fm1_irq_off();
         trk[CF_PART_BASS].p[P_REL] = 0;
         fm1_irq_on();
-        cfk_load();
+        cfk_load();                              /* (the stores read in; each part takes its tweak as it loads) */
+        cfk_take(CF_PART_CHORD, 0);
+        cfk_take(CF_PART_BASS, 0);
         CHECK(cfk_on[CF_PART_BASS] && cu.edited[CF_PART_BASS] && trk[CF_PART_BASS].p[P_REL] == rel && !cfk_on[CF_PART_CHORD],
               "the restored edit put back on the bass at the restart (REL %d)", trk[CF_PART_BASS].p[P_REL]);
     }
@@ -317,7 +319,7 @@ int main(void)
         CHECK(t_put(50, q->bytes, q->size, st_crc32(q->bytes, q->size)) == 2, "a sequencer head of another magic: 2");
         q->bytes[0] ^= 0x55;
         CHECK(t_put(51, q->bytes, 1000, st_crc32(q->bytes, 1000)) == 1, "a sequencer part of another length: 1");
-        CHECK(t_put(59, q->bytes, 16, st_crc32(q->bytes, 16)) == 1, "an id past the sounds' edits (59): 1");
+        CHECK(t_put(68, q->bytes, 16, st_crc32(q->bytes, 16)) == 1, "an id past the tweaked pattern sounds (68): 1");
         CHECK(t_list() == 0 && t_find(50)->crc == crc_before, "nothing written by the refused sequencer PUTs");
     }
     {
@@ -407,6 +409,31 @@ int main(void)
         settings_save();
         st_load(CF_SET_OBJ, &after, sizeof after);
         CHECK(!memcmp(&before, &after, sizeof before), "locked: settings_save writes nothing");
+    }
+
+    /* ---- 0.5's mark: an older record's looper bytes are not NOTES IN and the ARP ---- */
+    {
+        cf_set_t s;
+        cs_defaults(&s);
+        CHECK(s.mark == CF_SET_MARK05, "defaults: 0.5's mark set (%02x)", s.mark);
+        s.notes_in = 1;                          /* (0.3.1's looper: BARS 1, MODE Overdub, QUANT 0, COUNT-IN 1) */
+        s.arp_keep = 1;
+        s.mark = 0;
+        cfs_sanitize(&s);
+        CHECK(s.notes_in == CF_NI_KEYS && !s.arp_keep && s.mark == CF_SET_MARK05 && s.rsv_ci == 1,
+              "an older record (no mark): NOTES IN FM-1 keys, ARP off, marked (%u %u %02x)", s.notes_in, s.arp_keep,
+              s.mark);
+        s.notes_in = CF_NI_DIRECT;
+        s.arp_keep = 1;
+        cfs_sanitize(&s);
+        CHECK(s.notes_in == CF_NI_DIRECT && s.arp_keep == 1, "a marked record: NOTES IN and the ARP kept (%u %u)",
+              s.notes_in, s.arp_keep);
+        s.notes_in = 2;
+        s.arp_keep = 0;
+        s.mark = 2;                              /* (QUANT 1/16 set in 0.3.1: still no mark) */
+        cfs_sanitize(&s);
+        CHECK(s.notes_in == CF_NI_KEYS && !s.arp_keep, "BARS 2 and QUANT 2 of 0.3.1: NOTES IN FM-1 keys (%u)",
+              s.notes_in);
     }
 
     /* ---- RESTART ---- */

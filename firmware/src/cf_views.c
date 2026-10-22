@@ -271,7 +271,7 @@ static void view_midi(int x0)
         fb_rect(x0 + 28, ym - 19, 4, 4, lit && on ? C_ACC(0) : FL_BG3);
     }
     for (p = 0; p < 4; p++) {                    /* four lanes 18 px apart, their names on them */
-        int lane = ym - 27 + p * 18, mid = (xa + xb) / 2;
+        int lane = ym - 27 + p * (chs ? 18 : 15), mid = (xa + xb) / 2;   /* (MIDI: closer, NOTES IN's lines below) */
         uint8_t c = on ? (p ? FL_INK2 : C_ACC(1)) : FL_BG3;
         char b[8];
         fb_line(x0 + 48, ym, xa, lane, c);
@@ -296,6 +296,26 @@ static void view_midi(int x0)
         str_cpy(b, "CH ", sizeof b);
         kint(b + 3, ch[p] + 1, 0);
         fb_text_c(&CF_FONT_UI, xb + 23, lane - 6, b, on ? (p ? FL_INK : C_ACC(0)) : FL_INK3, 1);
+    }
+    if (!chs) {                                  /* NOTES IN (0.5): what an outside keyboard's notes do (the
+                                                  * copywriter's words; Direct names the channels set) */
+        char l1[32], l2[32];
+        if (cs.notes_in == CF_NI_ROOTS) {
+            str_cpy(l1, "Every key plays a root.", sizeof l1);
+            str_cpy(l2, "Chord types: on the FM-1", sizeof l2);
+        } else if (cs.notes_in == CF_NI_DIRECT) {
+            str_cpy(l1, "Chord sound ch ", sizeof l1);
+            kint(l1 + str_len(l1), cs.ch_chord + 1, 0);
+            str_cpy(l1 + str_len(l1), ", bass ch ", 11);
+            kint(l1 + str_len(l1), cs.ch_bass + 1, 0);
+            str_cpy(l2, "Note by note, like a synth", sizeof l2);
+        } else {
+            str_cpy(l1, "Plays like the FM-1's own keys", sizeof l1);
+            l2[0] = 0;
+        }
+        fb_text_halo(&CF_FONT_UI, x0 + 108 - fb_text_w(&CF_FONT_UI, l1, 1) / 2, VIEW_Y + 61, l1, FL_INK2, FL_BG, 1);
+        if (l2[0])
+            fb_text_halo(&CF_FONT_UI, x0 + 108 - fb_text_w(&CF_FONT_UI, l2, 1) / 2, VIEW_Y + 72, l2, FL_INK2, FL_BG, 1);
     }
 }
 

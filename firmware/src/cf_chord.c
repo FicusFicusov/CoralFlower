@@ -49,6 +49,13 @@ static int cfc_clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi 
 int cf_key_root_note(const cf_chord_cfg_t *cfg, int key)
 {
     int idx, n;
+    if (key >= CF_KEY_EXT && key < CF_KEY_EXT + 128) {   /* a root from outside: where the FM-1's key of that name
+                                                          * sounds (its octave too), snapped as a piano key */
+        n = key - CF_KEY_EXT;
+        if (cfg->quantize != CF_Q_OFF)
+            n = cf_snap(cfg->scale, cfg->tonic, n, !IS_UPPER_PC[n % 12]);
+        return cfc_clampi(n + 12 * (cfg->octave + CF_OCT_BASE), 0, 127);
+    }
     if (cf_key_role(cfg->algo, key, &idx) != CF_ROLE_ROOT)
         return -1;
     if (cfc_is_top(cfg->algo)) {
@@ -77,8 +84,8 @@ const cf_form_t *cf_button_form(const cf_chord_cfg_t *cfg, int btn)
     return &cfg->side[btn >= 0 && btn < CF_SIDE_NBTN ? btn : 0];
 }
 
-/* Off is a form, not a place: the Top button that holds it plays single notes, wherever it is (the default puts it on
- * the last upper key; a settings record from before keeps it on the first) */
+/* Off is a form, not a place: the Top button that holds it is HOLD (since 0.5; it played single notes before),
+ * wherever it is (the default puts it on the last upper key; a settings record from before keeps it on the first) */
 int cf_is_off(const cf_chord_cfg_t *cfg, int btn)
 {
     return cfc_is_top(cfg->algo) && btn >= 0 && btn < CF_TOP_NBTN && cfg->top[btn].add == CF_OFF_ADD;
@@ -195,6 +202,7 @@ void cf_chord_reset(cf_chord_t *c)
     c->held = c->gesture = c->locked = 0;
     c->toggle = 0;
     c->nroots = 0;
+    c->hold = 0;
 }
 
 static uint16_t cfc_effective(const cf_chord_t *c)
@@ -240,6 +248,15 @@ static uint16_t cfc_used(const cf_chord_t *c, uint16_t eff, int nb)
     return used;
 }
 
+static int cfc_any_down(const cf_chord_t *c)  /* a root key physically down */
+{
+    int i;
+    for (i = 0; i < c->nroots; i++)
+        if (c->root_down[i])
+            return 1;
+    return 0;
+}
+
 static int cfc_resolve(cf_chord_t *c)
 {
     cf_chord_out_t o = c->out, *old = &c->out;
@@ -248,8 +265,8 @@ static int cfc_resolve(cf_chord_t *c)
     int i, nb = cfc_is_top(g->algo) ? CF_TOP_NBTN : CF_SIDE_NBTN, changed;
     /* the lights show the buttons; the notes come from `play`, which follows them except while kept (cfc_root takes
      * them) */
-    if (!(c->keep && c->nroots && !c->bare))
-        c->play = eff;
+    if (!(c->keep && c->nroots && !c->bare && (!c->hold || cfc_any_down(c))))
+        c->play = eff;                            /* (HOLD with no key down: a type tapped changes the held chord) */
     use = c->play;
     off = cfc_is_top(g->algo) ? cfc_off_mask(g) : 0u;
     /* single notes: Off held, or no chord button at all (the owner's rule, 2026-10-15: keys alone play notes, as many
@@ -257,6 +274,7 @@ static int cfc_resolve(cf_chord_t *c)
     o.single = (uint8_t)((use & off) != 0 || use == 0);
     o.buttons = (eff & off) ? eff : cfc_used(c, eff, nb);
     o.sounding = c->nroots > 0;
+    o.hold = c->hold;
     if (!o.sounding) {
         o.n = 0;
     } else if (o.single) {
@@ -329,7 +347,7 @@ static int cfc_resolve(cf_chord_t *c)
         o.form = f;
     }
     changed = o.sounding != old->sounding || o.single != old->single || o.n != old->n ||
-              o.bass_pc != old->bass_pc || o.buttons != old->buttons;
+              o.bass_pc != old->bass_pc || o.buttons != old->buttons || o.hold != old->hold;
     for (i = 0; !changed && i < o.n; i++)
         changed = o.note[i] != old->note[i];
     if (changed)
@@ -349,6 +367,7 @@ void cf_chord_config(cf_chord_t *c, const cf_chord_cfg_t *cfg)
         c->held = c->gesture = c->locked = 0;
         c->toggle = 0;
         c->nroots = 0;
+        c->hold = 0;                              /* (Side has no HOLD key: nothing held over) */
     }
     c->cfg = *cfg;
     cfc_resolve(c);
@@ -379,19 +398,47 @@ static void cfc_button(cf_chord_t *c, int btn, int down)
     }
 }
 
+/* HOLD tapped: on, or off (the roots kept only by it go; the keys still down stay) */
+static void cfc_hold(cf_chord_t *c)
+{
+    int i, k = 0;
+    c->hold = (uint8_t)!c->hold;
+    if (c->hold)
+        return;
+    for (i = 0; i < c->nroots; i++)
+        if (c->root_down[i]) {
+            c->root_key[k] = c->root_key[i];
+            c->root_down[k++] = 1;
+        }
+    c->nroots = (uint8_t)k;
+}
+
 static void cfc_root(cf_chord_t *c, int key, int down)
 {
     int i, k = 0;
+    if (!down && c->hold) {                       /* (HOLD: the root stays, no longer down) */
+        for (i = 0; i < c->nroots; i++)
+            if (c->root_key[i] == key)
+                c->root_down[i] = 0;
+        return;
+    }
+    if (down && c->hold && !cfc_any_down(c))
+        c->nroots = 0;                            /* (HOLD: a press with no key down replaces what it held) */
     for (i = 0; i < c->nroots; i++)
-        if (c->root_key[i] != key)
+        if (c->root_key[i] != key) {
+            c->root_down[k] = c->root_down[i];
             c->root_key[k++] = c->root_key[i];
+        }
     c->nroots = (uint8_t)k;
     if (down) {
         if (c->nroots >= CF_MAX_ROOTS) {
-            for (i = 1; i < c->nroots; i++)
+            for (i = 1; i < c->nroots; i++) {
                 c->root_key[i - 1] = c->root_key[i];
+                c->root_down[i - 1] = c->root_down[i];
+            }
             c->nroots--;
         }
+        c->root_down[c->nroots] = 1;
         c->root_key[c->nroots++] = (uint8_t)key;
         c->play = cfc_effective(c);           /* (a root down: the chord takes the latch as it is now) */
         c->bare = !c->play;                   /* (no button with it: the buttons pressed now apply at once) */
@@ -401,7 +448,14 @@ static void cfc_root(cf_chord_t *c, int key, int down)
 int cf_chord_key(cf_chord_t *c, int key, int down)
 {
     int idx, role = cf_key_role(c->cfg.algo, key, &idx);
-    if (role == CF_ROLE_BUTTON)
+    if (key >= CF_KEY_EXT && key < CF_KEY_EXT + 128) {
+        cfc_root(c, key, down);                   /* (a root from outside: NOTES IN Roots) */
+        return cfc_resolve(c);
+    }
+    if (role == CF_ROLE_BUTTON && cf_is_off(&c->cfg, idx)) {
+        if (down)
+            cfc_hold(c);                          /* (HOLD: a tap; never a chord button, nor in the latch) */
+    } else if (role == CF_ROLE_BUTTON)
         cfc_button(c, idx, down);
     else if (role == CF_ROLE_ROOT)
         cfc_root(c, key, down);

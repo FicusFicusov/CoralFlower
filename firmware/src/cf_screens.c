@@ -4,7 +4,7 @@
 #define fcos_ui(a) fl_fcos(a)                       /* (flora.c's integer sine) */
 #define fsin_ui(a) fl_fsin(a)
 static char cu_name[16], cu_name_sub[12];        /* the chord shown (it stays after the hands let go) */
-static uint8_t cu_name_single;                   /* .. it is single notes (Off) */
+static uint8_t cu_name_single;                   /* .. it is single notes (no chord button) */
 static uint8_t cu_name_live;
 
 static void name_update(void)
@@ -45,15 +45,23 @@ static void snd_num(uint32_t idx, char *b)
     b[2] = (char)('0' + (idx + 1u) % 10u);
     b[3] = 0;
 }
-/* the top bar's sound: number, engine, name */
+/* the top bar's sound: number, engine, name; the pattern's letter after it when the sound is that pattern's own
+ * (0.5: PRESETS / SELECT then change the pattern's, not HOME's) */
 static void draw_top_sound(uint32_t part)
 {
-    char num[4];
+    char num[4], l[2];
     int x = 4;
+    uint32_t cur = sq_cur_pat();
     snd_num(cf_snd_pos(part), num);
     x += fb_text(&CF_FONT_UI, x, Y_TOP + 1, num, FL_INK3, 1) + 5;
     x += fb_text(&CF_FONT_UI, x, Y_TOP + 1, cf_engine_name(cf_snd[part].engine), C_SEC(1), 1) + 5;
-    fb_text(&CF_FONT_UI, x, Y_TOP + 1, cf_snd[part].name, FL_INK, 1);
+    x += fb_text(&CF_FONT_UI, x, Y_TOP + 1, cf_snd[part].name, FL_INK, 1) + 4;
+    if (cur < SQ_NPAT && part < 3u && cfps.r[cur][part].own) {
+        l[0] = (char)('A' + cur);
+        l[1] = 0;
+        fb_rect(x, Y_TOP + 5, 2, 2, FL_INK3);
+        fb_text(&CF_FONT_UI, x + 5, Y_TOP + 1, l, C_ACC(0), 1);
+    }
 }
 
 #include "cf_views.c"                           /* (the heads, the pager, the central pictures) */
@@ -226,7 +234,7 @@ static void draw_sel(void)
     draw_plant(Y_VIEW);
     fb_veil(0, Y_VIEW, FB_W, H_VIEW, FL_BG);   /* (the plant faint: the picture leads) */
     if (cf_is_off(&cs.chord, cu.sel_btn)) {
-        draw_title("OFF", "single notes, no chord");
+        draw_title("HOLD", "Holds notes after you let go");
     } else {                                     /* the button as its key shows it; its chord in words */
         cf_form_label(f, lab);
         str_cpy(b, cf_type_name(f->type), sizeof b);

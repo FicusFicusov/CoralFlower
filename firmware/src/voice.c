@@ -476,7 +476,7 @@ static void trk_note_on(track_t *t, uint32_t note, uint32_t vel)
     if (t->xf_on || t->eng_req != t->engine) {          /* engine switch under way: after the fade */
         for (i = 0; i < t->xp_n && t->xp_note[i] != note; i++)
             ;
-        if (i == t->xp_n && t->xp_n < 4u)
+        if (i == t->xp_n && t->xp_n < TRK_XPN)
             t->xp_n++;
         i = i < t->xp_n ? i : t->xp_n - 1u;             /* (full: the last one is replaced) */
         t->xp_note[i] = (uint8_t)note;

@@ -5,7 +5,8 @@
  *
  * dump also counts what went out on MIDI since the start (clock, start, stop, note-ons by channel).
  * Script lines ('#' lines are comments): wait MS | key K down|up (K: 0..26 or a note name such as C4; keyq: the same with
- *   no time after it, for keys pressed at once) | clock BPM MS (MIDI clock in) | midi start|continue|stop | btn NAME (a tap: FX SEL
+ *   no time after it, for keys pressed at once) | clock BPM MS (MIDI clock in) | midi start|continue|stop | mnote NOTE VEL
+ *   (an outside keyboard's note, channel 1; VEL 0 lets it go) | btn NAME (a tap: FX SEL
  * ENV LFO EDIT GLO HOME SAVE ARP SEQ PLAY REC OCT- OCT+) | hold NAME down|up | turn ROLE N (SELECT ALGORITHM PRESETS
  * K1..K4 MASTER) | shot NAME (OUTDIR/NAME.ppm) | dump (the firmware's state) | wav on|off (OUTDIR/out.wav)
  * CF_BOOT_MS (default 1600): how long it runs before the script; a small one lets shots catch the intro.
@@ -196,6 +197,11 @@ int main(int argc, char **argv)
                 done++;
                 t += 1.0;
             }
+        } else if (!strcmp(cmd, "mnote")) {        /* mnote NOTE VEL: an outside keyboard's note on channel 1 (VEL 0: off) */
+            int nt = atoi(a) & 127, vl = atoi(b) & 127;
+            web_midi_in(vl ? 0x09u | 0x90u << 8 | (uint32_t)nt << 16 | (uint32_t)vl << 24
+                           : 0x08u | 0x80u << 8 | (uint32_t)nt << 16);
+            step(1);
         } else if (!strcmp(cmd, "midi")) {         /* midi start | continue | stop */
             web_midi_in(0x0Fu | (!strcmp(a, "start") ? 0xFAu : !strcmp(a, "continue") ? 0xFBu : 0xFCu) << 8);
             step(1);

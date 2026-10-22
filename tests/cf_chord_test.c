@@ -1,5 +1,5 @@
-/* CoralFlower: tests of cf_chord.c (the four algorithms, combining, Lock, Quantize, Off and no button: single
- * notes, inversion, bass degree).
+/* CoralFlower: tests of cf_chord.c (the four algorithms, combining, Lock, Quantize, no button: single notes, HOLD on
+ * the Off form's key, inversion, bass degree).
  *   cc -std=c99 -Wall -Wextra -Ifirmware/src -o build/cf_chord_test tests/cf_chord_test.c firmware/src/cf_chord.c \
  *      firmware/src/cf_theory.c
  * Keys: key k is MIDI 53 + k (F3 = 0). Upper keys 1 3 5 8 10 13 15 17 20 22 25; lower 0 2 4 6 7 9 11 12 14 ...
@@ -140,15 +140,13 @@ int main(void)
     CHECK(C.out.buttons == (1u << 2), "M6 let go: m lit again (got %x)", C.out.buttons);
     up(5);
 
-    /* Off: single notes, polyphonic */
-    down(1);
+    /* no button: single notes, polyphonic */
     down(7);
     down(11);
-    CHECK(C.out.single, "Off is single notes");
+    CHECK(C.out.single, "no button: single notes");
     NOTES("single C and E", 60, 64);
     up(7);
     up(11);
-    up(1);
 
     /* Lock: a tap latches, the same tap unlatches; two at once latch together */
     setup(CF_ALG_TOP_LOCK, CF_Q_BASIC, 0, CF_SC_MAJOR);
@@ -189,14 +187,24 @@ int main(void)
     NOTES("D let go, C still held: the latch taken stays, Cmaj7", 60, 64, 67, 71);
     down(1);
     up(1);
-    CHECK(!C.out.single, "Off tapped under the held root: the chord stays");
+    CHECK(C.out.hold && C.out.buttons == 1u << 6, "HOLD tapped under the held root: on, the latch (M7) as it was (%03x)",
+          C.out.buttons);
+    NOTES("HOLD tapped: the chord stays, Cmaj7", 60, 64, 67, 71);
     up(7);
-    down(7);
-    CHECK(C.out.single, "the next root: single notes (Off)");
-    up(7);
-    C.keep = 0;
+    NOTES("C let go under HOLD: Cmaj7 sounds on", 60, 64, 67, 71);
+    down(9);
+    up(9);
+    NOTES("HOLD: a root pressed with none down replaces the held one: Dmaj7", 62, 66, 69, 73);
+    down(22);
+    up(22);
+    NOTES("HOLD, no key down, keep on: m7 tapped changes the held chord at once: Dm7", 62, 65, 69, 72);
     down(1);
     up(1);
+    CHECK(!C.out.hold && !C.out.sounding && C.out.n == 0, "HOLD tapped again, no key down: everything let go (%s)",
+          dump());
+    C.keep = 0;
+    down(22);                                    /* (the latch back to none) */
+    up(22);
     /* keep in Top (not Lock): a button under a root that went down with one changes nothing; held when the next
      * root goes down, it plays */
     setup(CF_ALG_TOP, CF_Q_BASIC, 0, CF_SC_MAJOR);
@@ -331,16 +339,42 @@ int main(void)
     up(7);
     up(3);
 
-    /* Off in the first builds' place (button 0): single notes, several at once */
+    /* the Off form in the first builds' place (button 0): HOLD is there; keys pressed together are held together */
     setup(CF_ALG_TOP, CF_Q_BASIC, 0, CF_SC_MAJOR);
     down(1);
+    up(1);
+    CHECK(C.out.hold && !C.out.buttons, "old order: the Off form's key (button 0) is HOLD, never a chord button");
     down(7);
     down(11);
-    CHECK(C.out.single, "old order: Off (button 0) plays single notes");
-    NOTES("old order: Off + C + E: both notes, no chord", 60, 64);
     up(11);
     up(7);
+    CHECK(C.out.single, "old order, HOLD: no button, single notes");
+    NOTES("old order, HOLD: C and E pressed together sound on after they go up", 60, 64);
+    down(14);
+    NOTES("HOLD: a new press after all were up replaces them: G", 67);
+    down(9);
+    NOTES("HOLD: one pressed while G is down joins it: D and G", 62, 67);
+    up(9);
+    up(14);
+    NOTES("HOLD: D and G held", 62, 67);
+    down(14);
+    down(1);
     up(1);
+    CHECK(!C.out.hold, "HOLD off");
+    NOTES("HOLD off with G down: G stays, D goes", 67);
+    up(14);
+    CHECK(!C.out.sounding, "G let go: silence");
+    down(1);
+    up(1);
+    down(7);
+    up(7);
+    {
+        cf_chord_cfg_t s = G;
+        s.algo = CF_ALG_SIDE;
+        cf_chord_config(&C, &s);
+        CHECK(!C.out.hold && !C.out.sounding, "Side chosen: HOLD off, nothing held over (Side has no HOLD key)");
+        cf_chord_config(&C, &G);
+    }
 
     /* the default order: M6 M7 M9 | s2 s4 | m6 m7 m9 | M m | Off, Off on the last upper key */
     cf_chord_defaults(&G);
@@ -349,16 +383,20 @@ int main(void)
     CHECK(cf_is_off(&G, 10) && !cf_is_off(&G, 0), "default: Off is the last button, the first is a chord");
     CHECK(G.top[0].type == CF_T_MAJ && G.top[0].add == CF_A_6 && G.top[8].type == CF_T_MAJ && G.top[8].add == 0 &&
           G.top[9].type == CF_T_MIN && G.top[9].add == 0, "default: M6 first, M and m before Off");
-    down(25);
     down(7);
     down(11);
     down(14);
-    CHECK(C.out.single, "default: Off (key 25) plays single notes");
-    NOTES("default: Off + C + E + G: three notes, an octave under the printed pitch (octave 0)", 48, 52, 55);
+    CHECK(C.out.single, "default: no button, single notes");
+    NOTES("default: C + E + G: three notes, an octave under the printed pitch (octave 0)", 48, 52, 55);
     up(14);
     up(11);
     up(7);
+    down(25);
     up(25);
+    CHECK(C.out.hold && !C.out.buttons, "default: key 25 (the last upper key) is HOLD");
+    down(25);
+    up(25);
+    CHECK(!C.out.hold, "default: HOLD tapped again, off");
     down(7);
     CHECK(C.out.single && C.out.n == 1, "default: a root alone plays its note (%s)", dump());
     up(7);
@@ -370,13 +408,48 @@ int main(void)
     cf_chord_defaults(&G);
     G.algo = CF_ALG_TOP_LOCK;
     cf_chord_init(&C, &G);
+    down(3);                                     /* (M7's key in the default order: M6 M7 M9 ..) */
+    up(3);
     down(25);
     up(25);
+    CHECK(C.out.hold && C.out.buttons == 1u << 1, "default, Lock: HOLD on beside the latch, which stays (%03x)",
+          C.out.buttons);
     down(7);
-    down(11);
-    CHECK(C.out.single && C.out.n == 2, "default, Lock: Off tapped stays on, two keys: two notes (%s)", dump());
-    up(11);
     up(7);
+    CHECK(!C.out.single && C.out.n == 4 && C.out.sounding, "default, Lock, HOLD: Cmaj7 sounds on after C goes up (%s)",
+          dump());
+    down(3);
+    up(3);
+    CHECK(C.out.single && C.out.n == 1, "default, Lock, HOLD: the lit M7 tapped again unlatches: the held C alone (%s)",
+          dump());
+
+    /* roots from outside (0.5, NOTES IN Roots): key CF_KEY_EXT + a MIDI note, the type from the FM-1's buttons */
+    setup(CF_ALG_TOP_LOCK, CF_Q_BASIC, 0, CF_SC_MAJOR);
+    down(22);                                    /* (m7 latched, the old order's) */
+    up(22);
+    down(CF_KEY_EXT + 64);
+    NOTES("outside root E (64) under the latched m7: Em7 at the printed pitch", 64, 67, 71, 74);
+    up(CF_KEY_EXT + 64);
+    CHECK(!C.out.sounding, "outside root let go: silence");
+    down(CF_KEY_EXT + 66);
+    NOTES("outside root F# (66), Quantize Basic in C major: snapped down to F, Fm7", 65, 68, 72, 75);
+    up(CF_KEY_EXT + 66);
+    down(1);                                     /* (HOLD, the old order's button 0) */
+    up(1);
+    down(CF_KEY_EXT + 60);
+    up(CF_KEY_EXT + 60);
+    NOTES("HOLD: an outside root held after it goes up: Cm7", 60, 63, 67, 70);
+    down(9);                                     /* (the FM-1's own D: replaces it) */
+    up(9);
+    NOTES("HOLD: the FM-1's D replaces the outside C: Dm7", 62, 65, 69, 72);
+    down(1);
+    up(1);
+    CHECK(!C.out.sounding, "HOLD off: silence");
+    G.quantize = CF_Q_OFF;
+    cf_chord_config(&C, &G);
+    down(CF_KEY_EXT + 66);
+    NOTES("Quantize Off: the outside F# as it is, F#m7", 66, 69, 73, 76);
+    up(CF_KEY_EXT + 66);
 
     printf("cf_chord: %d checks, %d failures\n", checks, fails);
     return fails != 0;

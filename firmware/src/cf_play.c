@@ -43,6 +43,7 @@ typedef struct {                /* the looper's settings up to 0.3.1: unused sin
 static int cfp_holds(uint32_t part, uint32_t note);   /* (below: a note the keys' player sounds) */
 static int sqp_holds(uint32_t part, uint32_t note);   /* (cf_seqp.c: a note the sequencer sounds) */
 
+enum { CF_NI_KEYS = 0, CF_NI_ROOTS, CF_NI_DIRECT, CF_NI_N };   /* NOTES IN (0.5): the FM-1's keys, roots, as before */
 typedef struct {
     uint16_t glide_ms;          /* 0 = Off */
     uint8_t glide_always;       /* 1 Always: a chord after a release glides from the last one; 0 Legato: only held */
@@ -65,6 +66,8 @@ typedef struct {
     uint8_t ch_layer, ch_drums; /* the sequencer's LAYER (part 2) and DRUMS (part 3) out on MIDI, 0..15 */
     uint8_t bass_only;          /* the keys play the bass alone (the sequencer's BASS in the frame: its row, its track,
                                  * its take), HOME's bass switch or not; no chord */
+    uint8_t notes_in;           /* GLO > MIDI > NOTES IN (CF_NI_*): notes in play the parts directly
+                                 * (Direct), else they go to the UI as the FM-1's keys or as roots (cf_out.c cf_xq) */
 } cf_play_cfg_t;
 
 /* the beat grid the arpeggiator locks to while the metronome's clock runs (cf_out.c cfm_tick writes it): on, where it
@@ -485,7 +488,7 @@ static void cfp_sync(int how)
 #define CFP_GATHER_MS 50u                            /* a button this soon after a root is still that chord's */
 static void cfp_key(int key, int down)
 {
-    int idx, role = cf_key_role(cfc.cfg.algo, key, &idx);
+    int idx, role = key >= CF_KEY_EXT ? CF_ROLE_ROOT : cf_key_role(cfc.cfg.algo, key, &idx);   /* (an outside root) */
     /* RETRIG Wait: a button under held keys waits for the next root; but one pressed or let go just after a root went
      * down (fingers are never quite together) still makes that root's chord */
     cfc.keep = cfp_cfg.retrig == CF_RT_WAIT &&
@@ -499,9 +502,10 @@ static void cfp_key(int key, int down)
 
 static void cfp_config(void)                         /* CFE_CONFIG: the UI's settings */
 {
-    uint8_t was = cfa.on, latched = cfa.latched, i;
+    uint8_t was = cfa.on, latched = cfa.latched, i, moved = 0;
     if (cfp_cfg.cpart != cfp_cp || cfp_cfg.bass_only != cfp_bo) {   /* the keys move to another part: what they
                                                      * sound there goes */
+        moved = 1;
         cfa_stop();
         for (i = 0; i < cfp.n; i++)
             cfp_off(cfp_cp, cfp.note[i]);
@@ -521,8 +525,9 @@ static void cfp_config(void)                         /* CFE_CONFIG: the UI's set
                 cfp_off(cfp_cp, cfp.note[i]);
         cfp.n = 0;                                   /* (switched off: cfa_config let its notes go) */
         cfp_sync(1);
-    } else if (cfc.out.serial != cfp.serial || latched != cfa.latched) {
-        cfp_sync(1);
+    } else if (moved || cfc.out.serial != cfp.serial || latched != cfa.latched) {
+        cfp_sync(1);                                 /* (moved: the chord still held, by HOLD or fingers, sounds on the
+                                                      * keys' new part; it went silent while HOLD stayed lit) */
     }
 }
 
