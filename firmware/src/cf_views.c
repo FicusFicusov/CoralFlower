@@ -1346,3 +1346,30 @@ static void view_save(int x0)
     }
 }
 
+
+/* ------------------------------------------------- GLOBAL > GRAIN, PITCH, HOLD --- */
+/* the ring (the last ~0.7 s of the music, the newest on the right) as a bar, a grain's place and width on it (POS, SIZE),
+ * and as many specks above it as DENS says, scattered by RAND; the layer dark while MIX is 0 */
+static void view_grain(int x0)
+{
+    int xl = x0 + 14, xr = x0 + 194, w = xr - xl, y = VIEW_Y + 26, i, n;
+    int on = cgr.mix != 0;
+    int gw = 4 + (int)cgr.size * (w / 2) / 100;
+    int gx = xr - gw - (int)cgr.pos * (w - gw) / 100;
+    uint32_t seed = (cu.now >> 7) * 40503u;
+    fb_rect(xl, y, w, 10, FL_BG3);
+    fb_rect(gx, y, gw, 10, on ? C_ACC(1) : FL_INK3);
+    if (cgr.freeze)
+        fb_rect(xr - 2, y - 3, 2, 16, C_ACC(0));              /* the head, stopped */
+    n = 2 + (int)cgr.dens * 12 / 100;
+    for (i = 0; i < n; i++) {
+        uint32_t h = (uint32_t)(i + 1) * 2654435761u + seed;
+        int jx = (((int)((h >> 8) & 255u) - 128) * (int)cgr.rnd * w) / (100 * 256 * 2);
+        int px = gx + gw / 2 + jx, py = y - 6 - (int)((h >> 20) & 15u);
+        px = px < xl ? xl : px > xr - 2 ? xr - 2 : px;
+        fb_rect(px, py, 2, 2, on ? C_ACC(0) : FL_INK3);
+    }
+    fb_text_halo(&CF_FONT_UI, xl, y + 16, "older", FL_INK3, FL_BG, 1);
+    fb_text_r(&CF_FONT_UI, xr, y + 16, cgr.freeze ? "frozen" : "now", cgr.freeze ? C_ACC(0) : FL_INK3, 1);
+    fb_text_halo(&CF_FONT_UI, xl, y + 34, on ? "grains cut from the music" : "MIX is 0: grain is off", FL_INK2, FL_BG, 1);
+}

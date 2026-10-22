@@ -130,6 +130,7 @@ static void kpc(char *b, int pc)
 
 #include "cf_edit.c"                             /* (the ENV and EDIT screens' engine side) */
 #include "cf_fxui.c"                             /* (the FX screen's controls) */
+#include "cf_granui.c"                           /* (GLO's GRAIN pages: cf_gran.c's controls) */
 static void cv_turned(int d);
 #include "cf_sequi.c"                            /* (the SEQUENCER screens' controls) */
 
@@ -312,6 +313,10 @@ static void ui_knob_info(int k, cf_knob_t *o)
     case SCR_SQ:
     case SCR_SQED: sq_knob_info(k, o); break;
     case SCR_GLO:
+        if (cu.page[SCR_GLO] >= CG_PAGE0) {      /* the GRAIN pages */
+            cg_knob_info(cu.page[SCR_GLO] - CG_PAGE0, k, o);
+            break;
+        }
         switch (cu.page[SCR_GLO]) {
         case 0: /* Display */
             if (k == 0) { kfmt(o->name, 12, "COLOR"); kfmt(o->val, 14, CF_THEMES[cs.accent % CF_NTHEMES].name); }
@@ -502,6 +507,10 @@ static void ui_knob_turn(int k, int d)
     case SCR_SQ:
     case SCR_SQED: sq_knob_turn(k, d); break;
     case SCR_GLO:
+        if (cu.page[SCR_GLO] >= CG_PAGE0) {      /* the GRAIN pages */
+            cg_knob_turn(cu.page[SCR_GLO] - CG_PAGE0, k, d);
+            break;
+        }
         switch (cu.page[SCR_GLO]) {
         case 0:
             if (k == 0)
@@ -591,7 +600,7 @@ static void ui_say(const char *a, const char *b)
 static uint32_t screen_pages(uint32_t scr)
 {
     if (scr == SCR_GLO)
-        return 5u;                               /* Display, MIDI, Channels, Play, Reset */
+        return 5u + CG_NPAGE;                    /* Display, MIDI, Channels, Play, Reset, Grain, Pitch, Hold */
     if (scr == SCR_ENV)
         return 3u;                               /* chord + bass, chord, bass */
     if (scr == SCR_ARP)

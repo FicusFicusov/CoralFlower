@@ -668,6 +668,7 @@ static void cf_fx_chain(int32_t *l, int32_t *r, uint32_t n)
         cfx_filter_coefs();
     }
     cfx_xf_prepare();
+    cf_gran_run(l, r, n);                        /* (the granular layer first: the effects then act on its sound) */
     for (i = 0; i < CFX_N; i++) {
         uint32_t e = cfx_set.order[i];
         int on = e < CFX_N && ((cfx_set.on >> e) & 1u);
