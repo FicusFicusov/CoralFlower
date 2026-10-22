@@ -1,6 +1,19 @@
 {
  "releases": [
   {
+   "version": "0.5",
+   "tag": "v0.5",
+   "sha256": "ab7d0744eed0c83d62be39da9d63c5618e1bccc94de2931a9145a7d4b723b0bb",
+   "pkg": "coralflower-0.5.fwsc",
+   "date": "2026-10-22",
+   "title": "A sound for every pattern",
+   "notes": [
+    "Each pattern can have its own sounds, and the song switches them block by block.",
+    "A HOLD key keeps your chord playing after you let go.",
+    "A MIDI keyboard can play the FM-1's keys, or play roots while you pick chord types."
+   ]
+  },
+  {
    "version": "0.4.2",
    "tag": "v0.4.2",
    "sha256": "52a8c1b8bbf790d4d73f4e11679f0b4437ca028a9276187005c3154178e55169",
