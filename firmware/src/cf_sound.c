@@ -502,6 +502,10 @@ static void cf_tail_take(uint32_t part)
     memcpy(fx_sg[NTRK], fx_sg[part], sizeof fx_sg[0]);
     midi_bend_q8[NTRK] = midi_bend_q8[part];
     midi_bend_target[NTRK] = midi_bend_target[part];
+#if CF_VLOAD
+    vl_cost[NTRK] = vl_cost[part];               /* (its voices' cost, as measured: voice.c) */
+    vl_mark[NTRK] = vl_mark[part];
+#endif
     for (i = 0; i < NVOICE; i++) {               /* the part: no voice of its own left, the new sound starts afresh */
         s->v[i].active = s->v[i].gate = 0;
         s->v[i].stage = 0;

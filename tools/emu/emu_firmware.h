@@ -47,6 +47,11 @@
 #define CF_NTAIL 1u                /* as coralflower.c: the tail */
 #define TRK_GLIDE(t) ((t) == &trk[2] ? (t)->p[P_GLIDE] : 0)   /* voice.c: only the LAYER's sound glides itself; the
                                     * chords glide by their player (cf_play.c), the bass with them */
+#define CF_VLOAD 1                 /* as coralflower.c: voices by the measured load (voice.c); the clock is the HAL's */
+static uint32_t fm1_ticks(void);   /* (emu_hal_fw.h, after the firmware's first part) */
+#define VL_NOW() fm1_ticks()
+static void cf_boot_note(void);    /* as coralflower.c */
+#define VOICE_NEW_NOTE() cf_boot_note()
 #ifndef MIX_NPART
 #define MIX_NPART 4u
 #endif

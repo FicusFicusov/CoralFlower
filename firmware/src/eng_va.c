@@ -1392,17 +1392,17 @@ static const eng_deep_t VA_DEEP = {
 };
 
 
-/* the voices a patch may sound at once (engine_t.cap): VA_POLY for a light patch, fewer for a heavy one, so a player's
- * release tails cannot take the core past its time (CoralFlower 0.5, the owner's "Только программа": the heaviest pads
- * keep fewer voices in fast playing). A voice's cost, measured in the emulator (host instructions per block, rc2):
- * ~2.5 % of the block, + ~0.35 an oscillator sounding, + ~0.4 more for a MORPH one, + ~1.3 for a second SVF (SPREAD, a
- * filter between two types, USPREAD); AURORA ~7.2. In twentieths of a percent, over a budget of ~32 % a part */
-static uint32_t va_cap(const track_t *t)
+#if CF_VLOAD
+/* a voice's cost for voice.c's load count (CF_VLOAD) until the unit has measured the sound itself: from the patch, in
+ * twentieths of a percent of the block (the emulator's model, host instructions per block, rc2): ~2.5 % a voice, +
+ * ~0.35 an oscillator sounding, + ~0.4 more for a MORPH one, + ~1.3 for a second SVF (SPREAD, a filter between two
+ * types, USPREAD); AURORA ~6.8. Also the sound's mark: a patch of another cost is another sound to measure */
+static uint32_t va_cost(const track_t *t)
 {
     uint32_t tr = va_tr(t), k, c = 50u, on = 0;
     const int8_t *p;
-    if (tr >= VA_NPART)
-        return VA_POLY;
+    if (tr >= VA_NSLOT)
+        return c;
     p = va_patch[tr];
     for (k = 0; k < 4u; k++)
         on |= (uint32_t)(p[VA_OSC(k, VO_LEVEL)] > 0) << k;
@@ -1415,9 +1415,9 @@ static uint32_t va_cap(const track_t *t)
             c += p[VA_OMODE0 + k] == VOM_MORPH ? 15u : 7u;
     if (p[VA_FSPREAD] || (p[VA_FTYPE] & 31) || p[VA_USPREAD])
         c += 26u;
-    k = 640u / c;
-    return k < 4u ? 4u : k > VA_POLY ? VA_POLY : k;
+    return c;
 }
+#endif
 
 static const engine_t ENG_VA = {
     .name = "VA",
@@ -1436,7 +1436,6 @@ static const engine_t ENG_VA = {
     .npresets = NELEM(VA_PRESETS),
     .knob = {P_E0, P_E1, P_E6, P_E7},
     .poly = VA_POLY,
-    .cap = va_cap,
     .keep = 0x03,                /* the filter */
     .note_on = va_note_on,
     .render = va_render_mono,

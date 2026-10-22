@@ -44,6 +44,11 @@
 #define CF_NTAIL 1u                /* core.h: the tail, trk[NTRK] (cf_sound.c cf_tail_take): an outgoing sound rings out */
 #define TRK_GLIDE(t) ((t) == &trk[2] ? (t)->p[P_GLIDE] : 0)   /* voice.c: only the LAYER's sound glides itself; the
                                     * chords glide by their player (cf_play.c), the bass with them */
+#define CF_VLOAD 1                 /* voice.c: a sound sounds as many voices as the core has time for, by the
+                                    * measured load (the owner: "пока хватает производительности — не ограничивать") */
+#define VL_NOW() fm1_ticks()
+static void cf_boot_note(void);            /* (cf_fx.c) */
+#define VOICE_NEW_NOTE() cf_boot_note()    /* voice.c: a new note, the power-on sound gives way */
 #define FELUCCA_ANALOG 0
 #define FELUCCA_PHASE 0
 #define FELUCCA_LOFI 0

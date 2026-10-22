@@ -230,6 +230,7 @@ void emu_fw_idle(void)                            /* main.c: the input scan whil
     fm1_irq_on();
 }
 
+static uint32_t emu_model_over85, emu_model_over100, emu_model_max;   /* CF_LOADMODEL, since the last dump */
 void emu_fw_audio(int16_t *out, uint32_t frames)  /* the ALNK0 ISR, one half buffer per EMU_BLOCK */
 {
     uint32_t f, i;
@@ -251,7 +252,21 @@ void emu_fw_audio(int16_t *out, uint32_t frames)  /* the ALNK0 ISR, one half buf
             continue;
         }
         emu_half ^= 1u;
+        if (emu_model_instr) {                    /* (CF_LOADMODEL: the half's clock, emu_hal_fw.h) */
+            emu_model_t0 += HALF_FRAMES * 1000000u / 44100u;
+            emu_model_i0 = emu_model_instr();
+            emu_model_n = 0;
+            emu_model_calls++;
+        }
+        emu_in_audio = 1;
         fm1_alnk0_irq();
+        emu_in_audio = 0;
+        if (emu_model_instr) {                    /* (the halves the unit would have rendered too slowly: dump) */
+            uint32_t us = felucca_dbg.last_us;
+            emu_model_over85 += us * 100u > (HALF_FRAMES * 1000000u / 44100u) * 85u;
+            emu_model_over100 += us > HALF_FRAMES * 1000000u / 44100u;
+            emu_model_max = us > emu_model_max ? us : emu_model_max;
+        }
         h = &abuf[emu_half * HALF_WORDS];
         fm1_irq_on();
         for (i = 0; i < HALF_WORDS; i++) {        /* 24-bit (Q15 << OUT_SHIFT) -> Q15 = 0 dBFS */
@@ -362,6 +377,21 @@ void emu_fw_dump(void)
         printf("\n");
     }
 #endif
+    if (emu_model_instr) {                       /* (CF_LOADMODEL: the unit's load as the firmware measured it) */
+        printf("  load: max %u us of %u, halves over 85 %% %u, over 100 %% %u, guard sheds %u, kills %u, steals %u;"
+               " voice cost us", (unsigned)emu_model_max, (unsigned)(HALF_FRAMES * 1000000u / 44100u),
+               (unsigned)emu_model_over85, (unsigned)emu_model_over100, (unsigned)shed_count, (unsigned)voice_kills,
+               (unsigned)voice_steals);
+#if CF_VLOAD
+        for (i = 0; i < NSND; i++)
+            printf(" %u", (unsigned)vl_cost_of(&trk[i]));
+        printf("; caps");
+        for (i = 0; i < NPART; i++)
+            printf(" %u", (unsigned)trk_nvoice(&trk[i]));
+#endif
+        printf("\n");
+        emu_model_over85 = emu_model_over100 = emu_model_max = 0;
+    }
     printf("  plant: %s, segments %u, tiles sent %u\n", flo.species ? "coral" : "plant", (unsigned)flo.nseg,
            (unsigned)fb_tiles_sent);
     printf("  chord: root %u, notes", (unsigned)cf_sn.out.root_note);

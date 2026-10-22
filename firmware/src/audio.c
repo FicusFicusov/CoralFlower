@@ -170,6 +170,16 @@ static void shed_voice(void)
         shed_count++;
         return;
     }
+#if CF_VLOAD
+    for (p = 0; p < NPART && !best; p++)                /* (CoralFlower: a chord's fifth first, voice.c vl_fifth) */
+        if (trk_vmode(&trk[p]) == V_POLY && (i = vl_fifth(&trk[p], NVOICE, 128u)) < NVOICE)
+            best = &trk[p].v[i];
+    if (best) {
+        voice_kill(best);
+        shed_count++;
+        return;
+    }
+#endif
     for (p = 0; p < NPART; p++) {
         const track_t *t = &trk[p];
         uint32_t mode = trk_vmode(t), low = mode == V_POLY ? lowest_held(t) : 0u;
@@ -264,6 +274,9 @@ void fm1_alnk0_irq(void)                       /* via isr_alnk0 (hal/fm1_isr.S) 
         felucca_dbg.halves++;
         felucca_dbg.last_us = us;
         voice_tight = (uint8_t)(us * 10u > (HALF_FRAMES * 1000000u / FS) * 7u);   /* (over 70 %: voice.c) */
+#if CF_VLOAD
+        vl_half(us, FM1_TICKS_PER_US);                  /* (voice.c: the next half's voices count from it) */
+#endif
         if (us > felucca_dbg.max_us)
             felucca_dbg.max_us = us;
         felucca_dbg.cpu_q8 = song.cpu_q8;

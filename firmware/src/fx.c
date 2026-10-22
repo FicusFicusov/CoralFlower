@@ -1238,6 +1238,12 @@ static __attribute__((noinline)) void perf_master(int32_t *out, uint32_t n)
 }
 #endif
 
+#if CF_VLOAD                                            /* (voice.c: each part's time, for its voices' cost) */
+#define MIX_PART(t, n) do { uint32_t vl0_ = VL_NOW(); mix_part(t, n); vl_part(t, VL_NOW() - vl0_); } while (0)
+#else
+#define MIX_PART(t, n) mix_part(t, n)
+#endif
+
 static void mix_block(int32_t *out, uint32_t n)
 {
     uint32_t i;
@@ -1264,14 +1270,14 @@ static void mix_block(int32_t *out, uint32_t n)
     }
 #endif
     for (; i < MIX_NPART; i++)
-        mix_part(&trk[i], n);
+        MIX_PART(&trk[i], n);
     for (; i < NPART; i++)
         mix_part_idle(&trk[i], n);
 #if CF_NTAIL
     for (i = 0; i < NVOICE && !trk[NTRK].v[i].active; i++)
         ;
     if (i < NVOICE)                                     /* the tail, while it rings (CoralFlower: cf_sound.c) */
-        mix_part(&trk[NTRK], n);
+        MIX_PART(&trk[NTRK], n);
 #endif
 #if FELUCCA_PERFORM
     if (perf)

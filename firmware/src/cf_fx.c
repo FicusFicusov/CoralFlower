@@ -653,6 +653,14 @@ static int cf_boot_yield(void)
     return 1;
 }
 #define SHED_FIRST() cf_boot_yield()
+/* voice.c VOICE_NEW_NOTE: a note starts while the power-on sound rings: it gives way at once. It takes about half the
+ * core at its start, and a chord beside it took the half past the guard's line: the guard let it go only two halves
+ * later and, a half after that, still cut a note of the chord (rc3, the emulator's CF_LOADMODEL) */
+static void cf_boot_note(void)
+{
+    if (cfb.on)
+        cfb.yield = 1;
+}
 
 static void cf_fx_chain(int32_t *l, int32_t *r, uint32_t n)
 {
@@ -681,7 +689,15 @@ static void cf_fx_chain(int32_t *l, int32_t *r, uint32_t n)
         default: break;
         }
     }
+#if CF_VLOAD
+    {
+        uint32_t vl0 = VL_NOW();
+        cf_boot_mix(l, r, n);                    /* (the power-on sound: after the effects, before MASTER) */
+        vl_aside_ticks += VL_NOW() - vl0;        /* (voice.c: it gives way, the parts' voices do not wait for it) */
+    }
+#else
     cf_boot_mix(l, r, n);                        /* (the power-on sound: after the effects, before MASTER) */
+#endif
     {
         int32_t pk = 0;
         for (i = 0; i < n; i++) {

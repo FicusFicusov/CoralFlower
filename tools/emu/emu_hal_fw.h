@@ -9,9 +9,26 @@
 static uint64_t emu_t0_ns;
 static volatile uint32_t emu_sim_us;              /* --bench: simulated time */
 static uint8_t emu_sim;
+/* cf_headless CF_LOADMODEL=x (emu_web.c web_load_model): inside the audio ISR the clock counts the host's
+ * instructions as the unit's time, x times the model's (5882 a sample = the whole block; the unit ~1.9x), each half
+ * starting on its boundary. The firmware's own load measure (audio.c's guard, voice.c CF_VLOAD) then works as it does
+ * on the unit */
+static uint64_t (*emu_model_instr)(void);
+static uint32_t emu_model_milli, emu_model_t0;
+static uint64_t emu_model_i0;
+static uint32_t emu_model_ovh, emu_model_n;       /* a read's own instructions (the counter is a system call),
+                                                   * taken out again; the reads since i0 */
+static uint64_t emu_model_calls;                  /* .. all of them (emu_web.c's perf takes them out too) */
+static uint8_t emu_in_audio;
 static uint32_t fm1_ticks(void)
 {
     struct timespec ts;
+    if (emu_in_audio && emu_model_instr) {
+        uint64_t i = emu_model_instr(), own = (uint64_t)++emu_model_n * emu_model_ovh;
+        emu_model_calls++;
+        i = i - emu_model_i0 > own ? i - emu_model_i0 - own : 0u;
+        return emu_model_t0 + (uint32_t)(i * emu_model_milli / 259400u);
+    }
     if (emu_sim)
         return emu_sim_us;
     clock_gettime(CLOCK_MONOTONIC, &ts);

@@ -11,7 +11,10 @@
  * K1..K4 MASTER) | shot NAME (OUTDIR/NAME.ppm) | dump (the firmware's state) | wav on|off (OUTDIR/out.wav)
  * CF_BOOT_MS (default 1600): how long it runs before the script; a small one lets shots catch the intro.
  * CF_FLASH=PATH: the flash image read before the boot and written after the script (a file that is not there yet:
- * a fresh flash), so a second run sees what the first one saved. */
+ * a fresh flash), so a second run sees what the first one saved.
+ * CF_LOADMODEL=X (macOS): the audio ISR's clock counts the host's instructions as the unit's time, X times the
+ * model's (1.9: the unit as measured), so the firmware's load guard and voice count (voice.c CF_VLOAD) act as on the
+ * unit; perf then also counts the clock's own reads. */
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,6 +24,7 @@ extern void web_boot(void);
 extern void web_step(uint32_t n);
 extern void web_perf_reset(void);
 extern void web_perf_print(const char *label);
+extern void web_load_model(uint32_t milli);
 extern void web_buttons(uint32_t m);
 extern void web_keys(uint32_t m);
 extern int web_midi_in(uint32_t pkt);           /* a USB-MIDI packet (a 1-byte message: 0x0F | status << 8) */
@@ -154,6 +158,8 @@ int main(int argc, char **argv)
     }
     if (getenv("CF_RENDER_MS"))                 /* (a device's frame: the keys wait while it draws) */
         emu_render_ms = (uint32_t)atoi(getenv("CF_RENDER_MS"));
+    if (getenv("CF_LOADMODEL"))
+        web_load_model((uint32_t)(atof(getenv("CF_LOADMODEL")) * 1000.0 + 0.5));
     web_boot();
     step(getenv("CF_BOOT_MS") ? (uint32_t)atoi(getenv("CF_BOOT_MS")) : 1600u);   /* (0: the script sees the intro) */
     while (fgets(line, sizeof line, s)) {

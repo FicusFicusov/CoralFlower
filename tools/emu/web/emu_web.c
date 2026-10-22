@@ -90,6 +90,21 @@ static uint64_t perf_instr(void)
 #else
 static uint64_t perf_instr(void) { return 0; }
 #endif
+void web_load_model(uint32_t milli)              /* cf_headless CF_LOADMODEL: the ISR's clock (emu_hal_fw.h) */
+{
+    uint64_t a, b, lo = ~(uint64_t)0;
+    uint32_t k, r;
+    for (r = 0; r < 8u; r++) {                    /* a read's own cost: the least of a few runs */
+        a = perf_instr();
+        for (k = 0; k < 64u; k++)
+            perf_instr();
+        b = perf_instr();
+        lo = (b - a) / 65u < lo ? (b - a) / 65u : lo;
+    }
+    emu_model_ovh = (uint32_t)lo;
+    emu_model_milli = milli;
+    emu_model_instr = milli ? perf_instr : 0;
+}
 uint8_t web_perf_on;
 static uint64_t perf_n, perf_sum, perf_max, perf_over70;
 void web_perf_reset(void) { perf_n = perf_sum = perf_max = perf_over70 = 0; web_perf_on = 1; }
@@ -115,9 +130,13 @@ static void run_ms(void)                          /* one millisecond of emu.c's 
         int16_t blk[EMU_BLOCK * 2];
         uint32_t k;
         if (web_perf_on) {
-            uint64_t i0 = perf_instr(), di;
+            uint64_t c0 = emu_model_calls, i0 = perf_instr(), di;
             emu_fw_audio(blk, EMU_BLOCK);
             di = perf_instr() - i0;
+            if (emu_model_instr) {                /* (CF_LOADMODEL: the clock's own reads out) */
+                uint64_t own = (emu_model_calls - c0 + 1u) * emu_model_ovh;
+                di = di > own ? di - own : 0u;
+            }
             perf_n++;
             perf_sum += di;
             perf_max = di > perf_max ? di : perf_max;
