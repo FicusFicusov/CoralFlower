@@ -126,6 +126,7 @@ static void cf_fx_chain(int32_t *l, int32_t *r, uint32_t n);
 #define FX_MIX_HOOK cf_fx_chain
 #include "fx.c"
 #undef mix_block
+#include "cf_gran.c"                      /* the granular layer on the master bus (run first by cf_fx_chain) */
 #include "cf_fx.c"                        /* the effects chain (cr_fx.c's delay, reverb and chorus in it) */
 
 /* ------------------------------------------------------------ MIDI --- */
