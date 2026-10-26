@@ -60,7 +60,8 @@ static void cf_boot_note(void);            /* (cf_fx.c) */
 #ifndef FELUCCA_VA
 #define FELUCCA_VA 1
 #endif
-#define FELUCCA_CZ 0             /* no CZ-1: its factory tones carry no licence (docs/PLAN.md) */
+#define FELUCCA_CZ 0             /* no CZ-1: its factory tones carry no licence (docs/PLAN.md); its code left the tree in
+                                  * 0.5.1 with ChoralRoot's unit choralroot.c (GitHub #4) */
 #ifndef FELUCCA_QUAD
 #define FELUCCA_QUAD 0
 #endif

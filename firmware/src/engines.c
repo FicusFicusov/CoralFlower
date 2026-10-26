@@ -44,12 +44,6 @@ static inline int32_t pd_cos(uint32_t ph16) { return -sine_i(((ph16 & 0xFFFFu) <
 #endif
 #include "eng_fm6.c"            /* FM6: 6-operator FM rendered as Dexed renders it (fm6_core.c; Melodee's, Kerem Kilic) */
 #include "fm4_convert.c"        /* DIGITAL's tables, and its sounds -> FM6 */
-#if FELUCCA_CZ
-#if !FELUCCA_VA
-#error "FELUCCA_CZ: its tone store sits beside the VA's and FM6's (upreset.c): FELUCCA_VA 1"
-#endif
-#include "eng_cz.c"             /* CZ-1: native Casio CZ-1 tones (cz_native.c; Melodee's, Kerem Kilic) */
-#endif
 #if FELUCCA_QUAD
 #if !FELUCCA_CZ
 #error "FELUCCA_QUAD: engine 15 and its patch store's flash pair follow the CZ-1's (core.h ENGI_QUAD, storage.c): FELUCCA_CZ 1"

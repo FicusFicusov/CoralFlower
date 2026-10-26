@@ -210,9 +210,6 @@ static int8_t up_src = -1;                     /* CoralFlower: the part a sound 
                                                 * one stored: the LAYER's was never looked at), -1: the selected one */
 #include "va_store.c"                          /* ChoralRoot: the VA patches, one per slot (the hooks below) */
 #include "fm6_ustore.c"                        /* ChoralRoot: the FM6 patches (voice + functions), one per slot */
-#if FELUCCA_CZ
-#include "cz_ustore.c"                         /* ChoralRoot: the CZ-1 tones, one per slot */
-#endif
 #if FELUCCA_QUAD
 #include "quad_store.c"                        /* ChoralRoot: the QUAD patches, one per slot */
 #endif
@@ -244,9 +241,6 @@ static void up_values(const up_rec_t *r, int16_t *v)   /* mapped and clamped for
 }
 
 #include "fm6_bank.c"                          /* the FM6 patch bank: the same kind of store */
-#if FELUCCA_CZ
-#include "cz_bank.c"                           /* the eight CZ-1 banks (Melodee's) */
-#endif
 
 #ifndef CR_STAGE
 #define CR_STAGE(n) ((void)0)                  /* (audio.c: the boot breadcrumb, felucca_dbg.stage) */

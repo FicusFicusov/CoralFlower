@@ -7,6 +7,12 @@ texts are in `LICENSES/`.
 
 Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
 
+> **CoralFlower note (0.5.1).** This is ChoralRoot's licensing record, kept as it was. Since CoralFlower 0.5.1 the
+> CZ-1 engine's files named below (`eng_cz.c`, `cz_native.c`, `cz_patch.h`, `cz_edit.h`, `cz_legacy.h`, `cz_bank.c`,
+> `cz_store.c`, `cz_ustore.c`, `tools/gen_cz1_factory.py`, `tools/make_cz1_factory.py`) and ChoralRoot's unit
+> `firmware/src/choralroot.c` are no longer in CoralFlower's tree; CoralFlower never built them in (`FELUCCA_CZ` 0),
+> and the Casio factory tones they need carry no licence. The credits below stay.
+
 ## What is GPL-3.0-only
 
 Every file in this tree that carries an `SPDX-License-Identifier: GPL-3.0-only` header:
