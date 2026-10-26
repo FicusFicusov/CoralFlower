@@ -45,6 +45,7 @@ static void cf_send_config(void)                 /* the chord settings -> the au
     cfp_cfg.ch_drums = cs.ch_drums;
     cfp_cfg.retrig = cs.retrig;
     cfp_cfg.notes_in = cs.notes_in;
+    cfp_cfg.in_ch = (uint8_t)(cs.in_ch > CF_INCH_ALL ? cs.in_ch - CF_INCH_ALL : 0u);
     cfp_cfg.arp_on = sq_keys_arp();              /* (a track open: the keys play as it plays, its own ARP) */
     cfp_cfg.arp = cs.arp;
     cfp_cfg.bpm = cs.bpm;
@@ -335,6 +336,15 @@ static void ui_knob_info(int k, cf_knob_t *o)
                 kfmt(o->name, 12, "NOTES IN");
                 kfmt(o->val, 14, NI[cs.notes_in % CF_NI_N]);
             }
+            if (k == 3) {                        /* the channel FM-1 keys and Roots listen to (0.5.1; Direct: CHORD and
+                                                  * BASS CH, the next page) */
+                kfmt(o->name, 12, "IN CH");
+                if (cs.in_ch > CF_INCH_ALL)
+                    kint(o->val, cs.in_ch - CF_INCH_ALL, 0);
+                else
+                    kfmt(o->val, 14, "All");
+                o->dis = (uint8_t)(cs.notes_in == CF_NI_DIRECT);
+            }
             break;
         case 2: /* Channels */
             if (k == 0) { kfmt(o->name, 12, "CHORD CH"); kint(o->val, cs.ch_chord + 1, 0); }
@@ -373,6 +383,7 @@ static void ui_knob_info(int k, cf_knob_t *o)
 }
 
 #define CF_MSG_QOFF "QUANTIZE is Off: turn it on"   /* (KEY or SCALE turned while they are dimmed) */
+static void cf_xnotes_up_all(void);              /* (below: the outside notes held go up) */
 static void ui_knob_turn(int k, int d)
 {
     cu.knob_ms[k] = cu.now ? cu.now : 1u;
@@ -535,8 +546,12 @@ static void ui_knob_turn(int k, int d)
                 cs.midi_out = (uint8_t)(d > 0);
             if (k == 1)                          /* Off, In, Out */
                 cs.clock_in = (uint8_t)clampi(cs.clock_in + (d > 0 ? 1 : -1), 0, 2);
+            if (k == 2 || k == 3)                /* (the outside notes held go up first: cf_xnotes_up_all) */
+                cf_xnotes_up_all();
             if (k == 2)                          /* FM-1 keys, Roots, Direct */
                 cs.notes_in = (uint8_t)clampi(cs.notes_in + (d > 0 ? 1 : -1), 0, CF_NI_N - 1);
+            if (k == 3 && cs.notes_in != CF_NI_DIRECT)   /* All, 1 .. 16 */
+                cs.in_ch = (uint8_t)clampi(cs.in_ch + d, CF_INCH_ALL, CF_INCH_ALL + 16);
             cf_send_config();
             break;
         case 2:
@@ -1185,11 +1200,37 @@ static void ui_note_key_aged(int key, int down, int age_ms)   /* age_ms: -1 the 
 /* an outside keyboard's notes (NOTES IN FM-1 keys or Roots; cf_out.c cf_xq): FM-1 keys folds each note by octaves
  * into F3..G5 and presses that key (the FM-1's own key down too: nothing more); Roots sends it as a root at its
  * pitch, but on the SEQUENCER's DRUMS row, where the keys are drum pads, as a key. A note goes up the way it went down */
+static void cf_xnote_up(uint32_t n)              /* outside note n let go: its root, or the FM-1 key it pressed */
+{
+    uint32_t v = cu.xnote[n & 127u], k;
+    cu.xnote[n & 127u] = 0;
+    if (v == 0xFFu) {
+        if (cu.xroots)
+            cu.xroots--;
+        cf_post(CFE_ROOT, n, 0, 0);
+    } else if (v) {
+        k = v - 1u;
+        if (cu.xcnt[k] && --cu.xcnt[k] == 0u) {
+            cu.xkeys &= ~(1u << k);
+            if (!((cu.pkeys >> k) & 1u))
+                ui_note_key((int)k, 0);
+        }
+    }
+}
+/* NOTES IN or IN CH changed: every outside note still down goes up (its note-off may no longer get through: a key
+ * held while IN CH moved to another channel stayed down for good) */
+static void cf_xnotes_up_all(void)
+{
+    uint32_t n;
+    for (n = 0; n < 128u; n++)
+        if (cu.xnote[n])
+            cf_xnote_up(n);
+}
 static void cf_xq_drain(void)
 {
     uint32_t w = cf_xq_w;
     while (cf_xq_r != w) {
-        uint32_t e = cf_xq[cf_xq_r % CF_XQ], n = e & 0x7Fu, down = (e >> 7) & 1u, k, v;
+        uint32_t e = cf_xq[cf_xq_r % CF_XQ], n = e & 0x7Fu, down = (e >> 7) & 1u, k;
         uint32_t age = fm1_ms - cf_xq_ms[cf_xq_r % CF_XQ];
         cf_xq_r++;
         cu.idle_ms = 0;
@@ -1214,20 +1255,7 @@ static void cf_xq_drain(void)
                     ui_note_key_aged((int)k, 1, age <= 250u ? (int)age : 0);
             }
         } else {
-            v = cu.xnote[n];
-            cu.xnote[n] = 0;
-            if (v == 0xFFu) {
-                if (cu.xroots)
-                    cu.xroots--;
-                cf_post(CFE_ROOT, n, 0, 0);
-            } else if (v) {
-                k = v - 1u;
-                if (cu.xcnt[k] && --cu.xcnt[k] == 0u) {
-                    cu.xkeys &= ~(1u << k);
-                    if (!((cu.pkeys >> k) & 1u))
-                        ui_note_key((int)k, 0);
-                }
-            }
+            cf_xnote_up(n);
         }
     }
 }

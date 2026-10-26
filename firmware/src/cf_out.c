@@ -460,12 +460,22 @@ static void cf_xq_put(uint32_t note, uint32_t down, uint32_t ms)
 
 /* usb.c's midi_in_q (USB and TRS) is drained here: notes on the chord / bass channels play the parts directly
  * (cr_midi.c crm_map, ChoralRoot's), with the pedal, bend and controllers (midi_event above) */
+static uint8_t cfx_direct;                       /* NOTES IN was Direct at the last look (cf_midi_in) */
 static void cf_midi_in(void)
 {
     uint32_t w = mi_w;
     uint8_t en[2] = {1, 1}, ch[2];
     ch[0] = cfp_cfg.ch_chord;
     ch[1] = cfp_cfg.ch_bass;
+    if (cfx_direct && cfp_cfg.notes_in != CF_NI_DIRECT) {   /* Direct left: the notes it holds go up, as the FM-1
+                                                  * keys' and the Roots' do on K3 (cf_ui.c cf_xnotes_up_all): their
+                                                  * offs now go the other way and would end nothing (0.5.1) */
+        uint32_t p, n;
+        for (p = 0; p < 2u; p++)
+            for (n = 0; n < 128u; n++)
+                cr_mrelease(p, n);
+    }
+    cfx_direct = cfp_cfg.notes_in == CF_NI_DIRECT;
     if (midi_in_overflow)
         return;
     while (mi_r != w) {
@@ -491,8 +501,11 @@ static void cf_midi_in(void)
             }
             continue;
         }
-        if (cfp_cfg.notes_in != CF_NI_DIRECT && (status & 0xE0u) == 0x80u) {   /* a note on or off, any channel */
-            cf_xq_put(d1, (status & 0xF0u) == 0x90u && d2, midi_in_ms[at]);
+        if (cfp_cfg.notes_in != CF_NI_DIRECT && (status & 0xE0u) == 0x80u) {   /* a note on or off: IN CH's, or any
+                                                  * channel with IN CH All (0.5.1, GitHub #2: a Digitakt's other tracks
+                                                  * played chords) */
+            if (!cfp_cfg.in_ch || (status & 0x0Fu) == cfp_cfg.in_ch - 1u)
+                cf_xq_put(d1, (status & 0xF0u) == 0x90u && d2, midi_in_ms[at]);
             continue;
         }
         if (status >= 0x80u && status < 0xF0u) {

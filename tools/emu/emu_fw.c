@@ -403,6 +403,8 @@ void emu_fw_dump(void)
     printf("\n");
     printf("  settings: %s, key %u, colour %u, saved %08X now %08X\n", cfs_loaded ? "loaded" : "defaults",
            (unsigned)cs.chord.tonic, (unsigned)cs.accent, (unsigned)cfs_saved, (unsigned)cfs_fnv(&cs, sizeof cs));
+    printf("  midi in: NOTES IN %u, IN CH %u (0 all), chord ch %u, bass ch %u\n", (unsigned)cs.notes_in,
+           (unsigned)cfp_cfg.in_ch, (unsigned)cs.ch_chord + 1u, (unsigned)cs.ch_bass + 1u);
     {                                             /* what a power-on brings back (cf_settings.c, cf_sequi.c sq_resume) */
         uint32_t k;
         printf("  kept: resume %02X (play: %s %u), edits", (unsigned)cs.resume, sqk.song ? "song from block" : "pattern",

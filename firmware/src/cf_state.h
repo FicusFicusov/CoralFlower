@@ -65,11 +65,15 @@ typedef struct {
      * 0..2, COUNT-IN 0..1). 0.5 marks its record in the third (CF_SET_MARK05): a record without it is an older build's,
      * whose first two bytes are a looper's, not NOTES IN and the ARP (cf_settings.c cfs_sanitize). 0.4.x reads the
      * mark as a QUANT out of range and resets the four in its memory only; if it saves, 0.5 later finds no mark and
-     * takes NOTES IN and the ARP at their defaults */
+     * takes NOTES IN and the ARP at their defaults. The fourth holds IN CH since 0.5.1 */
     uint8_t notes_in;            /* GLO > MIDI > NOTES IN (0.5): CF_NI_KEYS, CF_NI_ROOTS, CF_NI_DIRECT */
     uint8_t arp_keep;            /* the arpeggiator was on: on again after a power-on (0.5, the owner: "Арпеджиатор бы
                                   * ещё было прикольно сохранять") */
-    uint8_t mark, rsv_ci;        /* CF_SET_MARK05; (the looper's COUNT-IN byte: kept at 1) */
+    uint8_t mark;                /* CF_SET_MARK05 */
+    uint8_t in_ch;               /* GLO > MIDI > IN CH (0.5.1): the channel NOTES IN's FM-1 keys and Roots listen to,
+                                  * CF_INCH_ALL every channel (as 0.5, whose byte here was always 1: the looper's
+                                  * COUNT-IN kept at 1), else CF_INCH_ALL + 1 + the channel 0..15 (the owner, 2026-10-26:
+                                  * "Новая настройка IN CH"; a Digitakt's other tracks played chords, GitHub #2) */
     uint8_t clock_in;            /* GLO > MIDI > CLOCK: 0 Off; 1 In, MIDI clock's pulses run the beat; 2 Out, the unit sends its beat as MIDI clock */
     uint8_t boot_sound;          /* GLO > Display > BOOT SOUND: the chime with the intro */
     uint8_t level_chord, level_layer, level_drums;   /* the parts' P_LEVEL (the sequencer's tracks, K1; the bass's:
@@ -86,6 +90,7 @@ typedef struct {
 #define CF_RESUME_ON 0x80u
 #define CF_RESUME_SONG 0x40u
 #define CF_SET_MARK05 0xC5u    /* cs.mark: the record is 0.5's or later (out of 0.4.x's QUANT range, 0..2) */
+#define CF_INCH_ALL 1u         /* cs.in_ch: every channel; 2..17 channels 1..16 */
 
 static cf_set_t cs;
 
@@ -120,7 +125,7 @@ static void cs_defaults(cf_set_t *s)
     s->notes_in = CF_NI_KEYS;
     s->arp_keep = 0;
     s->mark = CF_SET_MARK05;
-    s->rsv_ci = 1;
+    s->in_ch = CF_INCH_ALL;                      /* (nothing goes quiet after an update: every channel, as 0.5) */
     s->boot_sound = 1;
     s->level_chord = s->level_layer = 104;       /* (params.c P_LEVEL's own) */
     s->level_drums = 104;

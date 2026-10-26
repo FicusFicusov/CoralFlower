@@ -68,6 +68,7 @@ typedef struct {
                                  * its take), HOME's bass switch or not; no chord */
     uint8_t notes_in;           /* GLO > MIDI > NOTES IN (CF_NI_*): notes in play the parts directly
                                  * (Direct), else they go to the UI as the FM-1's keys or as roots (cf_out.c cf_xq) */
+    uint8_t in_ch;              /* .. the channel those two take notes from: 0 every one, 1..16 (GLO > MIDI > IN CH) */
 } cf_play_cfg_t;
 
 /* the beat grid the arpeggiator locks to while the metronome's clock runs (cf_out.c cfm_tick writes it): on, where it

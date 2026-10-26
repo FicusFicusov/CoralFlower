@@ -33,8 +33,8 @@ _Static_assert(sizeof(cf_rec_t) <= ST_LOG_MAX, "settings: a record fits one log 
 _Static_assert(sizeof(cf_set_t) == 188u, "settings: 0.4.1 takes a record of this size (a new field fits the padding, "
                "or a downgrade loses the settings)");
 _Static_assert(__builtin_offsetof(cf_set_t, notes_in) == 172u && __builtin_offsetof(cf_set_t, mark) == 174u &&
-               __builtin_offsetof(cf_set_t, rsv_ci) == 175u,
-               "settings: NOTES IN, the ARP's byte and 0.5's mark sit where 0.4.x keeps the looper's four");
+               __builtin_offsetof(cf_set_t, in_ch) == 175u,
+               "settings: NOTES IN, the ARP's byte, 0.5's mark and IN CH sit where 0.4.x keeps the looper's four");
 _Static_assert(OBJ_PROJECT0 + 3u == ST_LOG_OBJ, "settings: the object that keeps the log");
 
 static cf_rec_t cf_rec;
@@ -126,7 +126,8 @@ static void cfs_sanitize(cf_set_t *s)
         s->notes_in = d.notes_in;
     s->arp_keep = s->arp_keep != 0;
     s->mark = CF_SET_MARK05;
-    s->rsv_ci = 1;                                /* (0.4.x reads it as the looper's COUNT-IN) */
+    if (s->in_ch < CF_INCH_ALL || s->in_ch > CF_INCH_ALL + 16u)
+        s->in_ch = CF_INCH_ALL;                   /* (0.4.x reads it as the looper's COUNT-IN, 0.5 as a 1 to keep) */
     {                                     /* the chain: each effect once, in some order; the values in range */
         uint32_t seen = 0, e;
         for (i = 0; i < CFX_N; i++)

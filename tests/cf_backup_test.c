@@ -420,7 +420,7 @@ int main(void)
         s.arp_keep = 1;
         s.mark = 0;
         cfs_sanitize(&s);
-        CHECK(s.notes_in == CF_NI_KEYS && !s.arp_keep && s.mark == CF_SET_MARK05 && s.rsv_ci == 1,
+        CHECK(s.notes_in == CF_NI_KEYS && !s.arp_keep && s.mark == CF_SET_MARK05 && s.in_ch == CF_INCH_ALL,
               "an older record (no mark): NOTES IN FM-1 keys, ARP off, marked (%u %u %02x)", s.notes_in, s.arp_keep,
               s.mark);
         s.notes_in = CF_NI_DIRECT;
@@ -434,6 +434,22 @@ int main(void)
         cfs_sanitize(&s);
         CHECK(s.notes_in == CF_NI_KEYS && !s.arp_keep, "BARS 2 and QUANT 2 of 0.3.1: NOTES IN FM-1 keys (%u)",
               s.notes_in);
+        /* IN CH (0.5.1) in the looper's COUNT-IN byte: 0.5 kept it at 1, which reads as All */
+        s.in_ch = 1;
+        cfs_sanitize(&s);
+        CHECK(s.in_ch == CF_INCH_ALL, "a 0.5 record's byte (1): IN CH All (%u)", s.in_ch);
+        s.in_ch = CF_INCH_ALL + 10u;
+        cfs_sanitize(&s);
+        CHECK(s.in_ch == CF_INCH_ALL + 10u, "IN CH 10 kept (%u)", s.in_ch);
+        s.in_ch = CF_INCH_ALL + 16u;
+        cfs_sanitize(&s);
+        CHECK(s.in_ch == CF_INCH_ALL + 16u, "IN CH 16 kept (%u)", s.in_ch);
+        s.in_ch = 0;
+        cfs_sanitize(&s);
+        CHECK(s.in_ch == CF_INCH_ALL, "IN CH 0 (out of range): All (%u)", s.in_ch);
+        s.in_ch = CF_INCH_ALL + 17u;
+        cfs_sanitize(&s);
+        CHECK(s.in_ch == CF_INCH_ALL, "IN CH past 16: All (%u)", s.in_ch);
     }
 
     /* ---- RESTART ---- */
