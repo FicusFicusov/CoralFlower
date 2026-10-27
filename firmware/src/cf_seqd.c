@@ -110,6 +110,8 @@ static sq_store_t sq_st;                         /* (RAM, not the pool: the pool
 typedef struct {
     const char *name;
     uint8_t e[8];
+    uint8_t ds;                                  /* 0.6: k + 1, the second engine's kit k (drum_synth.c, drum_kits.c)
+                                                  * plays every drum instead (its e: the DRUM engine's design) */
 } sq_kit_t;
 static const sq_kit_t SQ_KITS[] = {
     {"Std", {0, 64, 64, 64, 64, 100, 0, 0}},      /* (the engine's design) */
@@ -120,6 +122,15 @@ static const sq_kit_t SQ_KITS[] = {
     {"Lo-fi", {0, 56, 26, 50, 60, 90, 0, 96}},    /* dark, short, dirty */
     {"Hand", {1, 64, 70, 64, 64, 100, 0, 0}},     /* hand drums: congas, claves */
     {"Crush", {0, 70, 100, 70, 104, 120, 0, 127}},   /* bright and fully driven */
+    {"X Club", {0, 64, 64, 64, 64, 100, 0, 0}, 1},   /* (0.6: the second engine's kits, after the eight: a pattern keeps its
+                                                  * kit's number, and 0.5 plays it on one of the eight. The owner's
+                                                  * names, 2026-10-27: the genre, X the series; 7 letters at most: a
+                                                  * knob shows that on one line, the owner's "Всё в одну строку") */
+    {"X Deep", {0, 64, 64, 64, 64, 100, 0, 0}, 2},
+    {"X Lo-Fi", {0, 64, 64, 64, 64, 100, 0, 0}, 3},
+    {"X Live", {0, 64, 64, 64, 64, 100, 0, 0}, 4},
+    {"X Tech", {0, 64, 64, 64, 64, 100, 0, 0}, 5},
+    {"X Break", {0, 64, 64, 64, 64, 100, 0, 0}, 6},
 };
 #define SQ_NKIT ((uint32_t)(sizeof SQ_KITS / sizeof SQ_KITS[0]))
 

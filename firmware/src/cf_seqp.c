@@ -275,6 +275,7 @@ static void sqp_lane_kit(uint32_t l, uint32_t k, uint32_t lvl)   /* lvl: its lev
     uint32_t i, el = drum_lane(SQ_LANE_NOTE[l % SQ_NLANE]);
     for (i = 0; i < 8u; i++)
         drum_lane_knobs[0][el][i] = (int16_t)SQ_KITS[k % SQ_NKIT].e[i];
+    drum_lane_knobs[0][el][8] = SQ_KITS[k % SQ_NKIT].ds;   /* (a kit of the second engine: drum_synth.c) */
     drum_lane_att[0][el] = (uint8_t)(100u - (lvl < 100u ? lvl : 100u));
 }
 

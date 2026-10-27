@@ -1652,7 +1652,7 @@ static void sq_presets(int d)
         char m[24];
         sq_kit_turn(p, d);
         str_cpy(m, "Kit: ", sizeof m);
-        str_cpy(m + 5, sq_kit_name(p), 8);
+        str_cpy(m + 5, sq_kit_name(p), sizeof m - 5u);   /* (0.6's names are longer: "X Lo-Fi") */
         cf_message(m);
         return;
     }

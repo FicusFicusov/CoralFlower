@@ -29,6 +29,9 @@
  * State: 8 lanes per part in the pool section (drum_kit: the parameters, coefficients, voice and metal
  * source of each lane). */
 #include "drum_voice.c"
+#ifdef DRUM_LANE_KNOBS
+#include "drum_synth.c"                  /* CoralFlower's second engine: its kits' lanes play it */
+#endif
 
 enum { DK_STD, DK_HAND, DK_CYM, DK_HCYM };
 static const uint8_t DV_TYPE_LANE[DVT_COUNT] = {
@@ -37,14 +40,29 @@ static const uint8_t DV_TYPE_LANE[DVT_COUNT] = {
 
 typedef struct {
     dv_param_t key;              /* the parameters the coefficients were set up with */
+#ifdef DRUM_LANE_KNOBS
+    union {
+        struct {
+            dv_coef_t c;
+            dv_voice_t v;
+            dv_metal_t mb;
+        };
+        ds_voice_t n;            /* .. or the second engine's voice (drum_synth.c), while eng */
+    };
+#else
     dv_coef_t c;
     dv_voice_t v;
     dv_metal_t mb;
+#endif
     uint8_t owner;               /* the voice playing the lane: index + 1, 0 = none */
     uint8_t role;                /* the drum struck (DVT_*) */
     int8_t st;                   /* its semitones from the designed pitch (the GM map) */
-    uint8_t pad;
+    uint8_t eng;                 /* 0: drum_voice.c's drum; k + 1: the second engine's kit k (drum_synth.c) */
 } drum_lane_t;
+#ifdef DRUM_LANE_KNOBS
+_Static_assert(sizeof(ds_voice_t) <= sizeof(dv_coef_t) + sizeof(dv_voice_t) + sizeof(dv_metal_t),
+               "the second engine's voice fits in the first one's: the pool stays as it was");
+#endif
 
 /* DRUM_PART0, DRUM_NPART: the parts that can play the kit (Felucca's: all four; CoralFlower: its sequencer's part 2
  * alone, 1.8 KB instead of 7.3) */
@@ -57,7 +75,8 @@ static drum_lane_t drum_kit[DRUM_NPART][DV_NLANE] __attribute__((section(".pool"
 /* DRUM_LANE_KNOBS: each lane takes its own eight knobs (KIT .. DRV) from drum_lane_knobs, set by the caller before a
  * hit (CoralFlower's sequencer: a kit a drum, kits mixed), instead of the part's E1..E8 */
 #ifdef DRUM_LANE_KNOBS
-static int16_t drum_lane_knobs[DRUM_NPART][DV_NLANE][8];
+static int16_t drum_lane_knobs[DRUM_NPART][DV_NLANE][9];   /* (8: the second engine's kit + 1, 0 none: the lane plays
+                                                            * drum_voice.c's drum) */
 static uint8_t drum_lane_att[DRUM_NPART][DV_NLANE];   /* .. and its level taken down from the design's: 100 - LEVEL %
                                                        * (0: as designed; CoralFlower: a drum's level, K2) */
 #endif
@@ -205,6 +224,16 @@ static voice_t *drum_reuse(track_t *t, uint32_t note)
     return v->active && (uint32_t)v->s[0] == lane ? v : 0;
 }
 
+/* the lane's drum rings (or is about to) */
+static int drum_live(const drum_lane_t *L)
+{
+#ifdef DRUM_LANE_KNOBS
+    if (L->eng)
+        return L->n.live;
+#endif
+    return L->v.live || L->v.trig;
+}
+
 static void drum_note_on(track_t *t, voice_t *v)
 {
     drum_lane_t *K = drum_kit_of(t), *L;
@@ -219,18 +248,41 @@ static void drum_note_on(track_t *t, voice_t *v)
     if (L->owner == i + 1u)                              /* this voice played another lane: it stops there */
         L->owner = 0;
     L = &K[lane];
-    if (L->role != role || L->v.type != role) {          /* another drum on this lane: from rest */
-        dv_init(&L->v, role);
-        L->key.type = 0xFF;
+#ifdef DRUM_LANE_KNOBS
+    if (drum_lane_knobs[t - trk - DRUM_PART0][lane][8] > 0) {   /* the second engine's kit: its sound, from rest */
+        uint32_t k = ((uint32_t)drum_lane_knobs[t - trk - DRUM_PART0][lane][8] - 1u) % DS_NKIT, s = DS_ROLE_SND[role];
+        L->eng = (uint8_t)(k + 1u);
         L->role = (uint8_t)role;
+        L->key.type = 0xFF;                              /* (drum_voice.c's state is gone: from rest when back) */
+        ds_strike(&L->n, &DS_KITS[k], s, st, 100u - drum_lane_att[t - trk - DRUM_PART0][lane]);
+    } else
+#endif
+    {
+        if (L->eng || L->role != role || L->v.type != role) {   /* another drum on this lane: from rest */
+#ifdef DRUM_LANE_KNOBS
+            if (L->eng)                                  /* (back from the second engine: its squares from 0 too, as
+                                                          * after a power-on) */
+                memset(&L->mb, 0, sizeof L->mb);
+#endif
+            dv_init(&L->v, role);
+            L->key.type = 0xFF;
+            L->role = (uint8_t)role;
+            L->eng = 0;
+        }
+        dv_trigger(&L->v);
     }
     L->st = (int8_t)st;
     L->owner = (uint8_t)(i + 1u);                        /* (its last voice, if another, ends: drum_amp) */
     v->s[0] = (int32_t)lane;
     v->env_out = v->vel * 258;                           /* the hit starts at its level (no ramp from 0) */
-    dv_trigger(&L->v);
-    if (lane == DV_HATC && K[DV_HATO].v.live)            /* a closed hat chokes the open one */
-        dv_choke(&K[DV_HATO].v);
+    if (lane == DV_HATC && drum_live(&K[DV_HATO])) {     /* a closed hat chokes the open one */
+#ifdef DRUM_LANE_KNOBS
+        if (K[DV_HATO].eng)
+            ds_choke(&K[DV_HATO].n);
+        else
+#endif
+            dv_choke(&K[DV_HATO].v);
+    }
 }
 
 /* the voice's amplitude: the hit, not the ADSR (which still runs, held at full so a release never ends
@@ -241,7 +293,7 @@ static int32_t drum_amp(track_t *t, voice_t *v, int32_t adsr)
     (void)adsr;
     if (!v->active)                                      /* (taken for another part: env_tick ended it) */
         return 0;
-    if (!L || (!L->v.live && !L->v.trig)) {
+    if (!L || !drum_live(L)) {
         v->active = v->gate = 0;
         v->stage = 0;
         v->env = 0;
@@ -256,8 +308,12 @@ static int32_t drum_level(track_t *t, const voice_t *v)
 {
     const drum_lane_t *L = drum_lane_of(t, v);
     int32_t e;
-    if (!L || !L->v.live)
+    if (!L || !drum_live(L))
         return 0;
+#ifdef DRUM_LANE_KNOBS
+    if (L->eng)
+        return mulq15(ds_level(&L->n), v->vel * 258);
+#endif
     e = L->role == DVT_RIM || L->role == DVT_CLAVE ? (int32_t)(L->v.e[0] >> 1) : L->v.q[0] >> 15;
     return mulq15(e > 32767 ? 32767 : e, v->vel * 258);
 }
@@ -270,6 +326,18 @@ static void drum_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const 
     uint32_t i, r;
     if (!L)
         return;
+#ifdef DRUM_LANE_KNOBS
+    if (L->eng) {                                        /* the second engine: its sound is the kit's (drum_synth.c) */
+        if (n > CTL)
+            n = CTL;
+        ds_run(&L->n, y, n);
+        for (i = 0; i < n; i++) {
+            int32_t s = y[i];
+            out[i] += voice_amp(soft_knee(s + (s >> 2), 24000), m, i) * 2;
+        }
+        return;
+    }
+#endif
     for (i = 0; i < 8u; i++)                             /* (the lane's knobs: the part's, or its own) */
         e[i] = drum_knob(t, (uint32_t)(L - drum_kit_of(t)), i);
     acc = clamp(e[5] * v->vel * 4, 0, 65536);            /* (Q16) */
