@@ -23,7 +23,8 @@
  * reports them skipped).
  *
  * Reads come from flash (the current record of each object, checked at LIST: storage.c st_current) in 256-byte windows: no RAM copy, the audio
- * keeps running. LIST first writes a settings or a sequencer change not yet saved. A PUT is staged in cfb_raw and checked whole
+ * keeps running. LIST first writes a settings or a sequencer change not yet saved, and a logged object's newest record
+ * whole where it is kept as changes (storage.c st_dput, 0.6). A PUT is staged in cfb_raw and checked whole
  * before one commit through storage.c's protocol (st_save: the other copy, the header last): a torn write leaves the
  * previous copy. A begin or a commit while the loop plays or records answers 3 (busy: the page retries); the commit's
  * erase holds the audio about 45 ms, which a restore accepts. A restored settings record locks the settings
@@ -210,6 +211,11 @@ static void crb_list(void)
         uint32_t id = CRB_IDS[i];
         crb.at[i] = crb.size[i] = crc[i] = 0;
         if (flash_ok && st_current(crb_obj(id), &h) >= 0) {   /* (the newest record, the settings' log too) */
+            if (st_cur_d &&                          /* (0.6: changes on it, written whole first: GET reads one piece. */
+                (st_put(crb_obj(id), st_buf, h.len, ST_WHOLE) || st_current(crb_obj(id), &h) < 0 || st_cur_d)) {
+                fm1_wdt_feed();                      /* .. Not possible, SAFE MODE or a flash error: not offered) */
+                continue;
+            }
             crb.at[i] = st_at;
             crb.size[i] = h.len;
             crc[i] = h.crc;

@@ -65,6 +65,8 @@ jobs:
           cc -std=c99 -Wall -Wextra -Ifirmware/src -o build/cf_chord_test tests/cf_chord_test.c firmware/src/cf_chord.c \
              firmware/src/cf_theory.c
           build/cf_chord_test
+          cc -std=gnu11 -O2 -Wall -Wno-unused-function -Ifirmware/src -o build/host/st_log_test tests/st_log_test.c
+          build/host/st_log_test
 
       - name: The tracked tree is as it was
         run: |

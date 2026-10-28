@@ -7,9 +7,12 @@
  * programs of about 1 ms each, made when the audio has room, and no erase (a flash erase stops the audio for about
  * 45 ms). A change switched off a second later is kept (the owner, 2026-10-21: "Бас почему-то выбранный не
  * сохраняется"; BOOT SND set On, HOME, off: gone, its 5 s preview held the old save back; "Сохранять всё сразу").
- * About 29 changes fit without a pause; a quiet moment (nothing sounding for a second, no change for 1.5 s) tidies the
- * flash: the newest record where 0.4.1 and older read it, the other copy erased for the next ones (storage.c
- * st_tidy). Only when the log is full does a change wait for that quiet moment. SAFE MODE neither reads nor writes it.
+ * Each change goes as what changed (0.6, storage.c st_dput): about 200 fit without a pause (29 before). A quiet moment
+ * (nothing sounding for a second, no change for 1.5 s) tidies the flash: the newest record whole where 0.4.1 and older
+ * read it, the other copy erased for the next ones (storage.c st_tidy). Only when the log is full does a change wait
+ * for that quiet moment; it is never forced through, as an erase would stop the audio for about 45 ms (the owner:
+ * "Убрать, паузы никогда"). The sounds' edits and the patterns' own sounds are kept the same way. SAFE MODE neither
+ * reads nor writes it.
  *
  * Where: OBJ_PROJECT0 + 3 (0x9D000 / 0x9E000, storage.c's A/B pair), ChoralRoot's CZ-1 tone store, which CoralFlower
  * (no CZ engine) does not use. Anything there that is not our record (another magic, version or size, a bad check)
@@ -366,7 +369,7 @@ static void cfps_flush(void)                       /* a backup's LIST: what is n
  * tweaked". A part loading a sound takes its owner's tweak with it, when made on that very sound (cfk_take; the bar
  * line's ready sound too: cf_sequi.c sq_snd_poll); one made on another sound (a user sound deleted or replaced) is
  * left. The tweak goes when its owner's sound changes (PRESETS, K2, SAVE: cfk_drop). Each store a log of 512-byte
- * entries (13 tweaks in a row with no erase), written as the settings are */
+ * entries, a tweak written as what changed (about 190 in a row with no erase; 13 before 0.6), as the settings are */
 static void cf_message(const char *s);           /* (cf_ui.c) */
 static uint32_t sq_cur_pat(void);                /* (cf_sequi.c) */
 #define CFK_MAGIC 0x314B4643u                     /* "CFK1" */

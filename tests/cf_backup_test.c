@@ -220,7 +220,9 @@ int main(void)
     CHECK(cf_settings_write(ST_NOERASE) == 1, "another one");
     {
         st_hdr_t h;
-        CHECK(st_current(CF_SET_OBJ, &h) >= 0 && st_cur_e >= 2u, "the newest settings are in the log, not at its entry 0 (entry %u)", st_cur_e);
+        CHECK(st_current(CF_SET_OBJ, &h) >= 0 && st_cur_e == 0u && st_cur_d >= 2u,   /* (0.6: as changes; LIST writes */
+              "the newest settings are changes in the log on its entry 0 (entry %u, changes %u)", st_cur_e,
+              st_cur_d);                                 /* .. them whole, GET reads one piece) */
     }
     fm1_irq_off();                                   /* the bass sound edited, not SAVEd (LIST writes it) */
     trk[CF_PART_BASS].p[P_REL] = (int16_t)(trk[CF_PART_BASS].p[P_REL] == 77 ? 78 : 77);

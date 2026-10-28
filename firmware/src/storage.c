@@ -128,7 +128,16 @@ static uint8_t st_buf[ST_PAYLOAD_MAX] __attribute__((aligned(4)));
  * entries a copy for the settings, 7 for an edit. A save appends to the current copy's next erased entry: page
  * programs of about 1 ms, no erase. When none is left, it opens the other copy at entry 0, if that copy is erased.
  * Only that needs an erase (about 45 ms of silence), so the caller picks a quiet moment for it (st_tidy). The current
- * copy is the one whose entry 0 is newer, as older firmware picks it; in it the last intact entry wins */
+ * copy is the one whose entry 0 is newer, as older firmware picks it; in it the last intact entry wins.
+ *
+ * 0.6: a change is written as what changed (the owner, "А сохранять без затормаживания нельзя?", "Да, делаем": about
+ * 200 changes before an erase, not 29). After the newest whole entry, to the copy's end, sit delta records of 32 bytes
+ * (st_drec_t), each a few runs of changed bytes; a change takes one to ST_DMAX of them, numbered, the last marked, and
+ * counts only whole (a record torn or missing: the change before it stands). They apply to the whole entry before
+ * them (bseq: its seq); a bigger change is a whole entry again, in the next erased one. A record starts with a byte that
+ * is no magic's, so older firmware sees an entry it cannot read: it skips it, never writes into it, and takes the
+ * newest whole entry (the state of the last quiet moment, when st_tidy wrote it whole into entry 0). Records are
+ * written one after another, each inside a page, read back before the save counts */
 #ifdef ST_LOG_OBJ
 #define ST_LOGGED(obj) ((obj) == (uint32_t)(ST_LOG_OBJ) || ((obj) >= OBJ_CFEDIT0 && (obj) <= OBJ_CFTWK7))
 #define ST_LSZ(obj) ((obj) == (uint32_t)(ST_LOG_OBJ) || (obj) == OBJ_CFPSND ? 256u : 512u)
@@ -145,6 +154,22 @@ static uint32_t st_data(uint32_t obj, uint32_t e)                               
     return e ? st_entry(obj, e) + (uint32_t)sizeof(st_hdr_t) : ST_PAYLOAD_OFF;
 }
 static uint32_t st_cur_e, st_at;                       /* st_current's find: its entry, its payload's flash offset */
+static uint32_t st_cur_d;                              /* .. the changes on it (0: none, st_at's bytes are the record) */
+#ifdef ST_LOG_OBJ
+#define ST_DTAG 0xD1u                                  /* a delta record's first byte (ST_MAGIC's is 0x46) */
+#define ST_DPAY 20u
+#define ST_DMAX 4u                                     /* records a change, at most */
+typedef struct {
+    uint8_t tag, idx;                                  /* idx: its place in the change, bit 7: the change's last */
+    uint16_t cseq;                                     /* the change's number: one more than the last one's */
+    uint32_t bseq;                                     /* the whole entry it changes: its seq */
+    uint8_t pay[ST_DPAY];                              /* runs: offset (2 bytes, low first), length, the bytes; a length 0 ends */
+    uint32_t crc;                                      /* st_crc32 of what is above */
+} st_drec_t;
+_Static_assert(sizeof(st_drec_t) == 32u, "storage: a delta record's layout");
+static uint32_t st_dnext;                              /* st_current's find: where its next record goes (0: no room) */
+static uint16_t st_dcseq;                              /* .. the last record's change number */
+#endif
 
 /* the copies known to be erased (all 0xFF): a save into one needs no erase. Bit obj * 2 + copy; RAM: unknown (0) at
  * power-on, set by st_check_blank or st_tidy, cleared by a save into it */
@@ -178,8 +203,74 @@ static int st_body(uint32_t obj, uint32_t copy, uint32_t e, const st_hdr_t *h)  
     return 0;
 }
 
+#ifdef ST_LOG_OBJ
+/* a change's records r[0 .. n - 1] onto the record in st_buf (len bytes): 0, or -1 (a run outside it: nothing done) */
+static int st_dapply(const st_drec_t *r, uint32_t n, uint32_t len)
+{
+    uint32_t pass, k, p, off, m, i;
+    for (pass = 0; pass < 2u; pass++)                  /* (every run checked first, then applied) */
+        for (k = 0; k < n; k++)
+            for (p = 0; p + 3u <= ST_DPAY && (m = r[k].pay[p + 2u]) != 0; p += 3u + m) {
+                off = (uint32_t)r[k].pay[p] | (uint32_t)r[k].pay[p + 1u] << 8;
+                if (p + 3u + m > ST_DPAY || off + m > len)
+                    return -1;
+                for (i = 0; pass && i < m; i++)
+                    st_buf[off + i] = r[k].pay[p + 3u + i];
+            }
+    return 0;
+}
+
+/* the changes after whole entry e of a copy, onto its record in st_buf (*h its header; its crc becomes the result's):
+ * st_cur_d, st_dnext, st_dcseq. A record that is not erased but not intact (torn, or a torn whole entry's bytes)
+ * drops the change it is in; the next record goes after the last one not erased */
+static void st_deltas(uint32_t obj, uint32_t copy, uint32_t e, st_hdr_t *h)
+{
+    union { uint8_t b[256]; st_drec_t r[8]; } c;
+    st_drec_t g[ST_DMAX];                              /* (a change's records, until its last) */
+    uint32_t at = st_sector(obj, copy) + st_entry(obj, e + 1u), end = st_sector(obj, copy) + ST_SECTOR, gn = 0, j, i, k;
+    st_dnext = at;
+    st_dcseq = 0;
+    for (; at < end; at += sizeof c.b) {
+        if (st_read(at, c.b, sizeof c.b)) {
+            st_dnext = end;                            /* (unread: no change goes after it) */
+            break;
+        }
+        for (j = 0; j < 8u; j++) {
+            const st_drec_t *r = &c.r[j];
+            for (i = 0; i < 32u && c.b[j * 32u + i] == 0xFFu; i++)
+                ;
+            if (i == 32u) {                            /* (erased) */
+                gn = 0;
+                continue;
+            }
+            st_dnext = at + (j + 1u) * 32u;
+            if (r->tag != ST_DTAG || r->bseq != h->seq || r->crc != st_crc32(r, sizeof *r - 4u)) {
+                gn = 0;
+                continue;
+            }
+            st_dcseq = r->cseq;
+            k = r->idx & 127u;
+            if (!k)
+                gn = 0;
+            else if (k != gn || r->cseq != g[0].cseq || gn >= ST_DMAX) {
+                gn = 0;                                /* (a change's middle without its start) */
+                continue;
+            }
+            g[gn++] = *r;
+            if (r->idx & 128u) {
+                if (st_dapply(g, gn, h->len) == 0)
+                    st_cur_d++;
+                gn = 0;
+            }
+        }
+    }
+    if (st_cur_d)
+        h->crc = st_crc32(st_buf, h->len);
+}
+#endif
+
 /* a copy's newest intact record, *h its valid entry 0 on the way in: 0, the payload in st_buf, *h, st_cur_e, st_at
- * set. A log entry counts only when it is newer than entry 0 */
+ * set. A log entry counts only when it is newer than entry 0. The changes written after it go onto it (st_deltas) */
 static int st_newest(uint32_t obj, uint32_t copy, st_hdr_t *h)
 {
     uint32_t e;
@@ -193,6 +284,11 @@ static int st_newest(uint32_t obj, uint32_t copy, st_hdr_t *h)
         return -1;
     st_cur_e = e;
     st_at = st_sector(obj, copy) + st_data(obj, e);
+    st_cur_d = 0;
+#ifdef ST_LOG_OBJ
+    if (ST_LOGGED(obj))
+        st_deltas(obj, copy, e, h);
+#endif
     return 0;
 }
 
@@ -258,7 +354,71 @@ static uint32_t st_free(uint32_t obj, uint32_t copy, uint32_t e)
 #endif
 #define ST_NOERASE 1u                                  /* st_put: no erase (the audio plays): 1 back if only one would make room */
 #define ST_ROLL 2u                                     /* .. entry 0 of the other copy (what older firmware reads) */
-/* a save: 0 written (and read back), 1 not now (ST_NOERASE), < 0 a flash error */
+#define ST_WHOLE 4u                                    /* .. a whole entry, not a change (a backup reads it in one piece) */
+
+#ifdef ST_LOG_OBJ
+/* a logged object's save as a change onto the current record (st_current's, in st_buf; *h its header): 0 written (and
+ * read back), 1 it does not fit (too big, or no room after the last record: a whole entry then), < 0 a flash error.
+ * The runs: the bytes that differ, two closer than a run's head (3 bytes) taken as one */
+static int st_dput(uint32_t obj, int cur, const st_hdr_t *h, const uint8_t *s, uint32_t len, uint32_t how)
+{
+    st_drec_t r[ST_DMAX];
+    uint32_t n = 0, p = 0, i, j, k, m, at = st_dnext, end = st_sector(obj, (uint32_t)cur) + ST_SECTOR;
+    int rc;
+    st_hdr_t chk;
+    for (i = 0; i < sizeof r; i++)
+        ((uint8_t *)r)[i] = 0;
+    for (i = 0; i < len; i++) {
+        if (s[i] == st_buf[i])
+            continue;
+        for (k = j = i + 1u; j < len && j < k + 3u; j++)
+            if (s[j] != st_buf[j])
+                k = j + 1u;                            /* (the run: i .. k - 1) */
+        while (i < k) {
+            if (p + 4u > ST_DPAY) {                    /* (no room for a byte more: the next record) */
+                if (++n >= ST_DMAX)
+                    return 1;
+                p = 0;
+            }
+            m = k - i < ST_DPAY - p - 3u ? k - i : ST_DPAY - p - 3u;
+            r[n].pay[p] = (uint8_t)i;
+            r[n].pay[p + 1u] = (uint8_t)(i >> 8);
+            r[n].pay[p + 2u] = (uint8_t)m;
+            for (j = 0; j < m; j++)
+                r[n].pay[p + 3u + j] = s[i + j];
+            p += 3u + m;
+            i += m;
+        }
+        i = k - 1u;
+    }
+    if (!n && !p)
+        return 0;                                      /* (nothing changed) */
+    n++;
+    if (at < end - ST_SECTOR || at > end || n * 32u > end - at)
+        return 1;
+    for (j = 0; j < n; j++) {
+        r[j].tag = (uint8_t)ST_DTAG;
+        r[j].idx = (uint8_t)(j | (j + 1u == n ? 128u : 0u));
+        r[j].cseq = (uint16_t)(st_dcseq + 1u);
+        r[j].bseq = h->seq;
+        r[j].crc = st_crc32(&r[j], sizeof r[j] - 4u);
+    }
+    for (j = 0; j < n; j++) {
+        if (how & ST_NOERASE)
+            ST_PROG_SYNC();
+        if ((rc = st_prog(at + j * 32u, &r[j], sizeof r[j])) != 0)
+            return rc;
+    }
+    if (st_current(obj, &chk) != cur || chk.len != len)   /* read back: the record now is what was asked */
+        return -7;
+    for (i = 0; i < len; i++)
+        if (st_buf[i] != s[i])
+            return -7;
+    return 0;
+}
+#endif
+/* a save: 0 written (and read back), 1 not now (ST_NOERASE), < 0 a flash error. A logged object's goes as a change
+ * when it fits (st_dput), else whole */
 static int st_put(uint32_t obj, const void *src, uint32_t len, uint32_t how)
 {
     uint32_t seq, copy, e = 0, base, off, n;
@@ -267,6 +427,11 @@ static int st_put(uint32_t obj, const void *src, uint32_t len, uint32_t how)
     if (ST_BLOCKED() || obj >= OBJ_COUNT || len > ST_PAYLOAD_MAX)
         return -1;
     cur = st_current(obj, &h);
+#ifdef ST_LOG_OBJ
+    if (ST_LOGGED(obj) && cur >= 0 && !(how & (ST_ROLL | ST_WHOLE)) && len == h.len &&
+        (rc = st_dput(obj, cur, &h, (const uint8_t *)src, len, how)) != 1)
+        return rc;                                     /* (the change written, or a flash error) */
+#endif
     seq = cur < 0 ? 0u : h.seq;
     copy = cur == 0 ? 1u : 0u;                         /* the other copy (none current: an erased one, if any) .. */
     if (cur < 0 && !st_is_blank(obj, 0) && st_is_blank(obj, 1))
@@ -346,8 +511,9 @@ static void st_check_blank(uint32_t obj)
     }
 }
 
-/* a quiet moment's work on a logged object (each erase holds the audio ~45 ms): the newest record moved to entry 0 of
- * the other copy, where older firmware reads it, then the copy left behind erased for the next saves. One step a
+/* a quiet moment's work on a logged object (each erase holds the audio ~45 ms): the newest record (with its changes)
+ * moved whole to entry 0 of the other copy, where older firmware reads it, then the copy left behind erased for the
+ * next saves. One step a
  * call: 1 one done, 0 nothing left, < 0 a flash error. The newest record stays readable at every point */
 static int st_tidy(uint32_t obj)
 {
@@ -356,7 +522,7 @@ static int st_tidy(uint32_t obj)
     int cur;
     if (ST_BLOCKED() || obj >= OBJ_COUNT || (cur = st_current(obj, &h)) < 0)
         return 0;
-    if (st_cur_e)                                      /* (st_put takes it from st_buf, where st_current left it) */
+    if (st_cur_e || st_cur_d)                          /* (st_put takes it from st_buf, where st_current left it) */
         return st_put(obj, st_buf, h.len, ST_ROLL) ? -1 : 1;
     c = cur == 0 ? 1u : 0u;
     if (st_is_blank(obj, c))
