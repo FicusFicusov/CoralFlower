@@ -71,6 +71,10 @@ your own risk.
 
 ## Build it yourself
 
+- **From a fresh clone.** Nothing generated is in git: every build first writes the fonts, icons, tables and samples
+  into `build/gen/`, with Python 3, Pillow and fontTools. `python3 tools/build.py --gen-only` does that step alone, for
+  any other way of building the firmware. On GitHub, the check workflow (`.github/workflows/check.yml`) builds a fresh
+  clone on every push.
 - **The emulator and the site.** Install the [Emscripten SDK](https://emscripten.org), then run
   `sh tools/emu/web/build_web.sh` and `sh tools/make_site.sh build/site`. The site lands in `build/site/`, with the
   emulator in `build/site/play/`.

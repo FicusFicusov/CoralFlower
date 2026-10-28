@@ -4,6 +4,7 @@
 """Build CoralFlower (after ChoralRoot FM-1): the app, the update loader and an installable .fwsc package.
 
   tools/build.py [--release X.Y[-suffix]]
+  tools/build.py --gen-only        (the generated headers alone, into build/gen: no toolchain, no SDK)
 
 The unit is firmware/src/coralflower.c (CoralFlower's single compilation unit, after ChoralRoot's choralroot.c, a
 fork of Felucca's felucca.c). Outputs in build/: coralflower.bin (app.bin: the boot stub's 0xEE0 bytes, then the app),
@@ -12,7 +13,12 @@ coralflower.elf, coralflower.dis (the app), stub/stub.{bin,elf,dis} (the boot st
 sets the version string to "CoralFlower X.Y" and writes coralflower-X.Y.fwsc and a folder release-X.Y/ with the
 package, the app (coralflower-X.Y-app.bin), SHA256SUMS and the licence files (LICENSE, LICENSING.md, LICENSES/).
 After the checks it prints the section sizes against the XIP slot and the RAM / POOL / NOINIT regions.
-See BUILDING.md for the toolchain and the SDK.
+README.md ("Build it yourself") and build.sh have the toolchain and the SDK.
+
+A fresh clone holds no generated file: every build writes build/gen first (fonts, icons, keycaps, palettes, tables,
+samples; Python 3 with Pillow and fontTools). --gen-only does that step alone, for a build of the unit by other
+means (the emulators, a host compiler, a converter); .github/workflows/check.yml does it from a fresh clone on every
+push.
 
 The JieLi toolchain is Linux x86-64 only. JIELI_TOOLCHAIN points at it; on
 macOS (or with JIELI_DOCKER=1) each tool runs in a linux/amd64 container.
@@ -437,7 +443,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--release", metavar="X.Y", help=f"release build: identity {PRODUCT}, version string CoralFlower X.Y")
     ap.add_argument("--sdk", type=Path, help="JieLi AC79 SDK checkout (default: $AC79_SDK)")
+    ap.add_argument("--gen-only", action="store_true",
+                    help="only the generated headers, into build/gen (no toolchain, no SDK)")
     a = ap.parse_args()
+    if a.gen_only:
+        generate()
+        print(f"generated {GEN}: {', '.join(sorted(p.name for p in GEN.glob('*.h')))}")
+        return 0
     name = f"{UNIT}.fwsc"
     if a.release:                   # the identity stays FM-1_930: only the version string and the names change
         m = re.fullmatch(r"\d+\.\d+(?:\.\d+)?(?:-[A-Za-z0-9.]+)?", a.release)   # the identity never encodes it

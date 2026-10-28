@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# A fresh clone builds: on every push and pull request, without the JieLi toolchain. Nothing generated is in git:
+# tools/build.py --gen-only writes build/gen (fonts, icons, keycaps, palettes, tables, samples), then the single unit
+# firmware/src/coralflower.c compiles for an ARM target (every include there), the headless emulator builds from it
+# and plays a short script, the host tests run, and the tree git tracks is left as it was. What anyone building from
+# source needs first, and the firmware hub's converter (thefirmwarehub.com/convert) with them.
+name: check
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  # as release.yml: the generated headers (fonts with Raqm) depend on these versions
+  PYTHON_VERSION: "3.11"
+  PILLOW_VERSION: "11.1.0"
+  FONTTOOLS_VERSION: "4.66.1"
+
+jobs:
+  fresh-clone:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Python packages (Pillow with Raqm, fontTools)
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends libfribidi0 libraqm0
+          python3 -m pip install --disable-pip-version-check "Pillow==$PILLOW_VERSION" "fonttools==$FONTTOOLS_VERSION"
+
+      - name: Generated headers (tools/build.py --gen-only)
+        run: python3 tools/build.py --gen-only
+
+      - name: The unit compiles (an ARM target, every include present)
+        run: |
+          clang -target armv7m-none-eabi -Os -fno-builtin -w -Ifirmware/hal -Ifirmware/src -Ibuild/gen \
+                -fsyntax-only firmware/src/coralflower.c
+
+      - name: The headless emulator builds and plays
+        run: |
+          set -euo pipefail
+          printf 'wait 1500\nkey 7 down\nwait 400\nkey 7 up\nwait 300\nbtn SEQ\nwait 300\nbtn SEQ\nwait 300\ndump\n' \
+              > build/smoke.txt
+          sh tools/emu/cf_headless.sh build/smoke.txt build/smoke | tail -20
+
+      - name: Host tests
+        run: |
+          set -euo pipefail
+          mkdir -p build/host
+          cc -std=gnu11 -O1 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/cf_backup_test tests/cf_backup_test.c -lm
+          build/host/cf_backup_test
+          cc -std=c99 -Wall -Wextra -Ifirmware/src -o build/cf_chord_test tests/cf_chord_test.c firmware/src/cf_chord.c \
+             firmware/src/cf_theory.c
+          build/cf_chord_test
+
+      - name: The tracked tree is as it was
+        run: |
+          set -euo pipefail
+          git status --porcelain
+          test -z "$(git status --porcelain --untracked-files=no)"
