@@ -454,8 +454,10 @@ static void sqp_fire(const sq_pat_t *p, uint32_t tk, uint32_t u)
         sqp.dmask = e->mask;
         sqp.dsingle = !e->btns;
         sqp.dser++;
-        if (!sq_own(p, SQ_BASS) && e->nb && !((p->mute >> SQ_BASS) & 1u))   /* no bass steps: the chord's
-                                                  * own bass (BASS muted: none; it sounded for a tick) */
+        if (!sq_own(p, SQ_BASS) && e->nb && !((p->mute >> SQ_BASS) & 1u) && cfp_cfg.bass_on)   /* no bass steps:
+                                                  * the chord's own bass (BASS muted: none; it sounded for a tick).
+                                                  * The BASS page's Off silences it too (0.6; the owner: "отключил и мне
+                                                  * кажется, что он всё ещё звучит"); a Bass row's own notes play on */
             sqp_bass_on(e->bass, e->nb, off, gt);   /* (the chords' own bass: with their Glide) */
         return;
     }
@@ -489,8 +491,9 @@ static void sqp_now(void)
             sqp_arp_off(SQ_CHORDS);
         if ((mu >> SQ_LAYER) & 1u)
             sqp_arp_off(SQ_LAYER);
-        if (((mu >> SQ_BASS) & 1u || ((mu >> SQ_CHORDS) & 1u && !sq_own(p, SQ_BASS))) && sqp.nb)
-            sqp_bass_off();
+        if (((mu >> SQ_BASS) & 1u || (((mu >> SQ_CHORDS) & 1u || !cfp_cfg.bass_on) && !sq_own(p, SQ_BASS))) &&
+            sqp.nb)
+            sqp_bass_off();                      /* (BASS Off while the chords' own bass sounds: it goes too) */
         if ((mu >> SQ_LAYER) & 1u && sqp.ln)
             sqp_layer_off();
     }

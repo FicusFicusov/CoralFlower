@@ -452,23 +452,33 @@ static uint8_t cv_bass_mark(int n)
 }
 static void view_bass(int x0)
 {
-    int ym = VIEW_Y + 24, w = 192, xa = x0 + 12, amp = 22 * cs.bass_level / 127, live = cf_sn.nb > 0;
+    int ym = VIEW_Y + 24, w = 192, xa = x0 + 12, amp = 22 * cs.bass_level / 127, live = cf_sn.nb > 0, py = VIEW_Y + 50;
     int32_t cyc = 512 << (cs.bass_oct + 2) >> 2;           /* -2: half a cycle .. +2: eight */
     uint32_t ph = live ? cu.now * 2600000u * (uint32_t)(cs.bass_oct + 3) : 0u;
     fb_hline(xa, ym, w, FL_BG3);
     if (!cs.bass_on) {
+        const sq_pat_t *p = &sq_st.pat[cf_sn.sq_pat % SQ_NPAT];
         fb_text_c(&CF_FONT_UI, xa + w / 2, ym - 16, "the bass is off", FL_INK3, 1);
+        if (cf_sn.sq_on && sq_own(p, SQ_BASS) && !((p->mute >> SQ_BASS) & 1u)) {
+            char b[32];                        /* a playing pattern's Bass row plays on under Off (its own MUTE stops
+                                                * it): said here, so Off never seems broken (the owner, 0.6-rc2) */
+            str_cpy(b, "Pattern ? Bass row plays", sizeof b);
+            b[8] = (char)('A' + cf_sn.sq_pat % SQ_NPAT);
+            draw_chip_text_c(ym + 3, b, FL_INK2);
+            draw_chip_text_c(ym + 16, "mute: [SEQ] [SEQ] Bass, K4", FL_INK2);
+            py += 7;                           /* (the keys a little lower, under the two lines) */
+        }
     } else {
         if (cs.octaver)
             draw_wave(xa, ym, w, amp / 2 + 1, cyc * 2, ph * 2u, 0, live ? FL_INK2 : FL_INK3, 1);
         draw_wave(xa, ym, w, amp ? amp : 1, cyc, ph, 0, live ? C_ACC(0) : C_ACC(2), 0);
     }
-    draw_piano(x0 + 108 - 35 * 5 / 2, VIEW_Y + 50, 24, 5, 5, 12, cv_bass_mark);
+    draw_piano(x0 + 108 - 35 * 5 / 2, py, 24, 5, 5, 12, cv_bass_mark);
     {                                          /* the octaves under the keys */
         int o;
         for (o = 0; o < 5; o++) {
             char b[3] = {'C', (char)('1' + o), 0};
-            fb_text_c(&CF_FONT_MICRO, piano_cx(x0 + 108 - 35 * 5 / 2, 24, 5, 24 + 12 * o), VIEW_Y + 64, b, FL_INK3, 1);
+            fb_text_c(&CF_FONT_MICRO, piano_cx(x0 + 108 - 35 * 5 / 2, 24, 5, 24 + 12 * o), py + 14, b, FL_INK3, 1);
         }
     }
 }
