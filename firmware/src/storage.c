@@ -139,8 +139,12 @@ static uint8_t st_buf[ST_PAYLOAD_MAX] __attribute__((aligned(4)));
  * newest whole entry (the state of the last quiet moment, when st_tidy wrote it whole into entry 0). Records are
  * written one after another, each inside a page, read back before the save counts */
 #ifdef ST_LOG_OBJ
-#define ST_LOGGED(obj) ((obj) == (uint32_t)(ST_LOG_OBJ) || ((obj) >= OBJ_CFEDIT0 && (obj) <= OBJ_CFTWK7))
-#define ST_LSZ(obj) ((obj) == (uint32_t)(ST_LOG_OBJ) || (obj) == OBJ_CFPSND ? 256u : 512u)
+/* the old looper's object keeps the drum machine's record since 0.6 (cf_dmui.c), a log of 256-byte entries too, once
+ * no loop of 0.3.1 waits in it (dm_load: such a loop's record is longer than an entry) */
+static uint8_t st_loop_log;
+#define ST_LOGGED(obj) ((obj) == (uint32_t)(ST_LOG_OBJ) || ((obj) >= OBJ_CFEDIT0 && (obj) <= OBJ_CFTWK7) || \
+                        ((obj) == OBJ_CFLOOP && st_loop_log))
+#define ST_LSZ(obj) ((obj) == (uint32_t)(ST_LOG_OBJ) || (obj) == OBJ_CFPSND || (obj) == OBJ_CFLOOP ? 256u : 512u)
 #else
 #define ST_LOGGED(obj) 0
 #define ST_LSZ(obj) 256u

@@ -16,11 +16,12 @@ enum {
     SCR_SAVE,      /* SAVE */
     SCR_SQ,        /* SEQ again: the sequencer, a pattern's tracks or the song (cf_sequi.c) */
     SCR_SQED,      /* .. a track open: its steps */
+    SCR_DRUM,      /* SEQ again, the METRONOME's carousel on it: the drum machine (0.6, cf_dmui.c) */
     SCR_N
 };
 static const char *const SCR_NAME[SCR_N] = {"HOME", "CHORD", "ENVELOPE", "BASS", "SOUND", "GLOBAL", "EFFECTS",
                                              "ARPEGGIO", "METRONOME", "SAVE", "SEQUENCER",
-                                             "PATTERN"};
+                                             "PATTERN", "DRUM MACHINE"};
 
 /* themes: the one interface colour (GLO > Display > COLOR), a palette ramp, after the M-VAVE synths' panel
  * colours and a few more */

@@ -134,6 +134,7 @@ static void kpc(char *b, int pc)
 #include "cf_fxui.c"                             /* (the FX screen's controls) */
 static void cv_turned(int d);
 #include "cf_sequi.c"                            /* (the SEQUENCER screens' controls) */
+#include "cf_dmui.c"                             /* (the drum machine's page, 0.6) */
 
 /* EDIT's part keys, as printed on the unit: MONO (upper key 8) the bass, POLY (9) the chords, the next (10) the LAYER */
 static uint32_t edit_key_part(int u) { return u == 8 ? CF_PART_BASS : u == 9 ? CF_PART_CHORD : CF_PART_LAYER; }
@@ -311,6 +312,7 @@ static void ui_knob_info(int k, cf_knob_t *o)
         }
         break;
     case SCR_SEQ: metro_knob_info(k, o); break;
+    case SCR_DRUM: dm_knob_info(k, o); break;
     case SCR_SQ:
     case SCR_SQED: sq_knob_info(k, o); break;
     case SCR_GLO:
@@ -525,6 +527,7 @@ static void ui_knob_turn(int k, int d)
         cf_send_config();
         break;
     case SCR_SEQ: metro_knob_turn(k, d); break;
+    case SCR_DRUM: dm_knob_turn(k, d); break;
     case SCR_SQ:
     case SCR_SQED: sq_knob_turn(k, d); break;
     case SCR_GLO:
@@ -647,6 +650,19 @@ static void cv_turned(int d)
 
 static void ui_select(int d)                     /* SELECT: the bass sound, or a screen's page */
 {
+    if (cu.scr == SCR_DRUM) {                    /* the drum machine: the rhythm */
+        dm_select(d);
+        return;
+    }
+    if (cu.scr == SCR_SEQ) {                     /* the METRONOME: where its SEQ goes, the SEQUENCER or the drum machine
+                                                  * (it took the bass sound, as HOME's SELECT; the bass sound stays on
+                                                  * HOME and the other pages) */
+        int v = clampi(dm_seq_to + d, 0, 1);
+        if (v != dm_seq_to)
+            cv_turned(d);
+        dm_seq_to = (uint8_t)v;
+        return;
+    }
     if (cu.scr == SCR_SQ) {                      /* SEQUENCER: the track, the song's place */
         sq_pick(d);
         return;
@@ -703,6 +719,10 @@ static void ui_select(int d)                     /* SELECT: the bass sound, or a
 }
 static void ui_presets(int d)                    /* PRESETS: the chord sound (a sequencer's track open: its sound) */
 {
+    if (dm_holding()) {                          /* (EDIT held in DRUMS: a rhythm for them, cf_dmui.c) */
+        dm_hold_turn(d);
+        return;
+    }
     if (cu.scr == SCR_SQED || (cu.scr == SCR_SQ && squ.pat < SQ_NPAT)) {
         sq_presets(d);                           /* (the pattern's own sound for the frame's track: 0.5) */
         return;
@@ -763,6 +783,8 @@ static void ui_open(uint32_t scr)
     if (sq_screen(was) && !sq_screen(scr) && scr != SCR_SEQ)
         ui_ctx_from_track(squ.trk);
     cu.scr = (uint8_t)(scr == was && scr != SCR_HOME ? SCR_HOME : scr);
+    if (cu.scr == SCR_SEQ && was != SCR_SEQ)
+        dm_seq_to = 0;                           /* (the carousel starts on the SEQUENCER: SEQ twice opens it, as before) */
     if (cu.scr == SCR_SEL && cf_is_off(&cs.chord, cu.sel_btn))
         cu.sel_btn = sel_first();
     if ((was == SCR_SEQ || sq_screen(was)) != (cu.scr == SCR_SEQ || sq_screen(cu.scr)))
@@ -898,6 +920,10 @@ static void ui_button(uint32_t b)
             squ.glo_down = cu.now ? cu.now : 1u;
             return;
         }
+        if ((b == B_PLAY || b == B_REC) && dm_holding()) {   /* (EDIT held in DRUMS: called off, cf_dmui.c) */
+            dm_hold_cancel();
+            return;
+        }
         if (b == B_PLAY) {                       /* the pattern shown round, or the song from the place picked */
             sq_play();
             return;
@@ -910,18 +936,24 @@ static void ui_button(uint32_t b)
     }
     switch (b) {
     case B_HOME: ui_open(SCR_HOME); break;
-    case B_SCL: ui_open(SCR_SEL); break;
+    case B_SCL:                                  /* (the drum machine: SEL takes the rhythm's own KIT and SWING back) */
+        if (cu.scr == SCR_DRUM)
+            dm_sel();
+        else
+            ui_open(SCR_SEL);
+        break;
     case B_ENV: ui_open(SCR_ENV); break;
     case B_LFO: ui_open(SCR_BASS); break;
     case B_EDIT: ui_open(SCR_EDIT); break;
     case B_GLO: ui_open(SCR_GLO); break;
     case B_FX: ui_open(SCR_FX); break;
     case B_ARP: ui_open(SCR_ARP); break;         /* (its ON/OFF is K1 there, as an effect's: the owner's) */
-    case B_SEQ:                                  /* METRONOME, again the SEQUENCER, again HOME */
+    case B_SEQ:                                  /* METRONOME, again the SEQUENCER (or the drum machine: the METRONOME's
+                                                  * carousel), again HOME */
         if (cu.scr == SCR_SEQ)
-            ui_open(SCR_SQ);
+            ui_open(dm_seq_to ? SCR_DRUM : SCR_SQ);
         else
-            ui_open(sq_screen(cu.scr) ? SCR_HOME : SCR_SEQ);
+            ui_open(sq_screen(cu.scr) || cu.scr == SCR_DRUM ? SCR_HOME : SCR_SEQ);
         break;
     case B_SAVE:                                 /* on SAVE: held 1 s saves, a tap goes HOME (cf_save_poll) */
         if (cu.scr == SCR_SAVE) {
@@ -931,7 +963,10 @@ static void ui_button(uint32_t b)
         }
         break;
     case B_PLAY:                                 /* the last pattern plays / stops (cf_sequi.c sq_home_play) */
-        sq_home_play();
+        if (cu.scr == SCR_DRUM)
+            dm_page_play();
+        else
+            sq_home_play();
         break;
     case B_REC:                                  /* a tap records a new pattern, a hold undoes (cf_rec_poll) */
         cu.rec_hold = cu.now ? cu.now : 1u;
@@ -1110,8 +1145,12 @@ static void cf_rec_poll(void)
             cu.rec_fired = 1;
             sq_home_undo();
         } else if (!held) {
-            if (!cu.rec_fired)
-                sq_home_rec();
+            if (!cu.rec_fired) {
+                if (cu.scr == SCR_DRUM)
+                    dm_page_rec();
+                else
+                    sq_home_rec();
+            }
             cu.rec_hold = 0;
         }
     }
@@ -1308,6 +1347,7 @@ static void cf_ui_input(void)
     sq_oct_poll();
     sq_edit_poll();
     sq_save_poll();
+    dm_poll();                                   /* (the drum machine: what was chosen last, its settings kept) */
     for (i = 0; i < 14u; i++)
         if ((pr >> i) & 1u) {
             uint32_t b = panel_btn_of(i);
@@ -1495,7 +1535,7 @@ static void cf_leds(void)
 {
     uint8_t lit[FM1_NCOL] = {0}, mid[FM1_NCOL] = {0}, dim[FM1_NCOL] = {0}, faint[FM1_NCOL] = {0};
     static const uint8_t SCR_BTN[SCR_N] = {B_HOME, B_SCL, B_ENV, B_LFO, B_EDIT, B_GLO, B_FX, B_ARP, B_SEQ, B_SAVE,
-                                           B_SEQ, B_SEQ};
+                                           B_SEQ, B_SEQ, B_SEQ};
     const cf_chord_out_t *out = &cf_sn.out;
     uint32_t k, blink = (cu.now / 250u) & 1u, sq = sq_screen(cu.scr);
     /* buttons: the open screen lit, the others dim; PLAY with the beat. The sequencer: only what works there is up
@@ -1541,8 +1581,8 @@ static void cf_leds(void)
         if (cf_sn.running)                       /* PLAY: with the beat while it runs; a pattern to play: mid */
             cf_led((int32_t)(cf_sn.now_ms - cf_sn.beat_ms) < 120 ? lit : mid, panel.btn[B_PLAY], 1);
         else
-            cf_led((sqk.song && sq_st.song.n) || (sqk.last < SQ_NPAT && sq_has(sqk.last)) ? mid : dim,
-                   panel.btn[B_PLAY], 1);
+            cf_led((sqk.song && sq_st.song.n) || (sqk.last < SQ_NPAT && sq_has(sqk.last)) || dmr.last ? mid : dim,
+                   panel.btn[B_PLAY], 1);       /* (a rhythm chosen last: PLAY plays it, cf_dmui.c) */
         if (cf_sn.sq_on)                         /* the sequencer plays elsewhere: SEQ up, as ARP is */
             cf_led(mid, panel.btn[B_SEQ], 1);
     }
@@ -1721,6 +1761,7 @@ static void cf_ui_init(void)
         cfps_load();                             /* .. their own sounds (0.5) */
         cfk_load();                              /* .. the sounds' tweaks (put on them as they load: cfk_take) */
         sq_from_loop();                          /* (a loop kept by 0.3.1 or before, or restored: a pattern now) */
+        dm_load();                               /* (the drum machine's settings: in the loop's object, after it) */
         sq_resume();                             /* (what PLAY on HOME played before the power-off) */
     } else {
         sq_defaults();

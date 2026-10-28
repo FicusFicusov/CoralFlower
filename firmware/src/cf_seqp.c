@@ -682,11 +682,14 @@ static void sqp_stop(void)
     sqp.rlim = 0;
     cfm.running = 0;
 }
-/* PLAY: pattern pat round, or (pat SQ_NPAT) the song from place slot; cin: after a bar of count-in */
-static void sqp_begin(uint32_t pat, uint32_t slot, int cin)
+/* PLAY: pattern pat round, or (pat SQ_NPAT) the song from place slot; cin: after a bar of count-in. sqp_setup: all
+ * but the beat (a rhythm's take, cf_drum.c dmp_take_over, keeps the beat where it is) */
+static void dmp_stop(void);
+static void sqp_setup(uint32_t pat, uint32_t slot)
 {
     uint32_t i;
     sqp_stop();
+    dmp_stop();                                  /* (one thing plays: a rhythm of the drum machine stops) */
     sqp.song = pat >= SQ_NPAT;
     sqp.slot = (uint8_t)(sqp.song && sq_st.song.n ? slot % sq_st.song.n : 0u);
     sqp.pat = (uint8_t)(sqp.song ? sq_st.song.pat[sqp.slot] % SQ_NPAT : pat);
@@ -710,6 +713,10 @@ static void sqp_begin(uint32_t pat, uint32_t slot, int cin)
     sqp.cbtns = sqp.lbtns = 0;
     sqp.dn = 0;
     sqp.on = 1;
+}
+static void sqp_begin(uint32_t pat, uint32_t slot, int cin)
+{
+    sqp_setup(pat, slot);
     cfm_restart();
     cfm.running = 1;
     if (cin)
@@ -751,6 +758,7 @@ static void sqp_queue(uint32_t pat, uint32_t slot)
 }
 /* REC: a take into track trk of pattern pat. Playing that pattern: at once; else from its top after a bar of
  * count-in */
+static void sqp_rec_set(uint32_t trk);
 static void sqp_rec_start(uint32_t pat, uint32_t trk)
 {
 #ifdef CF_TRACE
@@ -758,6 +766,10 @@ static void sqp_rec_start(uint32_t pat, uint32_t trk)
 #endif
     if (!sqp.on || sqp.song || sqp.pat != pat)
         sqp_begin(pat, 0, 1);
+    sqp_rec_set(trk);
+}
+static void sqp_rec_set(uint32_t trk)            /* (the take's track; the pattern plays) */
+{
     sqp.rec = (uint8_t)trk;
     sqp.click = 1;
     sqp.rserial = cfc.out.serial;                /* (what the keys hold already is not the take's) */

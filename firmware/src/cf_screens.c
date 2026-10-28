@@ -85,6 +85,7 @@ static void draw_top_sound(uint32_t part, int xmax)   /* xmax: where the chips o
 
 #include "cf_views.c"                           /* (the heads, the pager, the central pictures) */
 #include "cf_seqv.c"                            /* (the SEQUENCER screens' pictures) */
+#include "cf_dmv.c"                             /* (the drum machine's, 0.6) */
 static void draw_title(const char *t, const char *note);
 /* ------------------------------------------------------------------- FX --- */
 /* the selected effect's own little picture, x0..x0+w along, its foot on yb, at most h tall */
@@ -388,10 +389,9 @@ static void draw_generic(void)
         kint(s2, cs.beats, 0);
         str_cpy(s2 + str_len(s2), cs.beats == 6 ? "/8" : "/4", 4);
         draw_title(b, s2);
-        /* (the owner's words, in the middle of the picture: on one line it ran edge to edge, at the foot it sat on
-         * the keys; "по центру экрана", 2026-10-19) */
-        draw_chip_text_c(Y_VIEW + 70, "Press [SEQ] again", FL_INK2);
-        draw_chip_text_c(Y_VIEW + 84, "to open sequencer", FL_INK2);
+        /* where SEQ goes from here (0.6: the SEQUENCER or the drum machine), in the middle of the picture (the hint
+         * before it: "по центру экрана", the owner, 2026-10-19) */
+        dm_draw_carousel();
         {
             static const char *const H[2] = {"PLAY", "start"};   /* (the click sounds only while the beat runs) */
             static const char *const H2[2] = {"PLAY", "stop"};
@@ -540,36 +540,13 @@ static void cf_ui_draw(void)
                 fb_text(&CF_FONT_UI, x + 3, Y_TOP + 1, "ARP", FL_BG, 1);
                 x -= 4;
             }
-            if (cf_sn.sq_on && !sqk.on) {        /* the sequencer plays: its pattern (the song's) and bar */
-                char b[12];
-                int w;
-                str_cpy(b, cf_sn.sq_song ? "SONG " : "SEQ ", sizeof b);
-                b[str_len(b) + 1] = 0;
-                b[str_len(b)] = (char)('A' + cf_sn.sq_pat % SQ_NPAT);   /* (the letter alone: "A3" read as a note) */
-                w = fb_text_w(&CF_FONT_UI, b, 1) + 12;
-                x -= w;
-                fb_rbox(x, Y_TOP + 2, w, 11, 2, cf_panel(2));
-                fb_rect(x + 3, Y_TOP + 5, 4, 4, C_ACC(0));
-                fb_text(&CF_FONT_UI, x + 9, Y_TOP + 1, b, FL_INK, 1);
-                x -= 4;
-            }
-            if (sqk.on) {                        /* a take from HOME: its count-in, then its bar of 8 */
-                char b[12];
-                int w, rec = sqk.rolled;
-                if (rec) {
-                    str_cpy(b, "REC ", sizeof b);
-                    kint(b + 4, (int)(sqk.nbar % SQ_BARS) + 1, "/8");
-                } else {
-                    str_cpy(b, "REC in ", sizeof b);
-                    b[7] = (char)('0' + (cf_sn.sq_cin + SQ_PPQN - 1u) / SQ_PPQN % 10u);
-                    b[8] = 0;
-                }
-                w = fb_text_w(&CF_FONT_UI, b, 1) + 12;
-                x -= w;
-                fb_rbox(x, Y_TOP + 2, w, 11, 2, rec ? FL_C(FL_R_FIRE, 2) : FL_BG2);
-                fb_rect(x + 3, Y_TOP + 5, 4, 4, rec ? FL_INK : FL_C(FL_R_FIRE, 1));
-                fb_text(&CF_FONT_UI, x + 9, Y_TOP + 1, b, FL_INK, 1);
-                x -= 4;
+            {                                    /* the plaque: what plays (a pattern, the song, a rhythm, a take: its
+                                                  * count-in, then its bar of 8); nothing playing, pale, what PLAY
+                                                  * would start (0.6, the owner: "Показывать") */
+                char b[16];
+                uint32_t kind = dm_plaque(b, sizeof b);
+                if (kind != DMP_NONE)
+                    x = dm_plaque_chip(x, b, kind) - 4;
             }
             draw_top_sound(CF_PART_CHORD, x);    /* (after the chips: the name fits before them) */
         }
@@ -596,6 +573,8 @@ static void cf_ui_draw(void)
         draw_fx();
     else if (sq_screen(cu.scr))
         draw_seq();
+    else if (cu.scr == SCR_DRUM)
+        draw_drum();
     else
         draw_generic();
     draw_popup();
@@ -607,8 +586,9 @@ static void cf_ui_draw(void)
                          squ.trk == SQ_BASS ? CF_PART_BASS : CF_PART_CHORD].name;
         int x = 4 + fb_text_w(&CF_FONT_UI, tn, 1) + 7;
         fb_text(&CF_FONT_UI, x, Y_TOP + 1, sn, FL_INK3, 1);
-        draw_top_hints(x + fb_text_w(&CF_FONT_UI, sn, 1));
-    } else if (cu.scr != SCR_HOME)
+        if (!dm_plaque_top())                    /* (a rhythm plays, a take: the plaque instead, cf_dmv.c) */
+            draw_top_hints(x + fb_text_w(&CF_FONT_UI, sn, 1));
+    } else if (cu.scr != SCR_HOME && !dm_plaque_top())   /* (the plaque in the PLAY hint's place: cf_dmv.c) */
         draw_top_hints(4 + fb_text_w(&CF_FONT_UI, SCR_NAME[cu.scr], 1) +
                        (cu.scr == SCR_EDIT ? 7 + fb_text_w(&CF_FONT_UI, cf_snd[cu.edit_part].name, 1) : 0));
     if (cu.upd_left) {                           /* the update gesture: a countdown over everything */

@@ -245,8 +245,11 @@ enum {
     CFE_TRANSPORT,    /* v: 1 start (from beat 1), 0 stop */
     CFE_SEQ,          /* the sequencer: a 0 stop, 1 play pattern b (SQ_NPAT: the song from place v), 2 drum b heard (kit v),
                        * 3 pattern b next (the song from place v), 4 a take on pattern b, track v, 5 the take ends,
-                       * 6 a take from HOME on pattern b, track v (8 bars at most) */
+                       * 6 a take from HOME on pattern b, track v (8 bars at most), 7 the tracks' bars read again */
     CFE_ROOT,         /* a root from outside (NOTES IN Roots): a its MIDI note, b its age in ms, v down */
+    CFE_DRUM,         /* the drum machine (cf_drum.c): a 0 stop, 1 play rhythm b (or next at the bar line), 2 the one
+                       * playing's kit and SWING, 3 REC in the SEQUENCER: pattern b, track v, after the rhythm's bar,
+                       * 4 a take under the rhythm: pattern b (its DRUMS the rhythm) takes over now. v: kit | SWING << 8 */
 };
 typedef struct { uint8_t op, a, b, rsv; int16_t v; } cf_ev_in_t;   /* (CFE_KEY: a key, b its age in ms, v down) */
 #define CF_EVQ 128u                              /* a power of two */
@@ -374,6 +377,7 @@ static void cfm_restart(void)
 #include "cf_loop.c"                             /* (the old looper's saved format: read once, cf_sequi.c) */
 #include "cf_seqd.c"                             /* (the sequencer's patterns and song) */
 #include "cf_seqp.c"                             /* (.. playing them) */
+#include "cf_drum.c"                             /* (the drum machine's rhythms and their player, 0.6) */
 
 /* the metronome's sounds: a decaying resonator (the accent on the downbeat a different pitch), some with noise.
  * a1 = 2 r cos w and a2 = r^2 (Q14), s = sin w (x 10000) sets the start; len: samples to -60 dB; noise: % */
@@ -537,6 +541,7 @@ static void cf_apply(const cf_ev_in_t *e)
     case CFE_CONFIG: cfp_config(); break;
     case CFE_PANIC:
         sqp_stop();
+        dmp_stop();
         cfp_panic();
         break;
     case CFE_SEQ:
@@ -553,9 +558,27 @@ static void cf_apply(const cf_ev_in_t *e)
         else if (e->a == 6) {                    /* (a take from HOME: into a new pattern, 8 bars at most) */
             sqp_rec_start(e->b, (uint32_t)e->v);
             sqp.rlim = SQ_BARS;
+        } else if (e->a == 7) {                  /* (its tracks' bars changed: each track's bar read again) */
+            if (sqp.on)
+                sqp_bars();
         }
         else
             sqp_stop();
+        break;
+    case CFE_DRUM:
+        if (e->a == 1)
+            dmp_queue(e->b, (uint32_t)e->v & 0xFFu, ((uint32_t)e->v >> 8) & 0xFFu);
+        else if (e->a == 2 && dmp.on) {
+            dmp.kit = (uint8_t)(e->v & 0xFF);
+            dmp.swing = (uint8_t)((e->v >> 8) & 0xFF);
+        } else if (e->a == 3)
+            dmp_rec_in(e->b, (uint32_t)e->v);
+        else if (e->a == 4)
+            dmp_take_over(e->b);
+        else if (e->a == 5)
+            dmp.rin = 0;
+        else
+            dmp_stop();
         break;
     case CFE_METRO:
         if (e->a && !cfm.on && !cfm.running)
@@ -618,6 +641,7 @@ static void cf_audio_block(uint32_t n)
         cfa_tick(n);                             /* (the arpeggiator: its steps, its strum) */
         sqp_arp_tick(n);                         /* (the sequencer's tracks' with ARP on) */
         sqp_tick(n, pulses);                     /* (the sequencer) */
+        dmp_tick(n, pulses);                     /* (.. or the drum machine's rhythm) */
         cfm_tick(n, pulses);
         cf_clock_out();
     }
@@ -649,6 +673,9 @@ typedef struct {
     uint8_t sq_dn, sq_dnote[6], sq_droot, sq_dsingle, sq_dser, sq_bn, sq_bass[2];   /* .. the CHORDS track's chord
                                   * for HOME (cf_seqp.c sqp.dn ..), the bass sounding */
     uint16_t sq_dmask;
+    uint8_t dm_on, dm_r, dm_next, dm_bar, dm_rin;   /* the drum machine: a rhythm plays, which, the next, its bar;
+                                  * REC in the SEQUENCER waits for its bar line (pattern + 1) */
+    uint32_t dm_t, dm_left;      /* .. ticks into its bar; ticks till REC in's pattern takes over */
 } cf_sn_t;
 static cf_sn_t cf_sn;
 
@@ -711,5 +738,12 @@ static void cf_snapshot(void)
     cf_sn.sq_bn = sqp.on ? sqp.nb : 0u;
     cf_sn.sq_bass[0] = sqp.bass[0];
     cf_sn.sq_bass[1] = sqp.bass[1];
+    cf_sn.dm_on = dmp.on;
+    cf_sn.dm_r = dmp.r;
+    cf_sn.dm_next = dmp.next;
+    cf_sn.dm_bar = dmp.bar;
+    cf_sn.dm_t = dmp.t;
+    cf_sn.dm_rin = dmp.on ? dmp.rin : 0u;
+    cf_sn.dm_left = dmp.rin ? (dmp.rbars - 1u) * sqp_bar_ticks() + (sqp_bar_ticks() - dmp.t) : 0u;
     fm1_irq_on();
 }

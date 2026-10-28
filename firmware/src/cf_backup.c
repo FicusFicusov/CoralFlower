@@ -206,6 +206,7 @@ static void crb_list(void)
     if (!cr_safe && !cfs_restore_lock) {
         cfk_flush();                                 /* .. and the sounds' edits, the patterns' own sounds */
         cfps_flush();
+        dm_flush();                                  /* .. the drum machine's (0.6) */
     }
     for (i = 0; i < CRB_N; i++) {
         uint32_t id = CRB_IDS[i];
@@ -309,11 +310,12 @@ static uint32_t crb_commit(void)
         cf_message("Settings restored: restart");
         return 0;
     }
-    if (id == CFB_LOOP) {
-        if (len && !cfb_loop_ok((const cfl_data_t *)raw, len))
+    if (id == CFB_LOOP) {                            /* (0.3.1's loop, or since 0.6 the drum machine's record) */
+        if (len && !cfb_loop_ok((const cfl_data_t *)raw, len) && !dm_rec_ok(raw, len))
             return 2;
         if (st_save(OBJ_CFLOOP, raw, len))
             return 4;
+        dm_restore_lock = 1;                         /* (the drum machine keeps nothing over it till the restart) */
         return 0;                                    /* (the restart loads it, stopped, as at power-on) */
     }
     if (id >= CFB_TWK) {                             /* a tweaked pattern sound: read in at the restart */

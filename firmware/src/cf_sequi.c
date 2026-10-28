@@ -65,9 +65,16 @@ static struct {
                                   * ставлю стоп, начинаю плей — то он не идёт по песне почему-то") */
     uint8_t seen, rolled;        /* the audio side has the take; .. its count-in is over */
     uint32_t nbar, t, bt;        /* where it was last seen: bars since its first, ticks into the bar, of the bar */
+    uint8_t rhy;                 /* .. under a rhythm of the drum machine: the rhythm + 1, its DRUMS (0.6, cf_dmui.c) */
 } sqk = {.last = 0xFF};
 static void sq_home_end(int drop);
 static void sq_home_undo(void);
+static int dm_home_play(void);                   /* (the drum machine: cf_dmui.c) */
+static int dm_home_rec(void);
+static void dm_fill(sq_pat_t *p, uint32_t r, uint32_t b0);
+static void dm_chosen(int rhythm);
+static void dm_hold_press(void);
+static int dm_holding(void);
 /* what the first take teaches: one line at a time, each when it is needed, once on a unit (cs.seq_hint, kept with the
  * settings). The owner, 2026-10-20: a four-page tour was "тонна обозначений за раз", and of four hints "3 лишнее, это
  * из интерфейса понятно" (the SEQUENCER page's [EDIT] chip says it): after the first take where it is, back on HOME
@@ -702,7 +709,11 @@ static void sq_copy_pattern(uint32_t from, uint32_t to)
  * on an empty step the frame stood still) */
 static void sq_edit_press(void)
 {
-    if (squ.trk == SQ_DRUMS || squ_rec_on())
+    if (squ.trk == SQ_DRUMS) {                   /* (DRUMS: held, PRESETS picks a rhythm for them: cf_dmui.c, 0.6) */
+        dm_hold_press();
+        return;
+    }
+    if (squ_rec_on())
         return;
     squ.nofr = 0;
     squ.edit_down = cu.now ? cu.now : 1u;
@@ -711,6 +722,8 @@ static void sq_edit_press(void)
 static void sq_carry_turn(int d)                  /* SELECT in a track: the frame, and with EDIT held the chord */
 {
     sq_pat_t *p = sq_cur();
+    if (dm_holding())                            /* (EDIT held in DRUMS picks a rhythm: SELECT does nothing) */
+        return;
     if (squ.edit_down && !squ.mv && !squ.nofr) {
         int i = sq_at(p, squ.trk, squ.bar, squ.step), k;
         if (i < 0 && (squ.sel_down || squ.oct_down))
@@ -961,6 +974,11 @@ static void sq_rec_tap(void)
         sq_home_end(0);
         return;
     }
+    if (cf_sn.dm_rin) {                          /* (REC in waiting for the rhythm's bar line: called off, the rhythm
+                                                  * plays on) */
+        cf_post(CFE_DRUM, 5, 0, 0);
+        return;
+    }
     if (cf_sn.sq_rec != 0xFFu) {
         cf_post(CFE_SEQ, 5, 0, 0);
         return;
@@ -986,7 +1004,11 @@ static void sq_rec_tap(void)
     squ.rtrk = squ.trk;
     squ.ropen = 0;
     squ.rr = sqp_rw;                             /* (what the queue held before is not this take's) */
-    cf_post(CFE_SEQ, 4, squ.pat, squ.trk);
+    if (cf_sn.dm_on)                             /* (a rhythm plays: it ends its bar, then this pattern and the take:
+                                                  * cf_drum.c dmp_rec_in) */
+        cf_post(CFE_DRUM, 3, squ.pat, squ.trk);
+    else
+        cf_post(CFE_SEQ, 4, squ.pat, squ.trk);
     cf_send_config();                            /* (a LAYER take: the keys play its sound) */
 }
 
@@ -1092,6 +1114,10 @@ static void sq_rec_poll(void)
 static void sq_play(void)
 {
     int song = cu.scr == SCR_SQ && squ.pat == SQ_SONGPG;
+    if (cf_sn.dm_on) {                           /* (a rhythm of the drum machine plays, REC in waiting too: all stops) */
+        cf_post(CFE_DRUM, 0, 0, 0);
+        return;
+    }
     if (cf_sn.sq_on) {                           /* playing: PLAY stops, whatever is shown (it queued another pattern
                                                   * and seemed not to stop: the owner, 2026-10-19; the pattern shown
                                                   * takes over by itself: sq_algo) */
@@ -1143,7 +1169,8 @@ static void sq_home_end(int drop)                /* the take ends (drop: it goes
     sq_rec_poll();                               /* (what the queue holds: written now) */
     for (i = 0; i < p->nev; i++)
         n += p->ev[i].trk == SQ_CHORDS;
-    if (drop || !sqk.rolled || !n) {             /* (ended in its count-in, or nothing played: no pattern) */
+    if (drop || !sqk.rolled || (!n && !sqk.rhy)) {   /* (ended in its count-in, or nothing played: no pattern; under a
+                                                  * rhythm the rhythm is in it: kept) */
         sq_st.pat[sqk.pat % SQ_NPAT] = sqh.pre;  /* (the state before the take: sq_home_rec's undo) */
         sqh.pend = 0;
         sqh.busy = 0;
@@ -1155,10 +1182,18 @@ static void sq_home_end(int drop)                /* the take ends (drop: it goes
     /* whole bars: the one REC came in, unless it came in its first eighth (late for the bar line before) */
     bars = sqk.nbar + (sqk.bt && sqk.t * 8u > sqk.bt ? 1u : 0u);
     bars = bars < 1u ? 1u : bars > SQ_BARS ? SQ_BARS : bars;
+    if (sqk.rhy) {                               /* (under a rhythm: whole rounds of it, so the drums and the chords
+                                                  * keep together round and round) */
+        uint32_t rb = DM_RHY[(sqk.rhy - 1u) % DM_N].bars;
+        rb = rb ? rb : 1u;
+        bars = (bars + rb - 1u) / rb * rb;
+        bars = bars > SQ_BARS ? SQ_BARS : bars;
+    }
     p->tb[SQ_CHORDS] = (uint8_t)bars;
     p->bars = (uint8_t)bars;
     sq_touch();
     sqk.last = sqk.pat;
+    dm_chosen(0);                                /* (a take: its pattern is what PLAY on HOME plays, a rhythm's too) */
     sqk.song = 0;                                /* (a take: its pattern is what PLAY on HOME plays) */
     str_cpy(m, "Recorded as Pattern ", sizeof m);   /* (not "Saved": flash takes it once playback stops and things
                                                   * rest, sq_save_poll) */
@@ -1185,10 +1220,9 @@ static void sq_hint_once(uint32_t bit)
     cu.pop_until = cu.now + 1500u;
     sqh_scr = cu.scr;
 }
+static void sq_home_rec_r(uint32_t r);
 static void sq_home_rec(void)                    /* REC tapped */
 {
-    sq_pat_t *p;
-    int f;
     if (sqk.on) {
         sq_home_end(0);
         return;
@@ -1197,6 +1231,20 @@ static void sq_home_rec(void)                    /* REC tapped */
         cf_post(CFE_SEQ, 5, 0, 0);
         return;
     }
+    if (cf_sn.dm_rin) {                          /* (REC in the SEQUENCER waiting for the rhythm's bar line: called off) */
+        cf_post(CFE_DRUM, 5, 0, 0);
+        return;
+    }
+    if (dm_home_rec())                           /* (under a rhythm: cf_dmui.c) */
+        return;
+    sq_home_rec_r(DM_N);
+}
+/* a take into a new pattern; r < DM_N: under rhythm r of the drum machine, its DRUMS that rhythm (the one playing:
+ * from the bar it plays, it takes over at once; else after a bar counted in) */
+static void sq_home_rec_r(uint32_t r)
+{
+    sq_pat_t *p;
+    int f, under = r < DM_N, live = under && cf_sn.dm_on && cf_sn.dm_r == r;
     f = sq_home_free();
     if (f < 0) {
         cf_message("All 8 patterns are used:\nclear one in the SEQUENCER");
@@ -1214,12 +1262,15 @@ static void sq_home_rec(void)                    /* REC tapped */
     p->scale = cs.chord.scale;
     if (cu.arp_on)                               /* (ARP on under the keys: on the track too, so it plays as heard) */
         p->arp |= (uint8_t)(1u << SQ_CHORDS);
+    if (under)
+        dm_fill(p, r, live ? cf_sn.dm_bar : 0u);
     sq_touch();
     squ.rtrk = SQ_CHORDS;
     squ.ropen = 0;
     squ.rr = sqp_rw;                             /* (what the queue held before is not this take's) */
     sqk.on = 1;
     sqk.pat = (uint8_t)f;
+    sqk.rhy = (uint8_t)(under ? r + 1u : 0u);
     sqk.seen = sqk.rolled = 0;
     sqk.nbar = sqk.t = sqk.bt = 0;
     squ.bar = squ.step = 0;
@@ -1228,7 +1279,10 @@ static void sq_home_rec(void)                    /* REC tapped */
                                                   * и потом отсчёт давать") */
         ui_open(SCR_SQED);
     squ.nofr = 1;                                /* (after it the keys only sound: sq_select brings the frame) */
-    cf_post(CFE_SEQ, 6, (uint8_t)f, SQ_CHORDS);
+    if (live)
+        cf_post(CFE_DRUM, 4, (uint8_t)f, 0);     /* (under the rhythm playing: the pattern takes over where the bar is) */
+    else
+        cf_post(CFE_SEQ, 6, (uint8_t)f, SQ_CHORDS);
 }
 static void sq_home_play(void)                   /* PLAY tapped */
 {
@@ -1236,6 +1290,10 @@ static void sq_home_play(void)                   /* PLAY tapped */
     if (sqk.on) {                                /* (taking: it is kept, and all stops) */
         sq_home_end(0);
         cf_post(CFE_SEQ, 0, 0, 0);
+        return;
+    }
+    if (cf_sn.dm_on) {                           /* (a rhythm of the drum machine: it stops) */
+        cf_post(CFE_DRUM, 0, 0, 0);
         return;
     }
     if (cf_sn.sq_on) {
@@ -1246,6 +1304,8 @@ static void sq_home_play(void)                   /* PLAY tapped */
         cf_post(CFE_TRANSPORT, 0, 0, 0);
         return;
     }
+    if (dm_home_play())                          /* (a rhythm chosen last: it plays) */
+        return;
     if (sqk.song && sq_st.song.n)                /* (the song last chosen: the song, from the block its frame was on,
                                                   * as PLAY on its page: "С блока, где стояла рамка", the owner,
                                                   * 2026-10-20) */
@@ -1683,6 +1743,7 @@ static void metro_knob_info(int k, cf_knob_t *o)
         break;
     default: {
         char b[8];
+        o->dis = cf_sn.dm_on;                    /* (a rhythm plays: it is written for this TIME SIG) */
         kfmt(o->name, 12, "TIME SIG");
         kint(b, cs.beats, 0);
         str_cpy(o->val, b, 14);
@@ -1704,6 +1765,8 @@ static void metro_knob_turn(int k, int d)
     } else {
         static const uint8_t SIG[] = {2, 3, 4, 5, 6, 7};
         int i;
+        if (cf_sn.dm_on)
+            return;
         for (i = 0; i < 6 && SIG[i] != cs.beats; i++)
             ;
         cs.beats = SIG[clampi((i < 6 ? i : 2) + d, 0, 5)];
