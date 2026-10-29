@@ -164,7 +164,9 @@ static void draw_drum(void)
     str_cpy(t + str_len(t), " BPM", sizeof t - str_len(t));
     fb_text_halo(&CF_FONT_UI, FB_W / 2 - fb_text_w(&CF_FONT_UI, t, 1) / 2, HEAD_LINE, t, C_ACC(1), FL_BG, 1);
     draw_view(view_drum);
-    draw_chip_text_c(Y_VIEW + H_VIEW - 14, "[SELECT] rhythm", FL_INK3);
+    draw_chip_text_c(Y_VIEW + H_VIEW - 14, "[EDIT] make it a pattern", FL_INK3);   /* (rc5: the page's main use, on
+                                                  * it; the owner on rc4: "потерялась функция чтобы вставить барабаны из
+                                                  * драм-машины в паттерны") */
     if (squ.help || squ.help_hold)
         dm_draw_help();
     {

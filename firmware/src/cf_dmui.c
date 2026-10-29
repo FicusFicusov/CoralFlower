@@ -401,6 +401,51 @@ static void dm_page_rec(void)                    /* REC in the drum machine: alw
 /* what PLAY on HOME plays now: a rhythm (1) or what the SEQUENCER keeps (0) */
 static void dm_chosen(int rhythm) { dmr.last = (uint8_t)(rhythm != 0); }
 
+/* EDIT in the drum machine: the rhythm on screen becomes a new pattern (the first empty letter), with its KIT and
+ * SWING, and its DRUMS open there to change. What plays stops (as the drums' EDIT hold does). Hold REC undoes it (rc5:
+ * the owner on rc4, "потерялась функция чтобы вставить барабаны из драм-машины в паттерны", picked "[EDIT] make it a
+ * pattern") */
+static void dm_make_pattern(void)
+{
+    uint32_t r = dm_cur();
+    sq_pat_t *p;
+    char m[48];
+    int f;
+    if (sqk.on || cf_sn.sq_rec != 0xFFu || cf_sn.dm_rin)
+        return;                                  /* (a take under way: REC ends it first) */
+    f = sq_home_free();
+    if (f < 0) {
+        cf_message("All 8 patterns are used:\nclear one in the SEQUENCER");   /* (as REC says it) */
+        return;
+    }
+    if (cf_sn.dm_on)
+        cf_post(CFE_DRUM, 0, 0, 0);
+    if (cf_sn.sq_on)
+        cf_post(CFE_SEQ, 0, 0, 0);
+    dm_sig_for(r);                               /* (its TIME SIG, as a take under it) */
+    squ.pat = (uint8_t)f;
+    squ.trk = SQ_DRUMS;
+    sqh.busy = 0;
+    sq_undo_poll();                              /* (the undo: the pattern as it was, empty) */
+    p = &sq_st.pat[f];
+    sq_fresh(p, cs.beats);
+    p->tonic = cs.chord.tonic;
+    p->scale = cs.chord.scale;
+    dm_fill(p, r, 0);
+    sq_touch();
+    sqk.last = (uint8_t)f;                       /* (PLAY on HOME plays it now) */
+    sqk.song = 0;
+    dm_chosen(0);
+    squ.bar = squ.step = 0;
+    if (sq_open())
+        ui_open(SCR_SQED);
+    str_cpy(m, DM_RHY[r % DM_N].name, sizeof m);
+    str_cpy(m + str_len(m), " as Pattern ", sizeof m - str_len(m));
+    m[str_len(m) + 1u] = 0;
+    m[str_len(m)] = (char)('A' + f);
+    cf_message(m);
+}
+
 static void dm_hold_poll(void);
 /* every frame */
 static void dm_poll(void)

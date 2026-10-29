@@ -873,8 +873,13 @@ static void ui_button(uint32_t b)
                                                   * неё заходишь не должны нажиматься кнопки других вкладок, как и в
                                                   * секвенсоре", "гло должна быть с подсказками"): HOME and SEQ leave, the
                                                   * other pages' buttons do nothing and are dark, GLO shows the help */
-        if (b == B_FX || b == B_ENV || b == B_LFO || b == B_ARP || b == B_EDIT || b == B_SAVE)
+        if (b == B_FX || b == B_ENV || b == B_LFO || b == B_ARP || b == B_SAVE)
             return;
+        if (b == B_EDIT) {                       /* (EDIT opens, as in the SEQUENCER: the rhythm as a new pattern, its
+                                                  * DRUMS; rc5) */
+            dm_make_pattern();
+            return;
+        }
         if (b == B_GLO) {
             squ.glo_down = cu.now ? cu.now : 1u;
             return;
@@ -1556,6 +1561,8 @@ static void cf_leds(void)
             cf_led(k == cu.scr ? lit : dim, panel.btn[SCR_BTN[k]], 1);
     if (rm && dm_tweaked(dm_cur()))              /* (SEL: the rhythm's own KIT and SWING back, when it has the user's) */
         cf_led(dim, panel.btn[B_SCL], 1);
+    if (rm)                                      /* (EDIT: the rhythm as a new pattern; no empty letter: faint) */
+        cf_led(sq_home_free() >= 0 ? mid : faint, panel.btn[B_EDIT], 1);
     if (sq) {                                    /* the sequencer: what works here (sq_key_led's note) */
         const sq_pat_t *p = sq_cur();
         int has = squ.pat == SQ_NPAT ? 1 : !sq_empty(p) && (p->nev || sq_drums(p));
