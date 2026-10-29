@@ -1295,7 +1295,8 @@ def restore(bl, f, progress=lambda done, total: None, busy=lambda: None):
             try:
                 bk_put_object(bl, i, b, chunk, busy)
             except BackupError as e:
-                if o.get("converted") and e.rc == (2 if e.begun else 1):
+                # (31: since 0.6 the rhythm machine's record, which 0.5 refuses; the patterns after it still go back)
+                if (o.get("converted") and e.rc == (2 if e.begun else 1)) or (i == 31 and e.begun and e.rc == 2):
                     skipped.append(i)
                     continue
                 raise

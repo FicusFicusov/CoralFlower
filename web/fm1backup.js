@@ -225,7 +225,9 @@ export async function restoreBackup(request, file, onProgress = () => {}, opts =
         await retry(() => put([2, o.id]));
       } catch (e) {
         await put([3, o.id]).catch(() => {});
-        if (o.converted && e.rc === 2) { skipped.push(o.id); continue; }   // another firmware's settings: best effort
+        // another firmware's settings: best effort; CoralFlower's 31 too: since 0.6 it holds the rhythm machine's
+        // record, which 0.5 refuses (rc 2), and the patterns after it must still go back (the owner's pick, 0.6)
+        if ((o.converted || o.id === 31) && e.rc === 2) { skipped.push(o.id); continue; }
         throw e;
       }
     }

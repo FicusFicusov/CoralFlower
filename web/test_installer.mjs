@@ -363,7 +363,7 @@ class FakeFM1 {
   }
 }
 // a firmware's backup side (cr_backup.c / Felucca's editor_backup.c): INFO, LIST, GET, PUT, RESTART
-function backupSide(version, ids, objs = []) {
+function backupSide(version, ids, objs = [], refuse = []) {   // refuse: ids whose content the firmware refuses (rc 2)
   const b = { objs: new Map(objs), log: [], staged: null, restarts: 0 };
   b.handle = (cmd, a) => {
     if (cmd === 1) return [...new TextEncoder().encode(version), 0, 0, 0, 0, 0, 0, 0, 0, 0x42, 1, 3];
@@ -377,7 +377,7 @@ function backupSide(version, ids, objs = []) {
       const [op, id] = a;
       if (op === 0) { b.staged = { id, size: bkR32(a, 2), crc: bkR32(a, 7), bytes: [] }; return [op, id, ids.includes(id) ? 0 : 1]; }
       if (op === 1) { b.staged.bytes.push(...bkUnpack(a.slice(7), Math.min(256, b.staged.size - bkR32(a, 2)))); return [op, id, 0]; }
-      if (op === 2) { const v = Uint8Array.from(b.staged.bytes); const rc = bkCrc(v) === b.staged.crc ? 0 : 2; if (!rc) { b.objs.set(id, v); b.log.push(id); } return [op, id, rc]; }
+      if (op === 2) { const v = Uint8Array.from(b.staged.bytes); const rc = bkCrc(v) === b.staged.crc && !refuse.includes(id) ? 0 : 2; if (!rc) { b.objs.set(id, v); b.log.push(id); } return [op, id, rc]; }
       return [op, id, 0];
     }
     if (cmd === 72 && /^(ChoralRoot|CoralFlower)/.test(version)) { b.restarts++; return [0]; }
@@ -716,6 +716,30 @@ async function readyPage(dev, opts = {}) {
   await p.$["restore-go"].fire("click");
   ok(p.confirms.at(-1) === en.restoreConfirm && blank.log.at(-1) === 1 && crData().every(([id, v]) => blank.objs.get(id)?.every((b, i) => b === v[i])) &&
      blank.restarts === 1 && p.$["backup-status"].textContent.startsWith(en.restored), "Restore: confirmed, every object back, the settings last, RESTART (CoralFlower restarts)");
+}
+{
+  // a 0.6 backup onto 0.5: 0.5 refuses object 31 (0.6's rhythm machine record), the restore skips it and goes on, so
+  // the patterns and song after it still go back (the owner's pick for 0.6)
+  const ids = CF_BACKUP_IDS.filter((id) => id < 56);
+  const cf6 = backupSide("CoralFlower 0.6", ids, cfData());
+  const dev = new FakeFM1(image, { identity: "FM-1_930", bk: () => cf6 });
+  const p = runPage({ navigator: midiOf(dev) });
+  await p.ready;
+  let blobText = null;
+  const realCreate = URL.createObjectURL;
+  URL.createObjectURL = (b) => { b.text().then((x) => { blobText = x; }); return "blob:test"; };
+  await p.$["backup-go"].fire("click");
+  await until(() => blobText);
+  URL.createObjectURL = realCreate;
+  const on05 = backupSide("CoralFlower 0.5", ids, [], [31]);
+  dev.bk = () => on05;
+  p.$["restore-file"].files = [{ text: async () => blobText }];
+  await p.$["restore-file"].fire("change");
+  await p.$["restore-go"].fire("click");
+  await until(() => p.$["backup-status"].textContent.startsWith(en.restored));
+  ok(!on05.objs.has(31) && [6, 30, 50, 51, 52, 53, 54, 55].every((id) => cfData().find(([i]) => i === id)[1].every((b, k) => b === on05.objs.get(id)?.[k])) &&
+     on05.restarts === 1 && p.$["backup-status"].textContent.endsWith("(not used by this firmware, kept in the file: CoralFlower loop)"),
+     "a 0.6 backup on 0.5: 31 refused and skipped, the sound bank, settings, patterns and song restored, RESTART");
 }
 {
   // CoralFlower 0.3.1: the sequencer's patterns and song in the file and back; on 0.3 (no such objects) kept in the file
