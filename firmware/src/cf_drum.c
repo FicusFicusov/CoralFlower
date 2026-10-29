@@ -78,10 +78,13 @@ static const dm_rhythm_t DM_RHY[] = {
      {[DM_K] = "x.x...x...x.x..." "x...x.x..x...x..", [DM_S] = "....x..xx..x.x.x" "..x.x.x..x.xx.xx",
       [DM_H] = "xxxxxxxxxxxxxxxx" "xxxxxxxxxxxxxxxx", [DM_X] = "x..............." "................"},
      {[DM_K] = 100, [DM_S] = 90, [DM_H] = 35, [DM_X] = 40}},
+    /* Jersey club (the owner on rc6: "джерси не похож на джерси клаб бит"): its five-kick figure, two quarters, two
+     * dotted eighths and an eighth (steps 1 5 9 12 15), a kick roll into the next bar; claps on 2 and 4; the bed squeak
+     * as a rim answering on the off-beats; open hats on the "and"s */
     {"Jersey", 32, 4, 2, DMK_XCLUB, 0, 140,
-     {[DM_K] = "x..x..x.x..x.x.." "x..x..x.x.xx.x.x", [DM_C] = "....x.......x..." "....x.......x.xx",
-      [DM_H] = "..x...x...x...x." "..x...x...x...x."},
-     {[DM_K] = 100, [DM_C] = 85, [DM_H] = 40}},
+     {[DM_K] = "x...x...x..x..x." "x...x...x..x.xxx", [DM_C] = "....x.......x..." "....x.......x...",
+      [DM_R] = "......x.......x." "......x...x...x.", [DM_O] = "..x...x...x...x." "..x...x...x....."},
+     {[DM_K] = 100, [DM_C] = 85, [DM_R] = 55, [DM_O] = 35}},
     {"Hyperpop", 34, 4, 2, DMK_CRUSH, 0, 150,
      {[DM_K] = "x.....x...x....." "x.....x.x.x.....", [DM_C] = "....x.......x..." "....x.......x...",
       [DM_H] = "x.x.x.x.x.x.xxxx" "x.x.x.x.xxxxxxxx", [DM_X] = "x..............." "................"},
