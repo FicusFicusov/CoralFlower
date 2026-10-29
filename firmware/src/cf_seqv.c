@@ -739,10 +739,11 @@ static void draw_sq_help(void)
     static const char *const TR[] = {"[SELECT] track", "[ALGO] pattern A..H, song", "[EDIT] open the track",
                                      "hold [OCT+], turn [ALGO]:", "   copy the pattern there",
                                      "hold [SEL]: clear the track", "hold [REC]: undo last change",
-                                     "[SEQ] home  [GLO] close", 0};
+                                     "[GLO] close", 0};
     static const char *const SO[] = {"upper keys A..H: add at the end", "[SELECT] move the frame",
                                      "[SEL] remove it  [EDIT] open it", "[PLAY] play from the frame",
-                                     "hold [REC]: undo last change", "[SEQ] home  [GLO] close", 0};
+                                     "hold [REC]: undo last change", "[GLO] close", 0};
+    /* (no "[SEQ] home": SEQ's way home is no news, "лишнее", the owner on rc4) */
     /* (a gesture says "turn", and the copy where it lands: "copy the bar there" explained it, the owner, 2026-10-19) */
     /* (no PRESETS line, no SEL-held eraser: "тут лишнее SEL + hold, и лишнее PRESETS", the owner, 2026-10-20; the
      * gestures stay) */

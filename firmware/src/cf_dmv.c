@@ -61,9 +61,10 @@ static void dm_draw_carousel(void)
  * cells name the knobs */
 static void dm_draw_help(void)
 {
-    static const char *const L[] = {"[SELECT] a rhythm", "keys: chords, as on HOME", "[SEL] its own KIT, SWING back",
-                                    "[REC] a pattern under it", "hold [REC]: undo last change",
-                                    "[SEQ] home  [GLO] close", 0};
+    /* (rc5, the owner on rc4: "keys: chords, as on HOME" and "[SEQ] home" "вообще не нужно", SEL "просто resets ритм";
+     * [SELECT] stays: the page's caption names EDIT now) */
+    static const char *const L[] = {"[SELECT] a rhythm", "[SEL] reset the rhythm", "[EDIT] make it a pattern",
+                                    "[REC] record a pattern with it", "hold [REC]: undo last change", "[GLO] close", 0};
     int n = 0, i;
     while (L[n])
         n++;
