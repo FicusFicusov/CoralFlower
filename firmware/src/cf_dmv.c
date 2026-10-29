@@ -34,19 +34,24 @@ static int dm_plaque_top(void)
     return 1;
 }
 
-/* the METRONOME's carousel: where its SEQ goes. What to press is said first, as the hint before it ("Press [SEQ]
- * again"; the owner on rc3: "не подписано, что нужно нажать снова seq") */
+/* the METRONOME's choice of where its SEQ goes: two cards side by side, each its section's icon and name, the chosen one
+ * raised in SELECT's frame, as the FX chain's tiles; what to press over them (rc6, the designer's M1, the owner's pick:
+ * the carousel showed one place at a time) */
 static void dm_draw_carousel(void)
 {
-    const char *n = dm_seq_to ? "Rhythm machine" : "Sequencer";
-    int w = fb_text_w(&CF_FONT_UI, n, 2), y = Y_VIEW + 64, lit = cu.now - cv_turn_ms < 220u && cv_turn_ms;
-    draw_chip_text_c(Y_VIEW + 49, "Press [SEQ] again to open", FL_INK2);
-    fb_text_halo(&CF_FONT_UI, FB_W / 2 - w / 2, y, n, C_ACC(0), FL_BG, 2);
-    draw_chevron(FB_W / 2 - w / 2 - 14, y + 7, 0, dm_seq_to ? (lit ? C_ACC(0) : FL_INK2) : FL_BG3);
-    draw_chevron(FB_W / 2 + w / 2 + 9, y + 7, 1, dm_seq_to ? FL_BG3 : lit ? C_ACC(0) : FL_INK2);
-    fb_rect(FB_W / 2 - 6, Y_VIEW + 92, 4, 4, dm_seq_to ? FL_INK3 : C_ACC(1));
-    fb_rect(FB_W / 2 + 2, Y_VIEW + 92, 4, 4, dm_seq_to ? C_ACC(1) : FL_INK3);
-    draw_chip_text_c(Y_VIEW + 101, "[SELECT] Sequencer / Rhythm machine", FL_INK3);
+    static const char *const NM[2] = {"Sequencer", "Rhythm machine"};
+    int k;
+    draw_chip_text_c(Y_VIEW + 54, "[SELECT] pick  [SEQ] open", FL_INK2);
+    for (k = 0; k < 2; k++) {
+        int x = 8 + k * 116, y = Y_VIEW + 72, on = (int)dm_seq_to == k;
+        uint32_t scr = k ? SCR_DRUM : SCR_SQ;
+        fb_rbox(x, y, 108, 46, 2, cf_panel(on ? 2 : 1));
+        if (on)
+            fb_rframe(x, y, 108, 46, C_ACC(1));
+        draw_icon(x + 54 + CF_ICON[scr].w, y + 8 + CF_ICON[scr].h, scr, on ? C_ACC(1) : FL_INK3);
+        fb_text_halo(&CF_FONT_UI, x + 54 - (fb_text_w(&CF_FONT_UI, NM[k], 1) + 1) / 2, y + 28, NM[k],
+                     on ? FL_INK : FL_INK3, FL_BG, 1);
+    }
 }
 
 /* GLO's help on the rhythm machine, as the SEQUENCER's (cf_seqv.c draw_sq_help): buttons and gestures only, the knob

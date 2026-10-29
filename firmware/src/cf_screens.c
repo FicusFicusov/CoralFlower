@@ -389,8 +389,7 @@ static void draw_generic(void)
         kint(s2, cs.beats, 0);
         str_cpy(s2 + str_len(s2), cs.beats == 6 ? "/8" : "/4", 4);
         draw_title(b, s2);
-        /* where SEQ goes from here (0.6: the SEQUENCER or the drum machine), in the middle of the picture (the hint
-         * before it: "по центру экрана", the owner, 2026-10-19) */
+        /* where SEQ goes from here (0.6: the SEQUENCER or the rhythm machine): two cards under the head (rc6) */
         dm_draw_carousel();
         {
             static const char *const H[2] = {"PLAY", "start"};   /* (the click sounds only while the beat runs) */
