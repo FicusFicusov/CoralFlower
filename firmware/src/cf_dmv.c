@@ -3,32 +3,23 @@
  * plays) on the top lines. Included by cf_screens.c after cf_seqv.c (its flowers draw the hits). */
 
 static void draw_view(void (*view)(int));
-#ifndef DM_MARK
-#define DM_MARK 2u
-#endif
 
-/* the plaque at xr (its right edge) on the top line, as HOME's "SEQ A" always looked; returns its left edge */
+/* the plaque at xr (its right edge) on the top line, as HOME's "SEQ A" always looked; returns its left edge. What plays
+ * leads it as its section's icon at 1x (rc6: the notes for a pattern or the song, the drum for a rhythm, the same
+ * drawings as the heads'); a take keeps its square, the record dot */
 static int dm_plaque_chip(int xr, const char *b, uint32_t kind)
 {
-    int w = fb_text_w(&CF_FONT_UI, b, 1) + 12 + (dm_plaque_rhythm ? 2 : 0), x = xr - w;
+    int icon = kind != DMP_REC && kind != DMP_RECIN;
+    int w = fb_text_w(&CF_FONT_UI, b, 1) + 12 + (icon ? 2 : 0), x = xr - w;
     uint8_t box = kind == DMP_REC ? FL_C(FL_R_FIRE, 2) : kind == DMP_RECIN || kind == DMP_PALE ? FL_BG2 : cf_panel(2);
     uint8_t dot = kind == DMP_REC ? FL_INK : kind == DMP_RECIN ? FL_C(FL_R_FIRE, 1) : kind == DMP_PALE ? FL_BG3 :
                   C_ACC(0);
     fb_rbox(x, Y_TOP + 2, w, 11, 2, box);
-    if (dm_plaque_rhythm) {                      /* (a rhythm: a little drum where the square is) */
-        static const char *const G[3][7] = {
-            {".......", ".#####.", "#######", "#.#.#.#", "#.#.#.#", "#.#.#.#", ".#####."},
-            {"..###..", ".#...#.", "#.....#", "#..#..#", "#.....#", ".#...#.", "..###.."},
-            {"#.....#", ".#...#.", "..#.#..", "#######", "#.#.#.#", "#.#.#.#", "#######"}};
-        int i, j;
-        for (j = 0; j < 7; j++)
-            for (i = 0; i < 7; i++)
-                if (G[DM_MARK % 3u][j][i] == '#')
-                    fb_rect(x + 2 + i, Y_TOP + 4 + j, 1, 1, dot);
-    } else {
+    if (icon)
+        draw_icon1(x + 2, Y_TOP + 4, dm_plaque_rhythm ? SCR_DRUM : SCR_SQ, dot);
+    else
         fb_rect(x + 3, Y_TOP + 5, 4, 4, dot);
-    }
-    fb_text(&CF_FONT_UI, x + (dm_plaque_rhythm ? 11 : 9), Y_TOP + 1, b, kind == DMP_PALE ? FL_INK3 : FL_INK, 1);
+    fb_text(&CF_FONT_UI, x + (icon ? 11 : 9), Y_TOP + 1, b, kind == DMP_PALE ? FL_INK3 : FL_INK, 1);
     return x;
 }
 /* the other pages' top line (cf_ui_draw): the plaque where the hint stands (it says what PLAY stops); 1 drawn */

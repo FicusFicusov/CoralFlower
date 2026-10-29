@@ -721,7 +721,7 @@ static void draw_sq_song(void)
     t[2] = 0;
     str_cpy(b + str_len(b), t, 4);
     if (n)
-        fb_text_r(&CF_FONT_UI, 232, HEAD_Y + 8, b, FL_INK2, 1);
+        fb_text_r(&CF_FONT_UI, 212, HEAD_Y + 8, b, FL_INK2, 1);   /* (left of the section's icon, rc6) */
     draw_chip_text_c(SQS_Y0 + 3 * SQS_RH + 2, n ? "[SEL] remove  [EDIT] open it" : "", FL_INK2);
     {
         static const char *const H[2] = {"GLO", "help"};

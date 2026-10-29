@@ -31,8 +31,20 @@ static const cf_icon_t CF_ICON[SCR_N] = {
     [SCR_ARP] = {8, 7, {".......#", ".......#", ".....###", ".....#..", "...###..", "...#....", "####...."}},
     [SCR_SEQ] = {7, 7, {"...#...", "...#.#.", "..#.#..", "..##...", ".#...#.", ".#...#.", "#######"}},
     [SCR_SAVE] = {7, 7, {"######.", "#.##.##", "#.##..#", "#.....#", "#.###.#", "#.###.#", "#######"}},
-    [SCR_DRUM] = {9, 7, {"#.......#", ".#.....#.", "..#####..", ".#.....#.", ".#######.", ".#.#.#.#.", ".#######."}},
+    /* (0.6-rc6, the designer's pair 1, the owner's pick: the SEQUENCER two beamed notes, the rhythm machine the snare
+     * with crossed sticks the owner chose for the plaque in rc4; one drawing at 2x in a head, at 1x on the plaque) */
+    [SCR_SQ] = {7, 7, {"..#####", "..#...#", "..#...#", "..#...#", "###.###", "###.###", "......."}},
+    [SCR_DRUM] = {7, 7, {"#.....#", ".#...#.", "..#.#..", "#######", "#.#.#.#", "#.#.#.#", "#######"}},
 };
+static void draw_icon1(int x, int y, uint32_t scr, uint8_t c)    /* .. at 1x, from its top left (the plaque) */
+{
+    const cf_icon_t *ic = &CF_ICON[scr % SCR_N];
+    int i, j;
+    for (j = 0; j < ic->h; j++)
+        for (i = 0; i < ic->w; i++)
+            if (ic->row[j][i] == '#')
+                fb_rect(x + i, y + j, 1, 1, c);
+}
 static void draw_icon(int xr, int ymid, uint32_t scr, uint8_t c)   /* xr: its right edge */
 {
     const cf_icon_t *ic = &CF_ICON[scr % SCR_N];
