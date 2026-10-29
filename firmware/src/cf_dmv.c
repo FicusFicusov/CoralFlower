@@ -3,6 +3,7 @@
  * plays) on the top lines. Included by cf_screens.c after cf_seqv.c (its flowers draw the hits). */
 
 static void draw_view(void (*view)(int));
+static int cv_head_x;                            /* (the rhythm's head line: where its details begin) */
 
 /* the plaque at xr (its right edge) on the top line, as HOME's "SEQ A" always looked; returns its left edge. What plays
  * leads it as its section's icon at 1x (rc6: the notes for a pattern or the song, the drum for a rhythm, the same
@@ -64,18 +65,7 @@ static void dm_draw_help(void)
         draw_chip_text(18, Y_VIEW + 9 + i * 14, L[i], FL_INK);
 }
 
-/* a drum's name in the rhythm's kit (the hand drums' kit: congas and a clave for the toms and the rim), as the
- * DRUMS editor names it (cf_sequi.c sq_lane_label) */
-static const char *dm_lane_label(uint32_t l, uint32_t kit)
-{
-    static const char *const N[SQ_NLANE] = {"KICK", "SNARE", "CLAP", "HAT", "OPEN HAT", "LOW TOM", "MID TOM",
-                                            "HIGH TOM", "RIM", "BELL", "CRASH"};
-    static const char *const H[4] = {"CONGA L", "CONGA M", "CONGA H", "CLAVE"};
-    l %= SQ_NLANE;
-    return (SQ_KITS[kit % SQ_NKIT].e[0] & 1u) && l >= 5u && l <= 8u ? H[l - 5u] : N[l];
-}
-
-/* the drum machine: the rhythm's name in a carousel, under it its place, TIME SIG and bars; its drums' rows of hits
+/* the drum machine: its drums' rows of hits, each led by its drum's picture
  * (both bars of a 2-bar one, a dashed line between), a cursor running over them while it plays. Its name blinks while
  * it waits for the bar line; a dot after it: the user's KIT or SWING on it (SEL takes them back) */
 static void view_drum(int x0)
@@ -94,7 +84,9 @@ static void view_drum(int x0)
         if (!y->lane[l])
             continue;
         k++;
-        fb_text(&CF_FONT_MICRO, x0 - 4, yr + 7, dm_lane_label(l, dm_kit(r)), FL_INK3, 1);
+        fb_rect(x0 - 6, yr + 6, 26, 7, FL_BG);  /* (rc6, the designer's R1: its drum's picture on a clear cell, as on
+                                                  * the DRUMS editor's keys; the hand kit's congas and clave) */
+        draw_drum_icon(x0 + 3, yr + 8, sq_lane_pic(l, dm_kit(r)), FL_INK2);
         fb_hline(gx, yr + SQG_GND + 1, gw, FL_BG3);
         for (b = 0; b < nb; b++) {
             uint32_t m = dm_mask(r, l, b);
@@ -126,27 +118,31 @@ static void draw_drum(void)
     uint32_t r = dm_cur(), n = DM_N, p = r;      /* (one list: its place among all the rhythms) */
     const dm_rhythm_t *y = &DM_RHY[r % DM_N];
     uint32_t beats = y->beats;                   /* (its own TIME SIG) */
-    int wait = cf_sn.dm_on && cf_sn.dm_next == r && cf_sn.dm_r != r, w, lit = cu.now - cv_turn_ms < 220u && cv_turn_ms;
+    int wait = cf_sn.dm_on && cf_sn.dm_next == r && cf_sn.dm_r != r, lit = cu.now - cv_turn_ms < 220u && cv_turn_ms;
     char t[40], a[8];
     flora_render(&flo, &fl_cv);
     draw_plant(Y_VIEW);
     fb_veil(0, Y_VIEW, FB_W, H_VIEW, FL_BG);    /* (the plant faint: the picture leads) */
-    w = fb_text_w(&CF_FONT_UI, y->name, 2);
-    if (!wait || (cu.now / 250u) & 1u)           /* (waiting for the bar line: it blinks) */
-        fb_text_halo(&CF_FONT_UI, FB_W / 2 - w / 2, HEAD_Y, y->name, C_ACC(0), FL_BG, 2);
-    if (dm_tweaked(r))                           /* (the user's KIT or SWING on it) */
-        fb_rect(FB_W / 2 + w / 2 + 3, HEAD_Y + 14, 4, 4, C_ACC(0));
-    /* (one carousel with METRONOME's, as the design system's component: the name in the accent, the arrows 9 px from
-     * it; rc4 had it white with arrows 11 and 12 px off, the owner: "Выровнять в rc5") */
-    draw_chevron(FB_W / 2 - w / 2 - 14, HEAD_Y + 7, 0, p ? (lit && cv_turn_dir < 0 ? C_ACC(0) : FL_INK2) : FL_BG3);
-    draw_chevron(FB_W / 2 + w / 2 + 9, HEAD_Y + 7, 1,
-                 p + 1u < n ? (lit && cv_turn_dir > 0 ? C_ACC(0) : FL_INK2) : FL_BG3);
+    /* the head as every section's (rc6, the designer's R1, the owner's pick): the rhythm's name white at the left, the
+     * drum at the right; under it its place as a counter "‹ 1/27 ›" with the pager's arrows, then its TIME SIG, bars and
+     * tempo. The name blinks while it waits for the bar line; a dot after it: the user's KIT or SWING */
+    if (!wait || (cu.now / 250u) & 1u)
+        draw_head(y->name);
+    else
+        draw_icon(234, HEAD_Y + 14, SCR_DRUM, C_ACC(1));
+    if (dm_tweaked(r))
+        fb_rect(6 + fb_text_w(&CF_FONT_UI, y->name, 2) + 3, HEAD_Y + 14, 4, 4, C_ACC(0));
+    {
+        int x = 17;                              /* (the designer's R1: 4 px clear of each arrow) */
+        kint(t, (int)p + 1, "/");
+        kint(a, (int)n, 0);
+        str_cpy(t + str_len(t), a, sizeof t - str_len(t));
+        draw_chevron(8, HEAD_LINE + 2, 0, p ? (lit && cv_turn_dir < 0 ? C_ACC(0) : FL_INK2) : FL_BG3);
+        x += fb_text_halo(&CF_FONT_UI, x, HEAD_LINE, t, FL_INK2, FL_BG, 1) + 4;
+        draw_chevron(x, HEAD_LINE + 2, 1, p + 1u < n ? (lit && cv_turn_dir > 0 ? C_ACC(0) : FL_INK2) : FL_BG3);
+        cv_head_x = x + 12;
+    }
     t[0] = 0;
-    kint(t, (int)p + 1, 0);
-    str_cpy(t + str_len(t), " of ", sizeof t - str_len(t));
-    kint(a, (int)n, 0);
-    str_cpy(t + str_len(t), a, sizeof t - str_len(t));
-    str_cpy(t + str_len(t), "  ", sizeof t - str_len(t));
     kint(a, (int)beats, 0);
     str_cpy(t + str_len(t), a, sizeof t - str_len(t));
     str_cpy(t + str_len(t), beats == 6u ? "/8  " : "/4  ", sizeof t - str_len(t));
@@ -156,7 +152,7 @@ static void draw_drum(void)
     kint(a, y->bpm, 0);                          /* (the tempo its style lives at: shown, TEMPO stays the user's) */
     str_cpy(t + str_len(t), a, sizeof t - str_len(t));
     str_cpy(t + str_len(t), " BPM", sizeof t - str_len(t));
-    fb_text_halo(&CF_FONT_UI, FB_W / 2 - fb_text_w(&CF_FONT_UI, t, 1) / 2, HEAD_LINE, t, C_ACC(1), FL_BG, 1);
+    fb_text_halo(&CF_FONT_UI, cv_head_x, HEAD_LINE, t, C_ACC(1), FL_BG, 1);
     draw_view(view_drum);
     draw_chip_text_c(Y_VIEW + H_VIEW - 14, "[EDIT] make it a pattern", FL_INK3);   /* (rc5: the page's main use, on
                                                   * it; the owner on rc4: "потерялась функция чтобы вставить барабаны из

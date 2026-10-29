@@ -352,6 +352,13 @@ static const char *sq_lane_label(uint32_t l)
     l %= SQ_NLANE;
     return (SQ_KITS[sq_cur()->dkit[l] % SQ_NKIT].e[0] & 1u) && l >= 5u && l <= 8u ? H[l - 5u] : N[l];
 }
+/* a drum's picture in kit `kit` (draw_drum_icon): its lane's, the hand kit's congas and clave on lanes 5..8 (rc6: "the
+ * lane uses the picture of its kit's drum", the designer) */
+static uint32_t sq_lane_pic(uint32_t l, uint32_t kit)
+{
+    l %= SQ_NLANE;
+    return (SQ_KITS[kit % SQ_NKIT].e[0] & 1u) && l >= 5u && l <= 8u ? SQ_PIC_HAND + (l - 5u) : l;
+}
 /* the kit's name, "Mixed" when a drum plays another kit */
 static const char *sq_kit_name(const sq_pat_t *p)
 {
@@ -2101,7 +2108,7 @@ static int sq_keycap(int key, cf_keycap_t *o)    /* returns 1: the cap is the se
         o->style = KC_OFF;
         if (cf_key_is_upper(key) && i < (int)SQ_NLANE) {
             o->btn = 1;
-            o->icon = (uint8_t)(1 + i);
+            o->icon = (uint8_t)(1 + sq_lane_pic((uint32_t)i, sq_cur()->dkit[i]));
             o->style = (cu.keys >> key) & 1u ? KC_DOWN : i == squ.lane ? KC_ON : KC_BTN;
         }
         return 1;
@@ -2113,7 +2120,7 @@ static int sq_keycap(int key, cf_keycap_t *o)    /* returns 1: the cap is the se
     if (cf_key_is_upper(key)) {
         o->btn = 1;
         if (i < (int)SQ_NLANE) {
-            o->icon = (uint8_t)(1 + i);
+            o->icon = (uint8_t)(1 + sq_lane_pic((uint32_t)i, sq_cur()->dkit[i]));
             o->style = i == squ.lane ? KC_ON : KC_BTN;
         } else {
             o->style = KC_OFF;

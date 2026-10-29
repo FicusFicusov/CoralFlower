@@ -127,10 +127,12 @@ static void draw_button_name(int x, int y, int w, int h, const char *name, uint8
         fb_text(&CF_FONT_MICRO, cx + wl, y + (h - 8) / 2, dg, ink, 1);
 }
 
-/* a drum's picture on its key (the sequencer's DRUMS): 7 x 7, centred on cx, cy */
-static void draw_drum_icon(int cx, int cy, uint32_t lane, uint8_t c)
+/* a drum's picture on its key (the sequencer's DRUMS) and by its row on the rhythm machine: 7 x 7, centred on cx, cy.
+ * pic: the lane, or SQ_PIC_HAND + 0..3 for the hand drums' kit's congas and clave on lanes 5..8 (sq_lane_pic) */
+#define SQ_PIC_HAND 11u
+static void draw_drum_icon(int cx, int cy, uint32_t pic, uint8_t c)
 {
-    static const char *const IC[11][7] = {
+    static const char *const IC[15][7] = {
         {"..###..", ".#...#.", "#..#..#", "#.###.#", "#..#..#", ".#...#.", "..###.."},   /* kick: the skin, the beater */
         {".#####.", "#.....#", "#######", "#.#.#.#", "#.#.#.#", "#######", "......."},   /* snare: the shell, its wires */
         {"#..#..#", ".#.#.#.", "..###..", "###.###", "..###..", ".#.#.#.", "#..#..#"},   /* clap: a burst */
@@ -142,11 +144,17 @@ static void draw_drum_icon(int cx, int cy, uint32_t lane, uint8_t c)
         {"#......", ".#.....", "..#....", "#######", "#..#..#", "#######", "......."},   /* rim: a stick on the edge */
         {"...#...", "..###..", "..###..", ".#####.", ".#####.", "#######", "...#..."},   /* bell */
         {"##.....", "..###..", ".....##", "...#...", "...#...", "...#...", "..###.."},   /* crash: a tilted cymbal */
+        /* (the hand kit, the designer's for rc6: a conga a tall barrel with no legs, bigger as it goes lower, so it
+         * can't pass for a tom; the clave two sticks) */
+        {".#####.", ".#...#.", "#.....#", "#.....#", ".#...#.", ".#...#.", "..###.."},   /* conga low */
+        {".......", "..###..", ".#...#.", ".#...#.", ".#...#.", "..#.#..", "..###.."},   /* conga mid */
+        {".......", ".......", "..###..", "..#.#..", "..#.#..", "..#.#..", "..###.."},   /* conga high */
+        {".....##", "....##.", "...##..", "..##...", ".......", "#######", "#######"},   /* clave */
     };
     int i, j;
     for (j = 0; j < 7; j++)
         for (i = 0; i < 7; i++)
-            if (IC[lane % 11u][j][i] == '#')
+            if (IC[pic % 15u][j][i] == '#')
                 fb_pset(cx - 3 + i, cy - 3 + j, c);
 }
 
