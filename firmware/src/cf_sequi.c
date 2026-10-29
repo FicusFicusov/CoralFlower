@@ -66,6 +66,7 @@ static struct {
     uint8_t seen, rolled;        /* the audio side has the take; .. its count-in is over */
     uint32_t nbar, t, bt;        /* where it was last seen: bars since its first, ticks into the bar, of the bar */
     uint8_t rhy;                 /* .. under a rhythm of the drum machine: the rhythm + 1, its DRUMS (0.6, cf_dmui.c) */
+    uint8_t from;                /* .. the screen REC was pressed on: a take that leaves nothing goes back there */
 } sqk = {.last = 0xFF};
 static void sq_home_end(int drop);
 static void sq_home_undo(void);
@@ -1175,8 +1176,12 @@ static void sq_home_end(int drop)                /* the take ends (drop: it goes
         sqh.pend = 0;
         sqh.busy = 0;
         cf_post(CFE_SEQ, 0, 0, 0);
+        if (cu.scr == SCR_SQED && sqk.from < SCR_N && sqk.from != SCR_SQED)
+            ui_open(sqk.from);                   /* (no pattern: back where REC was pressed, not left in an empty track
+                                                  * whose PLAY plays silence; the owner on rc4: "закинуло на окно
+                                                  * аккордов, запись не началась", a second REC in the count-in) */
         if (!drop)
-            cf_message("Nothing recorded");
+            cf_message(sqk.rolled ? "Nothing recorded" : "Recording called off");
         return;
     }
     /* whole bars: the one REC came in, unless it came in its first eighth (late for the bar line before) */
@@ -1273,6 +1278,7 @@ static void sq_home_rec_r(uint32_t r)
     sqk.rhy = (uint8_t)(under ? r + 1u : 0u);
     sqk.seen = sqk.rolled = 0;
     sqk.nbar = sqk.t = sqk.bt = 0;
+    sqk.from = (uint8_t)cu.scr;
     squ.bar = squ.step = 0;
     if (sq_open())                               /* the track it writes opens first, then the count-in (the owner,
                                                   * 2026-10-20: "На клик записи лучше сразу открывать окно секвенсора
