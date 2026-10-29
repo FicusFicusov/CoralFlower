@@ -569,10 +569,10 @@ static void dm_hold_say(void)
     } else {
         uint32_t r = dm_nth(dm_beats(), dmh.k - 1u);
         str_cpy(m, DM_RHY[r % DM_N].name, sizeof m);
-        str_cpy(m + str_len(m), "  ", sizeof m - str_len(m));
+        str_cpy(m + str_len(m), " ", sizeof m - str_len(m));   /* ("Pop 1/22": every counter N/M, rc6) */
         kint(a, dmh.k, 0);
         str_cpy(m + str_len(m), a, sizeof m - str_len(m));
-        str_cpy(m + str_len(m), " of ", sizeof m - str_len(m));
+        str_cpy(m + str_len(m), "/", sizeof m - str_len(m));
         kint(a, (int)dm_count(dm_beats()), 0);
         str_cpy(m + str_len(m), a, sizeof m - str_len(m));
         str_cpy(m + str_len(m), "\nlet go of [EDIT]: it stays", sizeof m - str_len(m));

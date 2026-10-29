@@ -1823,7 +1823,7 @@ static void sq_knob_info(int k, cf_knob_t *o)
                 char b[6];
                 kint(o->val, squ.slot + 1, 0);
                 kint(b, sq_st.song.n, 0);
-                str_cpy(o->val + str_len(o->val), " of ", 5);
+                str_cpy(o->val + str_len(o->val), "/", 5);   /* ("2/2": every counter N/M, rc6) */
                 str_cpy(o->val + str_len(o->val), b, 4);
             } else {
                 kfmt(o->val, 14, "-");
