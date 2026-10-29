@@ -181,7 +181,9 @@ static uint32_t dm_cur(void)
     for (i = 0; i < DM_N; i++)
         if (DM_RHY[i].beats == b && DM_RHY[i].id == dmr.pos[b])
             return i;
-    return dm_nth(b, 0);
+    i = dm_nth(b, 0);
+    return i < DM_N ? i : 0u;                    /* (a TIME SIG with no rhythm, 3/4 and 6/8 since rc7: the list's first;
+                                                  * PLAY or SELECT switches TIME SIG to its) */
 }
 static uint32_t dm_uid(uint32_t r) { return DM_RHY[r % DM_N].id % DM_NMAX; }   /* (the user's are kept by the id) */
 static uint32_t dm_kit(uint32_t r) { return dmr.kit[dm_uid(r)] != 0xFFu ? dmr.kit[dm_uid(r)] : DM_RHY[r % DM_N].kit; }

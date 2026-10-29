@@ -27,17 +27,15 @@ enum { DMK_STD, DMK_808, DMK_909, DMK_TIGHT, DMK_BOOM, DMK_LOFI, DMK_HAND, DMK_C
 /* 4/4: the owner's list for rc4 ("моя прошивка больше ориентирована на более современные жанры"; rc3's Rock, Bossa,
  * Reggae, Swing, Motown, Dub, Afro, Ballad, Punk, Disco, Trap and Samba gone; "Все, решу на слух": every one proposed
  * is in, the owner cuts by ear before the release). Pop and HipHop on X Lo-Fi, Funk on X Club with SWING 40 %, DnB on
- * X Tech with more in it than two steps (the owner's) */
+ * X Tech with more in it than two steps (the owner's). rc7, the owner by ear on rc6: Footwork ("убрать"), Phonk
+ * ("кринж"), TrapWaltz and AfroHouse out; their ids 33, 37, 43, 44 are never reused (a kept KIT, SWING or place of
+ * theirs is dropped, cf_dmui.c) */
 static const dm_rhythm_t DM_RHY[] = {
     /* 4/4: 16 steps a bar */
     {"Pop", 1, 4, 1, DMK_XLOFI, 0, 110,
      {[DM_K] = "x.....x.x.......", [DM_S] = "....x.......x...", [DM_C] = "....x.......x...",
       [DM_H] = "x.x.x.x.x.x.x.x."},
      {[DM_K] = 100, [DM_S] = 80, [DM_C] = 60, [DM_H] = 50}},
-    {"PopRock", 29, 4, 2, DMK_XLIVE, 0, 120,
-     {[DM_K] = "x.......x.x....." "x.....x.x.......", [DM_S] = "....x.......x..." "....x.......x...",
-      [DM_H] = "x.x.x.x.x.x.x.x." "x.x.x.x.x.x.x.x.", [DM_X] = "x..............." "................"},
-     {[DM_K] = 100, [DM_S] = 90, [DM_H] = 55, [DM_X] = 45}},
     {"Funk", 2, 4, 2, DMK_XCLUB, 40, 105,
      {[DM_K] = "x..x..x...x....." "x.x...x..x..x...", [DM_S] = "....x.......x..." "....x.......x...",
       [DM_R] = ".......x.x....x." "..x....x.....x..", [DM_H] = "xxxxxxxxxxxxxxxx" "xxxxxxxxxxxxxx..",
@@ -80,10 +78,6 @@ static const dm_rhythm_t DM_RHY[] = {
      {[DM_K] = "x.x...x...x.x..." "x...x.x..x...x..", [DM_S] = "....x..xx..x.x.x" "..x.x.x..x.xx.xx",
       [DM_H] = "xxxxxxxxxxxxxxxx" "xxxxxxxxxxxxxxxx", [DM_X] = "x..............." "................"},
      {[DM_K] = 100, [DM_S] = 90, [DM_H] = 35, [DM_X] = 40}},
-    {"Footwork", 33, 4, 2, DMK_808, 0, 160,
-     {[DM_K] = "x..x..x...x..x.." "x..x..x..x..x...", [DM_C] = "....x.......x..." "....x.......x...",
-      [DM_H] = "x.xx.xx.x.xx.xx." "x.xx.xx.x.xx.xx.", [DM_LT] = "......x......x.." "........x....x.."},
-     {[DM_K] = 100, [DM_C] = 80, [DM_H] = 40, [DM_LT] = 70}},
     {"Jersey", 32, 4, 2, DMK_XCLUB, 0, 140,
      {[DM_K] = "x..x..x.x..x.x.." "x..x..x.x.xx.x.x", [DM_C] = "....x.......x..." "....x.......x.xx",
       [DM_H] = "..x...x...x...x." "..x...x...x...x."},
@@ -92,7 +86,7 @@ static const dm_rhythm_t DM_RHY[] = {
      {[DM_K] = "x.....x...x....." "x.....x.x.x.....", [DM_C] = "....x.......x..." "....x.......x...",
       [DM_H] = "x.x.x.x.x.x.xxxx" "x.x.x.x.xxxxxxxx", [DM_X] = "x..............." "................"},
      {[DM_K] = 100, [DM_C] = 90, [DM_H] = 40, [DM_X] = 35}},
-    {"Drill", 35, 4, 2, DMK_808, 15, 142,
+    {"Drill", 35, 4, 2, DMK_XTECH, 15, 142,             /* (X Tech: the owner on rc6) */
      {[DM_K] = "x......x...x...." "..x....x..x.x...", [DM_S] = "........x......." "........x.....x.",
       [DM_H] = "x..x..x.x..x..x." "x..x..x.x.xx..x."},
      {[DM_K] = 100, [DM_S] = 90, [DM_H] = 45}},
@@ -104,11 +98,7 @@ static const dm_rhythm_t DM_RHY[] = {
      {[DM_K] = "x.........x....." "x......x.x......", [DM_S] = "........x......." "........x.......",
       [DM_H] = "x.x.x.x.x.x.x.x." "x.x.x.x.x.x.x.x."},
      {[DM_K] = 100, [DM_S] = 95, [DM_H] = 35}},
-    {"Phonk", 37, 4, 1, DMK_808, 0, 130,
-     {[DM_K] = "x......x..x.....", [DM_C] = "....x.......x...", [DM_H] = "x.x.x.x.x.x.x.x.",
-      [DM_B] = "x..x..x.x..x..x."},
-     {[DM_K] = 100, [DM_C] = 85, [DM_H] = 40, [DM_B] = 55}},
-    {"Amapiano", 40, 4, 2, DMK_XDEEP, 0, 112,
+    {"Amapiano", 40, 4, 2, DMK_XTECH, 0, 112,           /* (X Tech: the owner on rc6) */
      {[DM_K] = "x...x...x...x..." "x...x...x...x...", [DM_LT] = "...x..x...x..x.." "..x..x....x...x.",
       [DM_R] = "....x.......x..." "....x.......x...", [DM_H] = "xxxxxxxxxxxxxxxx" "xxxxxxxxxxxxxxxx"},
      {[DM_K] = 85, [DM_LT] = 90, [DM_R] = 60, [DM_H] = 30}},
@@ -119,18 +109,15 @@ static const dm_rhythm_t DM_RHY[] = {
     {"Dembow", 42, 4, 1, DMK_XCLUB, 0, 95,
      {[DM_K] = "x...x...x...x...", [DM_S] = "...x..x....x..x.", [DM_H] = "x.x.x.x.x.x.x.x."},
      {[DM_K] = 100, [DM_S] = 85, [DM_H] = 35}},
+    /* (the owner on rc6: "поп рок в конец, не оч он как-то": the last of the 4/4 ones) */
+    {"PopRock", 29, 4, 2, DMK_XLIVE, 0, 120,
+     {[DM_K] = "x.......x.x....." "x.....x.x.......", [DM_S] = "....x.......x..." "....x.......x...",
+      [DM_H] = "x.x.x.x.x.x.x.x." "x.x.x.x.x.x.x.x.", [DM_X] = "x..............." "................"},
+     {[DM_K] = 100, [DM_S] = 90, [DM_H] = 55, [DM_X] = 45}},
     /* the other TIME SIGs: modern takes (the owner's pick B for rc4: "3/4 trap-waltz, 6/8 afro-house, 5/4 and 7/4
      * math-rock, 2/4 baile"; rc3's Waltz, Jazz3, March, Polka, Five, Odd5, Blues, Bembe and Seven gone). A 6/8 bar is
      * 6 beats of 8ths: its tempo counts 8ths */
-    /* 3/4: 12 steps */
-    {"TrapWaltz", 43, 3, 2, DMK_808, 0, 140,
-     {[DM_K] = "x.....x....." "x..x.....x..", [DM_C] = "........x..." "........x...",
-      [DM_H] = "x.x.x.x.xxxx" "x.x.xxx.x.x."},
-     {[DM_K] = 100, [DM_C] = 85, [DM_H] = 40}},
-    /* 6/8: 12 steps */
-    {"AfroHouse", 44, 6, 1, DMK_XDEEP, 0, 200,
-     {[DM_K] = "x.....x.....", [DM_B] = "x.x.xx.x.x.x", [DM_H] = "xxxxxxxxxxxx", [DM_LT] = "....x.....x."},
-     {[DM_K] = 95, [DM_B] = 55, [DM_H] = 30, [DM_LT] = 70}},
+    /* (3/4 and 6/8: none since rc7, TrapWaltz and AfroHouse cut by the owner: "полная ебанина", "кринж") */
     /* 2/4: 8 steps */
     {"Tamborzao", 47, 2, 2, DMK_808, 0, 130,
      {[DM_K] = "x..x..x." "x..x..x.", [DM_MT] = ".x...x.." ".x...x.x", [DM_LT] = "..x....x" "..x.....",
