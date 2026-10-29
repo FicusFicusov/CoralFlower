@@ -60,7 +60,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p build/host
-          cc -std=gnu11 -O1 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/cf_backup_test tests/cf_backup_test.c -lm
+          # (the emulator's <os/lock.h> is macOS's; tools/emu/web/compat has the single-threaded one, as the headless build)
+          cc -std=gnu11 -O1 -w -Itools/emu/web/compat -Ibuild/gen -Ifirmware/src -Itests -o build/host/cf_backup_test \
+             tests/cf_backup_test.c -lm
           build/host/cf_backup_test
           cc -std=c99 -Wall -Wextra -Ifirmware/src -o build/cf_chord_test tests/cf_chord_test.c firmware/src/cf_chord.c \
              firmware/src/cf_theory.c

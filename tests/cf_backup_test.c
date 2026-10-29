@@ -4,6 +4,7 @@
  * tests/cr_backup_test.c: the firmware as the emulator builds it (tools/emu/emu_firmware.h, storage.c on the RAM NOR),
  * requests fed to crb_handle as the main loop would, the replies taken at CRB_SEND.
  *   cc -std=gnu11 -O1 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/cf_backup_test tests/cf_backup_test.c -lm
+ *   (not on macOS: add -Itools/emu/web/compat, its <os/lock.h>; the check workflow does)
  *   ./build/host/cf_backup_test
  * Checks: INFO (the version, the tags); LIST of the 26 objects; a sound, the settings (the newest in their log), the bass sound's
  * unsaved edits (put back at the restart), a loop and sequencer patterns
