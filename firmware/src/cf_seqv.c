@@ -758,6 +758,7 @@ static void draw_sq_help(void)
                                      "[SELECT] bar  [PRESETS] the kit",   /* (no eraser line: "Стереть убрать, набор
                                                   * оставить", the owner, 2026-10-20) */
                                      "hold [OCT+], turn [SELECT]:", "   copy the bar there",
+                                     "hold [EDIT], [PRESETS]: a rhythm",   /* (0.6: cf_dmui.c; "turn" did not fit) */
                                      "REC on: upper keys are pads", "hold [REC]: undo last change",
                                      "[SAVE] back  [GLO] close", 0};
     const char *const *l = cu.scr == SCR_SQ ? (squ.pat == SQ_SONGPG ? SO : TR) : squ.trk == SQ_DRUMS ? DR :

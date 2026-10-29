@@ -10,9 +10,12 @@
 
 enum { DM_K, DM_S, DM_C, DM_H, DM_O, DM_LT, DM_MT, DM_HT, DM_R, DM_B, DM_X };   /* (the lanes: cf_seqd.c SQ_NLANE) */
 typedef struct {
-    const char *name;            /* 6 letters at most: the plaque "DRUM Bossa" fits a top line */
+    const char *name;            /* 9 letters at most: "Breakcore" fits the page's title and the plaque */
+    uint8_t id;                  /* its own number, never reused: what the user's KIT and SWING and the rhythm stood on
+                                  * are kept by (cf_dmui.c); rc3's rhythms kept theirs (0 .. 28), new ones go on from 29 */
     uint8_t beats, bars;         /* its TIME SIG (cs.beats), its length */
     uint8_t kit, swing;          /* its own kit (SQ_KITS) and SWING (0..100 %, as a pattern's) */
+    uint8_t bpm;                 /* the tempo its style lives at (shown, never set: the tempo is the user's) */
     const char *lane[SQ_NLANE];  /* each drum's hits, bar after bar; 0: the drum is not in it */
     uint8_t lev[SQ_NLANE];       /* .. its level, 0..100 % (a pattern's dlev) */
 } dm_rhythm_t;
@@ -21,114 +24,126 @@ typedef struct {
 enum { DMK_STD, DMK_808, DMK_909, DMK_TIGHT, DMK_BOOM, DMK_LOFI, DMK_HAND, DMK_CRUSH, DMK_XCLUB, DMK_XDEEP, DMK_XLOFI,
        DMK_XLIVE, DMK_XTECH, DMK_XBREAK };
 
+/* 4/4: the owner's list for rc4 ("моя прошивка больше ориентирована на более современные жанры"; rc3's Rock, Bossa,
+ * Reggae, Swing, Motown, Dub, Afro, Ballad, Punk, Disco, Trap and Samba gone; "Все, решу на слух": every one proposed
+ * is in, the owner cuts by ear before the release). Pop and HipHop on X Lo-Fi, Funk on X Club with SWING 40 %, DnB on
+ * X Tech with more in it than two steps (the owner's) */
 static const dm_rhythm_t DM_RHY[] = {
     /* 4/4: 16 steps a bar */
-    {"Rock", 4, 2, DMK_XLIVE, 0,
-     {[DM_K] = "x.......x.x....." "x.......x.....x.", [DM_S] = "....x.......x..." "....x.......x...",
-      [DM_H] = "x.x.x.x.x.x.x.x." "x.x.x.x.x.x.x...", [DM_O] = "................" "..............x."},
-     {[DM_K] = 100, [DM_S] = 90, [DM_H] = 55, [DM_O] = 55}},
-    {"Pop", 4, 1, DMK_STD, 0,
+    {"Pop", 1, 4, 1, DMK_XLOFI, 0, 110,
      {[DM_K] = "x.....x.x.......", [DM_S] = "....x.......x...", [DM_C] = "....x.......x...",
       [DM_H] = "x.x.x.x.x.x.x.x."},
      {[DM_K] = 100, [DM_S] = 80, [DM_C] = 60, [DM_H] = 50}},
-    {"Funk", 4, 2, DMK_TIGHT, 8,
+    {"PopRock", 29, 4, 2, DMK_XLIVE, 0, 120,
+     {[DM_K] = "x.......x.x....." "x.....x.x.......", [DM_S] = "....x.......x..." "....x.......x...",
+      [DM_H] = "x.x.x.x.x.x.x.x." "x.x.x.x.x.x.x.x.", [DM_X] = "x..............." "................"},
+     {[DM_K] = 100, [DM_S] = 90, [DM_H] = 55, [DM_X] = 45}},
+    {"Funk", 2, 4, 2, DMK_XCLUB, 40, 105,
      {[DM_K] = "x..x..x...x....." "x.x...x..x..x...", [DM_S] = "....x.......x..." "....x.......x...",
       [DM_R] = ".......x.x....x." "..x....x.....x..", [DM_H] = "xxxxxxxxxxxxxxxx" "xxxxxxxxxxxxxx..",
       [DM_O] = "................" "..............x."},
      {[DM_K] = 100, [DM_S] = 90, [DM_R] = 35, [DM_H] = 40, [DM_O] = 50}},
-    {"Disco", 4, 1, DMK_XCLUB, 0,
-     {[DM_K] = "x...x...x...x...", [DM_S] = "....x.......x...", [DM_C] = "....x.......x...",
-      [DM_H] = "x...x...x...x...", [DM_O] = "..x...x...x...x."},
-     {[DM_K] = 100, [DM_S] = 70, [DM_C] = 70, [DM_H] = 45, [DM_O] = 60}},
-    {"House", 4, 1, DMK_909, 0,
-     {[DM_K] = "x...x...x...x...", [DM_C] = "....x.......x...", [DM_H] = ".x.x.x.x.x.x.x.x",
-      [DM_O] = "..x...x...x...x."},
-     {[DM_K] = 100, [DM_C] = 80, [DM_H] = 35, [DM_O] = 60}},
-    {"Techno", 4, 1, DMK_XTECH, 0,
-     {[DM_K] = "x...x...x...x...", [DM_C] = "....x.......x...", [DM_H] = "xx..xx..xx..xx..",
-      [DM_O] = "..x...x...x...x.", [DM_R] = "...x.....x....x."},
-     {[DM_K] = 100, [DM_C] = 70, [DM_H] = 40, [DM_O] = 55, [DM_R] = 45}},
-    {"Bossa", 4, 2, DMK_XLIVE, 0,
-     {[DM_K] = "x..xx..xx..xx..x" "x..xx..xx..xx..x", [DM_R] = "x..x..x...x..x.." "..x..x...x..x...",
-      [DM_H] = "x.x.x.x.x.x.x.x." "x.x.x.x.x.x.x.x."},
-     {[DM_K] = 80, [DM_R] = 70, [DM_H] = 45}},
-    {"HipHop", 4, 2, DMK_BOOM, 30,
+    {"HipHop", 7, 4, 2, DMK_XLOFI, 30, 90,
      {[DM_K] = "x......x.x......" "x.........x.....", [DM_S] = "....x.......x..." "....x.......x...",
       [DM_H] = "x.x.x.x.x.x.x.x." "x.x.x.x.x.x.x.x."},
      {[DM_K] = 100, [DM_S] = 90, [DM_H] = 50}},
-    {"Trap", 4, 2, DMK_808, 0,
-     {[DM_K] = "x......x..x....." "x.....x...x..x..", [DM_C] = "........x......." "........x.......",
-      [DM_H] = "x.x.x.x.x.x.xxxx" "x.x.x.x.x.xxx...", [DM_O] = "................" "..............x."},
-     {[DM_K] = 100, [DM_C] = 85, [DM_H] = 45, [DM_O] = 45}},
-    {"Reggae", 4, 1, DMK_STD, 15,
-     {[DM_K] = "........x.......", [DM_R] = "........x.......", [DM_H] = "x.x.x.x.x.x.x.x."},
-     {[DM_K] = 100, [DM_R] = 80, [DM_H] = 45}},
-    {"Samba", 4, 1, DMK_HAND, 0,
-     {[DM_K] = "x..x...xx..x...x", [DM_LT] = "....x.......x...", [DM_R] = "x.x..x.x.x.x..x.",
-      [DM_H] = "xxxxxxxxxxxxxxxx"},
-     {[DM_K] = 60, [DM_LT] = 90, [DM_R] = 60, [DM_H] = 30}},
-    {"Swing", 4, 1, DMK_XLIVE, 100,
-     {[DM_K] = "x...x...x...x...", [DM_H] = "x...x..xx...x..x", [DM_R] = "....x.......x..."},
-     {[DM_K] = 30, [DM_H] = 60, [DM_R] = 60}},
-    {"Motown", 4, 1, DMK_STD, 0,
-     {[DM_K] = "x.....x.x.......", [DM_S] = "....x.......x...", [DM_C] = "x...x...x...x...",
-      [DM_H] = "x.x.x.x.x.x.x.x."},
-     {[DM_K] = 90, [DM_S] = 85, [DM_C] = 55, [DM_H] = 40}},
-    {"Break", 4, 2, DMK_XBREAK, 10,
+    {"Lo-fi", 30, 4, 2, DMK_XLOFI, 45, 80,
+     {[DM_K] = "x.......x.x....." "x......x..x.....", [DM_S] = "....x.......x..." "....x.......x...",
+      [DM_H] = "x.x.x.x.x.x.x.x." "x.x.x.x.x.x.xx.."},
+     {[DM_K] = 90, [DM_S] = 75, [DM_H] = 35}},
+    {"House", 4, 4, 1, DMK_909, 0, 124,
+     {[DM_K] = "x...x...x...x...", [DM_C] = "....x.......x...", [DM_H] = ".x.x.x.x.x.x.x.x",
+      [DM_O] = "..x...x...x...x."},
+     {[DM_K] = 100, [DM_C] = 80, [DM_H] = 35, [DM_O] = 60}},
+    {"Garage", 18, 4, 1, DMK_XCLUB, 55, 132,
+     {[DM_K] = "x......x..x.....", [DM_S] = "....x.......x...", [DM_H] = "x.xxx.xxx.xxx.xx"},
+     {[DM_K] = 100, [DM_S] = 85, [DM_H] = 40}},
+    {"Techno", 5, 4, 1, DMK_XTECH, 0, 132,
+     {[DM_K] = "x...x...x...x...", [DM_C] = "....x.......x...", [DM_H] = "xx..xx..xx..xx..",
+      [DM_O] = "..x...x...x...x.", [DM_R] = "...x.....x....x."},
+     {[DM_K] = 100, [DM_C] = 70, [DM_H] = 40, [DM_O] = 55, [DM_R] = 45}},
+    {"Break", 13, 4, 2, DMK_XBREAK, 10, 130,
      {[DM_K] = "x.x.......xx...." "x.x.......x.....", [DM_S] = "....x..x.x..x..x" "....x..x.x....x.",
       [DM_H] = "x.x.x.x.x.x.x.x." "x.x.x.x.x.x.x.x."},
      {[DM_K] = 100, [DM_S] = 90, [DM_H] = 50}},
-    {"DnB", 4, 1, DMK_XBREAK, 0,
-     {[DM_K] = "x.........x.....", [DM_S] = "....x.......x...", [DM_H] = "x.x.x.x.x.x.x.x."},
-     {[DM_K] = 100, [DM_S] = 95, [DM_H] = 45}},
-    {"Dub", 4, 1, DMK_XDEEP, 15,
-     {[DM_K] = "x...x...x...x...", [DM_R] = "....x.......x...", [DM_H] = "..x...x...x...x."},
-     {[DM_K] = 95, [DM_R] = 75, [DM_H] = 50}},
-    {"Afro", 4, 2, DMK_HAND, 0,
-     {[DM_K] = "x..x....x.x....." "x..x....x...x...", [DM_R] = "....x..x....x..x" "....x..x....x..x",
-      [DM_B] = "x.x.xx.x.x.xx.x." "x.x.xx.x.x.xx.x.", [DM_H] = ".x.x.x.x.x.x.x.x" ".x.x.x.x.x.x.x.x"},
-     {[DM_K] = 90, [DM_R] = 65, [DM_B] = 50, [DM_H] = 35}},
-    {"Ballad", 4, 1, DMK_XLIVE, 0,
-     {[DM_K] = "x.......x..x....", [DM_R] = "....x.......x...", [DM_H] = "x.x.x.x.x.x.x.x."},
-     {[DM_K] = 85, [DM_R] = 70, [DM_H] = 40}},
-    {"Garage", 4, 1, DMK_XCLUB, 55,
-     {[DM_K] = "x......x..x.....", [DM_S] = "....x.......x...", [DM_H] = "x.xxx.xxx.xxx.xx"},
-     {[DM_K] = 100, [DM_S] = 85, [DM_H] = 40}},
-    {"Punk", 4, 1, DMK_CRUSH, 0,
-     {[DM_K] = "x.x...x.x.x...x.", [DM_S] = "....x.......x...", [DM_H] = "x.x.x.x.x.x.x.x."},
-     {[DM_K] = 100, [DM_S] = 90, [DM_H] = 55}},
+    {"Jungle", 31, 4, 2, DMK_XBREAK, 0, 165,
+     {[DM_K] = "x.........x....." "..x.......x.....", [DM_S] = "....x.x....x.x.." "....x..x.x..x.x.",
+      [DM_R] = ".x....x.x......x" "x....x......x...", [DM_H] = "xxxxxxxxxxxxxxxx" "xxxxxxxxxxxxxxxx",
+      [DM_X] = "x..............." "................"},
+     {[DM_K] = 100, [DM_S] = 90, [DM_R] = 35, [DM_H] = 30, [DM_X] = 40}},
+    {"DnB", 14, 4, 2, DMK_XTECH, 0, 174,
+     {[DM_K] = "x.........x....." "x.x.......x..x..", [DM_S] = "....x.......x..." "....x.......x...",
+      [DM_R] = ".......x.x....x." "..x....x.......x", [DM_H] = "x.xxx.x.x.xxx.x." "x.x.x.xxx.x.x.x.",
+      [DM_X] = "x..............." "................"},
+     {[DM_K] = 100, [DM_S] = 95, [DM_R] = 35, [DM_H] = 45, [DM_X] = 40}},
+    {"Breakcore", 39, 4, 2, DMK_XBREAK, 0, 180,
+     {[DM_K] = "x.x...x...x.x..." "x...x.x..x...x..", [DM_S] = "....x..xx..x.x.x" "..x.x.x..x.xx.xx",
+      [DM_H] = "xxxxxxxxxxxxxxxx" "xxxxxxxxxxxxxxxx", [DM_X] = "x..............." "................"},
+     {[DM_K] = 100, [DM_S] = 90, [DM_H] = 35, [DM_X] = 40}},
+    {"Footwork", 33, 4, 2, DMK_808, 0, 160,
+     {[DM_K] = "x..x..x...x..x.." "x..x..x..x..x...", [DM_C] = "....x.......x..." "....x.......x...",
+      [DM_H] = "x.xx.xx.x.xx.xx." "x.xx.xx.x.xx.xx.", [DM_LT] = "......x......x.." "........x....x.."},
+     {[DM_K] = 100, [DM_C] = 80, [DM_H] = 40, [DM_LT] = 70}},
+    {"Jersey", 32, 4, 2, DMK_XCLUB, 0, 140,
+     {[DM_K] = "x..x..x.x..x.x.." "x..x..x.x.xx.x.x", [DM_C] = "....x.......x..." "....x.......x.xx",
+      [DM_H] = "..x...x...x...x." "..x...x...x...x."},
+     {[DM_K] = 100, [DM_C] = 85, [DM_H] = 40}},
+    {"Hyperpop", 34, 4, 2, DMK_CRUSH, 0, 150,
+     {[DM_K] = "x.....x...x....." "x.....x.x.x.....", [DM_C] = "....x.......x..." "....x.......x...",
+      [DM_H] = "x.x.x.x.x.x.xxxx" "x.x.x.x.xxxxxxxx", [DM_X] = "x..............." "................"},
+     {[DM_K] = 100, [DM_C] = 90, [DM_H] = 40, [DM_X] = 35}},
+    {"Drill", 35, 4, 2, DMK_808, 15, 142,
+     {[DM_K] = "x......x...x...." "..x....x..x.x...", [DM_S] = "........x......." "........x.....x.",
+      [DM_H] = "x..x..x.x..x..x." "x..x..x.x.xx..x."},
+     {[DM_K] = 100, [DM_S] = 90, [DM_H] = 45}},
+    {"Grime", 36, 4, 2, DMK_TIGHT, 0, 140,
+     {[DM_K] = "x.....x...x..x.." "x..x......x.....", [DM_S] = "........x......." "........x.......",
+      [DM_H] = "x...x...x...x..." "x...x...x...x.x."},
+     {[DM_K] = 100, [DM_S] = 90, [DM_H] = 40}},
+    {"Halftime", 38, 4, 2, DMK_XDEEP, 0, 140,
+     {[DM_K] = "x.........x....." "x......x.x......", [DM_S] = "........x......." "........x.......",
+      [DM_H] = "x.x.x.x.x.x.x.x." "x.x.x.x.x.x.x.x."},
+     {[DM_K] = 100, [DM_S] = 95, [DM_H] = 35}},
+    {"Phonk", 37, 4, 1, DMK_808, 0, 130,
+     {[DM_K] = "x......x..x.....", [DM_C] = "....x.......x...", [DM_H] = "x.x.x.x.x.x.x.x.",
+      [DM_B] = "x..x..x.x..x..x."},
+     {[DM_K] = 100, [DM_C] = 85, [DM_H] = 40, [DM_B] = 55}},
+    {"Amapiano", 40, 4, 2, DMK_XDEEP, 0, 112,
+     {[DM_K] = "x...x...x...x..." "x...x...x...x...", [DM_LT] = "...x..x...x..x.." "..x..x....x...x.",
+      [DM_R] = "....x.......x..." "....x.......x...", [DM_H] = "xxxxxxxxxxxxxxxx" "xxxxxxxxxxxxxxxx"},
+     {[DM_K] = 85, [DM_LT] = 90, [DM_R] = 60, [DM_H] = 30}},
+    {"Baile", 41, 4, 2, DMK_808, 0, 130,
+     {[DM_K] = "x.....x...x....." "x.....x...x.x...", [DM_MT] = "...x.....x...x.." "...x.....x...x..",
+      [DM_LT] = "..x.....x.....x." "..x.....x.....x.", [DM_C] = "....x.......x..." "....x.......x..."},
+     {[DM_K] = 100, [DM_MT] = 75, [DM_LT] = 80, [DM_C] = 80}},
+    {"Dembow", 42, 4, 1, DMK_XCLUB, 0, 95,
+     {[DM_K] = "x...x...x...x...", [DM_S] = "...x..x....x..x.", [DM_H] = "x.x.x.x.x.x.x.x."},
+     {[DM_K] = 100, [DM_S] = 85, [DM_H] = 35}},
+    /* the other TIME SIGs: modern takes (the owner's pick B for rc4: "3/4 trap-waltz, 6/8 afro-house, 5/4 and 7/4
+     * math-rock, 2/4 baile"; rc3's Waltz, Jazz3, March, Polka, Five, Odd5, Blues, Bembe and Seven gone). A 6/8 bar is
+     * 6 beats of 8ths: its tempo counts 8ths */
     /* 3/4: 12 steps */
-    {"Waltz", 3, 1, DMK_XLIVE, 0,
-     {[DM_K] = "x...........", [DM_R] = "....x...x...", [DM_H] = "x...x...x..."},
-     {[DM_K] = 90, [DM_R] = 60, [DM_H] = 40}},
-    {"Jazz3", 3, 1, DMK_XLIVE, 100,
-     {[DM_K] = "x...........", [DM_H] = "x...x..xx...", [DM_R] = "........x..."},
-     {[DM_K] = 35, [DM_H] = 60, [DM_R] = 55}},
-    /* 2/4: 8 steps */
-    {"March", 2, 1, DMK_STD, 0,
-     {[DM_K] = "x...x...", [DM_S] = "x.x.xxx."},
-     {[DM_K] = 90, [DM_S] = 70}},
-    {"Polka", 2, 1, DMK_STD, 0,
-     {[DM_K] = "x...x...", [DM_S] = "..x...x.", [DM_H] = "..x...x."},
-     {[DM_K] = 90, [DM_S] = 80, [DM_H] = 40}},
-    /* 5/4: 10 steps (8ths) */
-    {"Five", 5, 1, DMK_XLIVE, 0,
-     {[DM_K] = "x.....x...", [DM_S] = "....x...x.", [DM_H] = "x.x.x.x.x."},
-     {[DM_K] = 95, [DM_S] = 85, [DM_H] = 50}},
-    {"Odd5", 5, 1, DMK_TIGHT, 0,
-     {[DM_K] = "x...x.....", [DM_S] = "..x.....x.", [DM_H] = "xxxxxxxxxx"},
-     {[DM_K] = 95, [DM_S] = 85, [DM_H] = 35}},
+    {"TrapWaltz", 43, 3, 2, DMK_808, 0, 140,
+     {[DM_K] = "x.....x....." "x..x.....x..", [DM_C] = "........x..." "........x...",
+      [DM_H] = "x.x.x.x.xxxx" "x.x.xxx.x.x."},
+     {[DM_K] = 100, [DM_C] = 85, [DM_H] = 40}},
     /* 6/8: 12 steps */
-    {"Blues", 6, 1, DMK_XLIVE, 0,
-     {[DM_K] = "x.....x.....", [DM_S] = "......x.....", [DM_H] = "x.x.x.x.x.x."},
-     {[DM_K] = 95, [DM_S] = 85, [DM_H] = 50}},
-    {"Bembe", 6, 1, DMK_HAND, 0,
-     {[DM_K] = "x.....x.....", [DM_LT] = "....x.....x.", [DM_B] = "x.x.xx.x.x.x"},
-     {[DM_K] = 85, [DM_LT] = 70, [DM_B] = 55}},
+    {"AfroHouse", 44, 6, 1, DMK_XDEEP, 0, 200,
+     {[DM_K] = "x.....x.....", [DM_B] = "x.x.xx.x.x.x", [DM_H] = "xxxxxxxxxxxx", [DM_LT] = "....x.....x."},
+     {[DM_K] = 95, [DM_B] = 55, [DM_H] = 30, [DM_LT] = 70}},
+    /* 2/4: 8 steps */
+    {"Tamborzao", 47, 2, 2, DMK_808, 0, 130,
+     {[DM_K] = "x..x..x." "x..x..x.", [DM_MT] = ".x...x.." ".x...x.x", [DM_LT] = "..x....x" "..x.....",
+      [DM_C] = "....x..." "....x..."},
+     {[DM_K] = 100, [DM_MT] = 75, [DM_LT] = 80, [DM_C] = 80}},
+    /* 5/4: 10 steps (8ths) */
+    {"MathRock", 45, 5, 1, DMK_XLIVE, 0, 140,
+     {[DM_K] = "x..x..x...", [DM_S] = "....x...x.", [DM_H] = "x.x.x.x.x.", [DM_X] = "x........."},
+     {[DM_K] = 95, [DM_S] = 90, [DM_H] = 45, [DM_X] = 35}},
     /* 7/4: 14 steps (8ths) */
-    {"Seven", 7, 1, DMK_XLIVE, 0,
-     {[DM_K] = "x.....x...x...", [DM_S] = "....x...x...x.", [DM_H] = "x.x.x.x.x.x.x."},
-     {[DM_K] = 95, [DM_S] = 85, [DM_H] = 50}},
+    {"MathRock", 46, 7, 1, DMK_XLIVE, 0, 130,
+     {[DM_K] = "x...x...x..x..", [DM_S] = "..x...x...x..x", [DM_H] = "xxxxxxxxxxxxxx", [DM_X] = "x............."},
+     {[DM_K] = 95, [DM_S] = 90, [DM_H] = 35, [DM_X] = 35}},
 };
 #define DM_N ((uint32_t)(sizeof DM_RHY / sizeof DM_RHY[0]))
 
@@ -155,12 +170,14 @@ static uint32_t dm_place(uint32_t r)             /* .. its place in its TIME SIG
         k += DM_RHY[i].beats == DM_RHY[r % DM_N].beats;
     return k;
 }
-/* drum l's hits in bar b of rhythm r: a pattern's DRUMS bits (bit i, step i) */
+/* a bar's drum steps in a TIME SIG of so many beats (as cf_seqd.c sq_dsteps for the one now) */
+static uint32_t dm_steps(uint32_t beats) { return beats * 4u <= 16u ? beats * 4u : beats * 2u; }
+/* drum l's hits in bar b of rhythm r: a pattern's DRUMS bits (bit i, step i), in the rhythm's own TIME SIG */
 static uint32_t dm_mask(uint32_t r, uint32_t l, uint32_t b)
 {
     const dm_rhythm_t *y = &DM_RHY[r % DM_N];
     const char *s = y->lane[l % SQ_NLANE];
-    uint32_t sd = sq_dsteps(), i, m = 0;
+    uint32_t sd = dm_steps(y->beats), i, m = 0;
     if (!s || b >= y->bars)
         return 0;
     s += b * sd;
@@ -273,6 +290,11 @@ static void dmp_next_bar(void)
         dmp.next = 0xFF;
         dmp.bar = 0;
         dmp.nbar = 0;
+        if (DM_RHY[dmp.r % DM_N].beats != cfm.beats) {   /* (a rhythm of another TIME SIG: it comes with it, here at
+                                                  * the bar line; the UI takes it into cs.beats, cf_dmui.c dm_poll) */
+            cfm.beats = DM_RHY[dmp.r % DM_N].beats;
+            sq_beats = cfm.beats;
+        }
         return;
     }
     y = &DM_RHY[dmp.r % DM_N];

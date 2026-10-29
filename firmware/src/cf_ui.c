@@ -869,6 +869,17 @@ static void ui_button(uint32_t b)
         cf_message("Reset cancelled");
         return;
     }
+    if (cu.scr == SCR_DRUM) {                    /* the rhythm machine: the SEQUENCER's grammar (the owner on rc3: "когда в
+                                                  * неё заходишь не должны нажиматься кнопки других вкладок, как и в
+                                                  * секвенсоре", "гло должна быть с подсказками"): HOME and SEQ leave, the
+                                                  * other pages' buttons do nothing and are dark, GLO shows the help */
+        if (b == B_FX || b == B_ENV || b == B_LFO || b == B_ARP || b == B_EDIT || b == B_SAVE)
+            return;
+        if (b == B_GLO) {
+            squ.glo_down = cu.now ? cu.now : 1u;
+            return;
+        }
+    }
     if (sq_screen(cu.scr)) {                     /* the sequencer's own: EDIT / SEL open, SEL clears, SAVE back, GLO */
         if (cu.scr == SCR_SQED && b == B_ARP) {  /* ARP in a track: its own arpeggiator on / off (CHORDS, LAYER) */
             sq_arp_toggle();
@@ -1537,12 +1548,14 @@ static void cf_leds(void)
     static const uint8_t SCR_BTN[SCR_N] = {B_HOME, B_SCL, B_ENV, B_LFO, B_EDIT, B_GLO, B_FX, B_ARP, B_SEQ, B_SAVE,
                                            B_SEQ, B_SEQ, B_SEQ};
     const cf_chord_out_t *out = &cf_sn.out;
-    uint32_t k, blink = (cu.now / 250u) & 1u, sq = sq_screen(cu.scr);
+    uint32_t k, blink = (cu.now / 250u) & 1u, sq = sq_screen(cu.scr), rm = cu.scr == SCR_DRUM;
     /* buttons: the open screen lit, the others dim; PLAY with the beat. The sequencer: only what works there is up
      * (HOME, SEQ, GLO here; EDIT, SAVE, SEL, PLAY, REC below); the other screens' buttons do nothing there, dark */
-    for (k = 0; k < SCR_N; k++)
-        if (!sq || SCR_BTN[k] == B_HOME || SCR_BTN[k] == B_SEQ || SCR_BTN[k] == B_GLO)
+    for (k = 0; k < SCR_N; k++)                  /* (the rhythm machine: as the sequencer, cf_dmui.c) */
+        if ((!sq && !rm) || SCR_BTN[k] == B_HOME || SCR_BTN[k] == B_SEQ || SCR_BTN[k] == B_GLO)
             cf_led(k == cu.scr ? lit : dim, panel.btn[SCR_BTN[k]], 1);
+    if (rm && dm_tweaked(dm_cur()))              /* (SEL: the rhythm's own KIT and SWING back, when it has the user's) */
+        cf_led(dim, panel.btn[B_SCL], 1);
     if (sq) {                                    /* the sequencer: what works here (sq_key_led's note) */
         const sq_pat_t *p = sq_cur();
         int has = squ.pat == SQ_NPAT ? 1 : !sq_empty(p) && (p->nev || sq_drums(p));
@@ -1586,7 +1599,7 @@ static void cf_leds(void)
         if (cf_sn.sq_on)                         /* the sequencer plays elsewhere: SEQ up, as ARP is */
             cf_led(mid, panel.btn[B_SEQ], 1);
     }
-    if (cu.arp_on && !sq)                        /* the arpeggiator plays: ARP lit wherever it opens (not on the
+    if (cu.arp_on && !sq && !rm)                        /* the arpeggiator plays: ARP lit wherever it opens (not on the
                                                   * sequencer: it does nothing there) */
         cf_led(lit, panel.btn[B_ARP], 1);
     cf_led(cs.chord.octave < 0 ? (cs.chord.octave < -1 ? lit : mid) : faint, panel.btn[B_OCTDN], 1);

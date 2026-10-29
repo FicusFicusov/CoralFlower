@@ -367,14 +367,14 @@ static void sq_hear(const sq_pat_t *p, uint32_t l)
 {
     l %= SQ_NLANE;
     if (sq_empty(p))                             /* (a pattern never opened: the first kit, full level, as it starts) */
-        cf_post(CFE_SEQ, 2, l, (int)(100u << 8));
+        cf_post(CFE_SEQ, 2, l, (int)(SQ_KIT_ORDER[0] | 100u << 8));
     else
         cf_post(CFE_SEQ, 2, l, (int)(p->dkit[l] | (uint32_t)(p->dlev[l] > 100u ? 100u : p->dlev[l]) << 8));
 }
 static void sq_kit_turn(sq_pat_t *p, int d)
 {
     uint32_t l;
-    p->kit = (uint8_t)clampi(p->kit + d, 0, (int)SQ_NKIT - 1);
+    p->kit = (uint8_t)sq_kit_step(p->kit, d);   /* (X Lo-Fi first: cf_seqd.c SQ_KIT_ORDER) */
     for (l = 0; l < SQ_NLANE; l++)
         p->dkit[l] = p->kit;
     sq_touch();
@@ -385,7 +385,7 @@ static void sq_kit_turn(sq_pat_t *p, int d)
 static void sq_drum_kit_turn(sq_pat_t *p, int d)
 {
     uint32_t l = squ.lane % SQ_NLANE;
-    p->dkit[l] = (uint8_t)clampi(p->dkit[l] + d, 0, (int)SQ_NKIT - 1);
+    p->dkit[l] = (uint8_t)sq_kit_step(p->dkit[l], d);
     sq_touch();
     if (!cf_sn.sq_on)
         sq_hear(p, l);

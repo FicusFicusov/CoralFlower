@@ -3,23 +3,38 @@
  * plays) on the top lines. Included by cf_screens.c after cf_seqv.c (its flowers draw the hits). */
 
 static void draw_view(void (*view)(int));
+#ifndef DM_MARK
+#define DM_MARK 2u
+#endif
 
 /* the plaque at xr (its right edge) on the top line, as HOME's "SEQ A" always looked; returns its left edge */
 static int dm_plaque_chip(int xr, const char *b, uint32_t kind)
 {
-    int w = fb_text_w(&CF_FONT_UI, b, 1) + 12, x = xr - w;
+    int w = fb_text_w(&CF_FONT_UI, b, 1) + 12 + (dm_plaque_rhythm ? 2 : 0), x = xr - w;
     uint8_t box = kind == DMP_REC ? FL_C(FL_R_FIRE, 2) : kind == DMP_RECIN || kind == DMP_PALE ? FL_BG2 : cf_panel(2);
     uint8_t dot = kind == DMP_REC ? FL_INK : kind == DMP_RECIN ? FL_C(FL_R_FIRE, 1) : kind == DMP_PALE ? FL_BG3 :
                   C_ACC(0);
     fb_rbox(x, Y_TOP + 2, w, 11, 2, box);
-    fb_rect(x + 3, Y_TOP + 5, 4, 4, dot);
-    fb_text(&CF_FONT_UI, x + 9, Y_TOP + 1, b, kind == DMP_PALE ? FL_INK3 : FL_INK, 1);
+    if (dm_plaque_rhythm) {                      /* (a rhythm: a little drum where the square is) */
+        static const char *const G[3][7] = {
+            {".......", ".#####.", "#######", "#.#.#.#", "#.#.#.#", "#.#.#.#", ".#####."},
+            {"..###..", ".#...#.", "#.....#", "#..#..#", "#.....#", ".#...#.", "..###.."},
+            {"#.....#", ".#...#.", "..#.#..", "#######", "#.#.#.#", "#.#.#.#", "#######"}};
+        int i, j;
+        for (j = 0; j < 7; j++)
+            for (i = 0; i < 7; i++)
+                if (G[DM_MARK % 3u][j][i] == '#')
+                    fb_rect(x + 2 + i, Y_TOP + 4 + j, 1, 1, dot);
+    } else {
+        fb_rect(x + 3, Y_TOP + 5, 4, 4, dot);
+    }
+    fb_text(&CF_FONT_UI, x + (dm_plaque_rhythm ? 11 : 9), Y_TOP + 1, b, kind == DMP_PALE ? FL_INK3 : FL_INK, 1);
     return x;
 }
-/* the other pages' top line (cf_ui_draw): the plaque where the PLAY hint stands (it says what PLAY stops); 1 drawn */
+/* the other pages' top line (cf_ui_draw): the plaque where the hint stands (it says what PLAY stops); 1 drawn */
 static int dm_plaque_top(void)
 {
-    char b[16];
+    char b[24];
     uint32_t kind = dm_plaque(b, sizeof b);
     if (!dm_plaque_here(kind) || (kind == DMP_PALE && cu.scr != SCR_SEQ))
         return 0;
@@ -27,19 +42,34 @@ static int dm_plaque_top(void)
     return 1;
 }
 
-/* the METRONOME's carousel: where SEQ goes from here (the hint "Press [SEQ] again" was its place) */
+/* the METRONOME's carousel: where its SEQ goes. What to press is said first, as the hint before it ("Press [SEQ]
+ * again"; the owner on rc3: "не подписано, что нужно нажать снова seq") */
 static void dm_draw_carousel(void)
 {
-    const char *n = dm_seq_to ? "Drum machine" : "Sequencer";
+    const char *n = dm_seq_to ? "Rhythm machine" : "Sequencer";
     int w = fb_text_w(&CF_FONT_UI, n, 2), y = Y_VIEW + 64, lit = cu.now - cv_turn_ms < 220u && cv_turn_ms;
-    fb_text_halo(&CF_FONT_UI, FB_W / 2 - fb_text_w(&CF_FONT_UI, "SEQ opens", 1) / 2, Y_VIEW + 50, "SEQ opens", FL_INK2,
-                 FL_BG, 1);
+    draw_chip_text_c(Y_VIEW + 49, "Press [SEQ] again to open", FL_INK2);
     fb_text_halo(&CF_FONT_UI, FB_W / 2 - w / 2, y, n, C_ACC(0), FL_BG, 2);
     draw_chevron(FB_W / 2 - w / 2 - 14, y + 7, 0, dm_seq_to ? (lit ? C_ACC(0) : FL_INK2) : FL_BG3);
     draw_chevron(FB_W / 2 + w / 2 + 9, y + 7, 1, dm_seq_to ? FL_BG3 : lit ? C_ACC(0) : FL_INK2);
     fb_rect(FB_W / 2 - 6, Y_VIEW + 92, 4, 4, dm_seq_to ? FL_INK3 : C_ACC(1));
     fb_rect(FB_W / 2 + 2, Y_VIEW + 92, 4, 4, dm_seq_to ? C_ACC(1) : FL_INK3);
-    draw_chip_text_c(Y_VIEW + 101, "[SELECT] Sequencer / Drum machine", FL_INK3);
+    draw_chip_text_c(Y_VIEW + 101, "[SELECT] Sequencer / Rhythm machine", FL_INK3);
+}
+
+/* GLO's help on the rhythm machine, as the SEQUENCER's (cf_seqv.c draw_sq_help): buttons and gestures only, the knob
+ * cells name the knobs */
+static void dm_draw_help(void)
+{
+    static const char *const L[] = {"[SELECT] a rhythm", "keys: chords, as on HOME", "[SEL] its own KIT, SWING back",
+                                    "[REC] a pattern under it", "hold [REC]: undo last change",
+                                    "[SEQ] home  [GLO] close", 0};
+    int n = 0, i;
+    while (L[n])
+        n++;
+    draw_panel(10, Y_VIEW + 4, 220, 10 + n * 14);
+    for (i = 0; i < n; i++)
+        draw_chip_text(18, Y_VIEW + 9 + i * 14, L[i], FL_INK);
 }
 
 /* a drum's name in the rhythm's kit (the hand drums' kit: congas and a clave for the toms and the rim), as the
@@ -58,9 +88,10 @@ static const char *dm_lane_label(uint32_t l, uint32_t kit)
  * it waits for the bar line; a dot after it: the user's KIT or SWING on it (SEL takes them back) */
 static void view_drum(int x0)
 {
-    uint32_t r = dm_cur(), sd = sq_dsteps(), nb, steps, l, b, i, nl = 0;
+    uint32_t r = dm_cur(), sd, nb, steps, l, b, i, nl = 0;
     const dm_rhythm_t *y = &DM_RHY[r % DM_N];
     int gx = x0 + 34, gw = 216 - 34, row, yt = VIEW_Y - 2, k = 0, play = dm_plays(r);
+    sd = dm_steps(y->beats);                     /* (its own TIME SIG: one picked from another shows its bars) */
     nb = y->bars ? y->bars : 1u;
     steps = nb * sd;
     for (l = 0; l < SQ_NLANE; l++)
@@ -100,8 +131,9 @@ static void view_drum(int x0)
 }
 static void draw_drum(void)
 {
-    uint32_t r = dm_cur(), beats = dm_beats(), n = dm_count(beats), p = dm_place_now();
+    uint32_t r = dm_cur(), n = DM_N, p = r;      /* (one list: its place among all the rhythms) */
     const dm_rhythm_t *y = &DM_RHY[r % DM_N];
+    uint32_t beats = y->beats;                   /* (its own TIME SIG) */
     int wait = cf_sn.dm_on && cf_sn.dm_next == r && cf_sn.dm_r != r, w, lit = cu.now - cv_turn_ms < 220u && cv_turn_ms;
     char t[40], a[8];
     flora_render(&flo, &fl_cv);
@@ -115,24 +147,28 @@ static void draw_drum(void)
     draw_chevron(FB_W / 2 - w / 2 - 16, HEAD_Y + 7, 0, p ? (lit && cv_turn_dir < 0 ? C_ACC(0) : FL_INK2) : FL_BG3);
     draw_chevron(FB_W / 2 + w / 2 + 12, HEAD_Y + 7, 1,
                  p + 1u < n ? (lit && cv_turn_dir > 0 ? C_ACC(0) : FL_INK2) : FL_BG3);
-    str_cpy(t, "rhythm ", sizeof t);
-    kint(t + str_len(t), (int)p + 1, 0);
+    t[0] = 0;
+    kint(t, (int)p + 1, 0);
     str_cpy(t + str_len(t), " of ", sizeof t - str_len(t));
     kint(a, (int)n, 0);
     str_cpy(t + str_len(t), a, sizeof t - str_len(t));
-    str_cpy(t + str_len(t), "   ", sizeof t - str_len(t));
+    str_cpy(t + str_len(t), "  ", sizeof t - str_len(t));
     kint(a, (int)beats, 0);
     str_cpy(t + str_len(t), a, sizeof t - str_len(t));
-    str_cpy(t + str_len(t), beats == 6u ? "/8   " : "/4   ", sizeof t - str_len(t));
+    str_cpy(t + str_len(t), beats == 6u ? "/8  " : "/4  ", sizeof t - str_len(t));
     kint(a, y->bars, 0);
     str_cpy(t + str_len(t), a, sizeof t - str_len(t));
-    str_cpy(t + str_len(t), y->bars > 1u ? " bars" : " bar", sizeof t - str_len(t));
+    str_cpy(t + str_len(t), y->bars > 1u ? " bars  ~" : " bar  ~", sizeof t - str_len(t));
+    kint(a, y->bpm, 0);                          /* (the tempo its style lives at: shown, TEMPO stays the user's) */
+    str_cpy(t + str_len(t), a, sizeof t - str_len(t));
+    str_cpy(t + str_len(t), " BPM", sizeof t - str_len(t));
     fb_text_halo(&CF_FONT_UI, FB_W / 2 - fb_text_w(&CF_FONT_UI, t, 1) / 2, HEAD_LINE, t, C_ACC(1), FL_BG, 1);
     draw_view(view_drum);
     draw_chip_text_c(Y_VIEW + H_VIEW - 14, "[SELECT] rhythm", FL_INK3);
+    if (squ.help || squ.help_hold)
+        dm_draw_help();
     {
-        static const char *const H[2] = {"PLAY", "start"};
-        static const char *const H2[2] = {"PLAY", "stop"};
-        draw_hints(cf_sn.dm_on || cf_sn.sq_on || cf_sn.running ? H2 : H, 1);
+        static const char *const H[2] = {"GLO", "help"};   /* (as on the SEQUENCER) */
+        draw_hints(H, 1);
     }
 }

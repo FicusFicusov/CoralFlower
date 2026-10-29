@@ -133,6 +133,19 @@ static const sq_kit_t SQ_KITS[] = {
     {"X Break", {0, 64, 64, 64, 64, 100, 0, 0}, 6},
 };
 #define SQ_NKIT ((uint32_t)(sizeof SQ_KITS / sizeof SQ_KITS[0]))
+/* the order the kits are picked in, on every knob that picks one (the owner, 2026-10-29: "сначала с x идут киты
+ * новые, потом старые. Первым должен идти x lofi. Везде и в секвенсоре тоже"): the X kits, X Lo-Fi first, then the
+ * eight before them. Only the order the knob walks: a pattern keeps its kit's number, as stored since 0.3 */
+static const uint8_t SQ_KIT_ORDER[] = {10, 8, 9, 11, 12, 13, 0, 1, 2, 3, 4, 5, 6, 7};
+typedef char sq_kit_order_all[sizeof SQ_KIT_ORDER == sizeof SQ_KITS / sizeof SQ_KITS[0] ? 1 : -1];
+static uint32_t sq_kit_step(uint32_t k, int d)  /* kit k, d places on in that order (at an end: it stays) */
+{
+    int i, n = (int)SQ_NKIT;
+    for (i = 0; i < n && SQ_KIT_ORDER[i] != k; i++)
+        ;
+    i = i < n ? i + d : 0;
+    return SQ_KIT_ORDER[i < 0 ? 0 : i >= n ? n - 1 : i];
+}
 
 /* the steps a beat takes (K2: quarters, 8ths, 8th triplets, 16ths, 16th triplets, 32nds), a bar's at most SQ_MAXST */
 static const uint8_t SQ_KS[] = {1, 2, 3, 4, 6, 8};
@@ -175,14 +188,15 @@ static void sq_fresh(sq_pat_t *p, uint32_t beats)
                                                   * сразу 4, долго ждать приходится или постоянно переключать кнопку
                                                   * PLAY", the owner, 2026-10-20) */
     p->nev = 0;
-    p->kit = 0;
+    p->kit = SQ_KIT_ORDER[0];                    /* (the first in the kits' list, X Lo-Fi: the owner, rc4. Only a new
+                                                  * pattern: one written keeps its kit) */
     p->swing = 0;
     p->arp = 0;
     p->mute = 0;
     for (l = 0; l < SQ_NLANE; l++)
         p->dlev[l] = 100;
     for (l = 0; l < SQ_NLANE; l++)
-        p->dkit[l] = 0;
+        p->dkit[l] = SQ_KIT_ORDER[0];
     for (b = 0; b < SQ_BARS; b++) {
         p->steps[SQ_CHORDS][b] = p->steps[SQ_BASS][b] = p->steps[SQ_LAYER][b] = SQ_KDEF;
         p->steps[SQ_DRUMS][b] = 4;                   /* (not read: sq_dsteps) */

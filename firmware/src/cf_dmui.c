@@ -19,17 +19,23 @@
 /* what the drum machine keeps: an object of its own, the old looper's (storage.c OBJ_CFLOOP, a log as the settings':
  * a change written as what changed, no erase while anything sounds). 0.5 and older look there only for a loop of
  * theirs (cf_loop.c CFL_MAGIC): this record is passed over, a downgrade keeps everything else */
-#define DM_MAGIC 0x31444643u                     /* "CFD1" */
-#define DM_NMAX 32u
+#define DM_MAGIC 0x32444643u                     /* "CFD2" (rc4: kept by each rhythm's id) */
+#define DM_MAGIC1 0x31444643u                    /* "CFD1": rc3's, kept by the place in its list (read in: dm_from1) */
+#define DM_NMAX 64u                              /* rhythm ids 0 .. 63 */
 typedef struct {
     uint32_t magic;
-    uint8_t kit[DM_NMAX], swing[DM_NMAX];        /* each rhythm's KIT and SWING the user set, 0xFF its own */
-    uint8_t pos[8];                              /* the rhythm stood on for each TIME SIG (cs.beats): its place */
+    uint8_t kit[DM_NMAX], swing[DM_NMAX];        /* each rhythm's KIT and SWING the user set (by its id), 0xFF its own */
+    uint8_t pos[8];                              /* the rhythm stood on for each TIME SIG (cs.beats): its id, 0xFF none */
     uint8_t last;                                /* 1: a rhythm was chosen last (PLAY on HOME plays it) */
     uint8_t rsv[3];
     uint32_t check;                              /* FNV-1a over what comes before */
 } dm_rec_t;
-typedef char dm_fits[DM_N <= DM_NMAX && sizeof(dm_rec_t) <= 224u ? 1 : -1];
+typedef struct {                                 /* rc3's (0.6-rc3 only, a test build) */
+    uint32_t magic;
+    uint8_t kit[32], swing[32], pos[8], last, rsv[3];
+    uint32_t check;
+} dm_rec1_t;
+typedef char dm_fits[sizeof(dm_rec_t) <= 224u && sizeof(dm_rec1_t) == 84u ? 1 : -1];
 static dm_rec_t dmr;
 static uint32_t dm_saved, dm_seen, dm_changed_ms, dm_retry_ms;
 static uint8_t dm_tidy, dm_store;
@@ -42,13 +48,30 @@ static void dm_defaults(void)
     memset(&dmr, 0, sizeof dmr);
     memset(dmr.kit, 0xFF, sizeof dmr.kit);
     memset(dmr.swing, 0xFF, sizeof dmr.swing);
+    memset(dmr.pos, 0xFF, sizeof dmr.pos);
     dmr.magic = DM_MAGIC;
+}
+/* rc3's record: its rhythms had the ids 0 .. 28 in its list's order (cf_drum.c kept them), so its tweaks are by id
+ * already; the rhythm stood on was a place in a TIME SIG's list: 4/4's 0 .. 19, then two each in 3/4, 2/4, 5/4, 6/8
+ * from 20, 7/4's 28. A rhythm rc4 no longer has: its tweaks wait unused, a place on it falls back (dm_cur) */
+static void dm_from1(const dm_rec1_t *o)
+{
+    static const uint8_t BASE[8] = {0xFF, 0xFF, 22, 20, 0, 24, 26, 28};
+    uint32_t i;
+    for (i = 0; i < 32u; i++) {
+        dmr.kit[i] = o->kit[i];
+        dmr.swing[i] = o->swing[i];
+    }
+    for (i = 2; i < 8u; i++)
+        dmr.pos[i] = BASE[i] != 0xFFu && o->pos[i] < 20u ? (uint8_t)(BASE[i] + o->pos[i]) : 0xFFu;
+    dmr.last = o->last;
 }
 /* power-on, after sq_from_loop (cf_ui.c cf_ui_init): a loop of 0.3.1 still there (no free pattern for it yet) keeps
  * the object; then the drum machine's settings stay in RAM till the next power-on */
 static void dm_load(void)
 {
     static dm_rec_t r;
+    static dm_rec1_t r1;
     st_hdr_t h;
     uint32_t i, m = 0;
     dm_defaults();
@@ -64,10 +87,17 @@ static void dm_load(void)
     st_loop_log = 1;
     dm_store = 1;
     st_check_blank(OBJ_CFLOOP);
-    if (st_load(OBJ_CFLOOP, &r, sizeof r) != (int)sizeof r || r.magic != DM_MAGIC ||
-        r.check != cfs_fnv(&r, (uint32_t)__builtin_offsetof(dm_rec_t, check)))
+    r.magic = 0;
+    if (st_load(OBJ_CFLOOP, &r, sizeof r) == (int)sizeof r && r.magic == DM_MAGIC &&
+        r.check == cfs_fnv(&r, (uint32_t)__builtin_offsetof(dm_rec_t, check))) {
+        dmr = r;
+    } else if (st_load(OBJ_CFLOOP, &r1, sizeof r1) == (int)sizeof r1 && r1.magic == DM_MAGIC1 &&
+               r1.check == cfs_fnv(&r1, (uint32_t)__builtin_offsetof(dm_rec1_t, check))) {
+        r.magic = 0;
+        dm_from1(&r1);                           /* (written as rc4's at the first quiet moment) */
+    } else {
         return;
-    dmr = r;
+    }
     for (i = 0; i < DM_NMAX; i++) {              /* (a value out of range: the rhythm's own) */
         if (dmr.kit[i] != 0xFFu && dmr.kit[i] >= SQ_NKIT)
             dmr.kit[i] = 0xFF;
@@ -76,6 +106,8 @@ static void dm_load(void)
     }
     dmr.last = dmr.last == 1u;
     dm_saved = dm_seen = dm_check();
+    if (r.magic != DM_MAGIC)                     /* (rc3's: rc4's written once, when it is quiet) */
+        dm_saved = 0;
 }
 /* every frame: a change written half a second after it, as what changed (no erase) while anything sounds; the log
  * tidied in a quiet moment (cf_settings.c cfps_poll) */
@@ -126,27 +158,38 @@ static void dm_flush(void)                       /* a backup's LIST: what is not
     }
 }
 
-static int dm_rec_ok(const void *raw, uint32_t len)   /* a backup's record of the drum machine (cf_backup.c) */
+static int dm_rec_ok(const void *raw, uint32_t len)   /* a backup's record of the rhythm machine (cf_backup.c), rc3's too */
 {
     const dm_rec_t *r = (const dm_rec_t *)raw;
-    return len == sizeof(dm_rec_t) && r->magic == DM_MAGIC &&
-           r->check == cfs_fnv(r, (uint32_t)__builtin_offsetof(dm_rec_t, check));
+    const dm_rec1_t *r1 = (const dm_rec1_t *)raw;
+    return (len == sizeof(dm_rec_t) && r->magic == DM_MAGIC &&
+            r->check == cfs_fnv(r, (uint32_t)__builtin_offsetof(dm_rec_t, check))) ||
+           (len == sizeof(dm_rec1_t) && r1->magic == DM_MAGIC1 &&
+            r1->check == cfs_fnv(r1, (uint32_t)__builtin_offsetof(dm_rec1_t, check)));
 }
 
 /* ----------------------------------------------------------- the rhythms --- */
 static uint32_t dm_beats(void) { return cs.beats >= 2u && cs.beats <= 7u ? cs.beats : 4u; }
-static uint32_t dm_place_now(void)               /* the place stood on in this TIME SIG's list */
+/* the rhythm on screen: one picked in another TIME SIG while a pattern plays (dm_view: it waits for PLAY to switch
+ * TIME SIG), else the one stood on in this TIME SIG (by its id); one no longer there, or none yet: the first */
+static uint8_t dm_view = 0xFF;
+static uint32_t dm_cur(void)
 {
-    uint32_t b = dm_beats(), n = dm_count(b);
-    return dmr.pos[b] < n ? dmr.pos[b] : 0u;
+    uint32_t b = dm_beats(), i;
+    if (dm_view < DM_N)
+        return dm_view;
+    for (i = 0; i < DM_N; i++)
+        if (DM_RHY[i].beats == b && DM_RHY[i].id == dmr.pos[b])
+            return i;
+    return dm_nth(b, 0);
 }
-static uint32_t dm_cur(void) { return dm_nth(dm_beats(), dm_place_now()); }   /* the rhythm on screen */
-static uint32_t dm_kit(uint32_t r) { return dmr.kit[r % DM_NMAX] != 0xFFu ? dmr.kit[r % DM_NMAX] : DM_RHY[r % DM_N].kit; }
+static uint32_t dm_uid(uint32_t r) { return DM_RHY[r % DM_N].id % DM_NMAX; }   /* (the user's are kept by the id) */
+static uint32_t dm_kit(uint32_t r) { return dmr.kit[dm_uid(r)] != 0xFFu ? dmr.kit[dm_uid(r)] : DM_RHY[r % DM_N].kit; }
 static uint32_t dm_swing(uint32_t r)
 {
-    return dmr.swing[r % DM_NMAX] != 0xFFu ? dmr.swing[r % DM_NMAX] : DM_RHY[r % DM_N].swing;
+    return dmr.swing[dm_uid(r)] != 0xFFu ? dmr.swing[dm_uid(r)] : DM_RHY[r % DM_N].swing;
 }
-static int dm_tweaked(uint32_t r) { return dmr.kit[r % DM_NMAX] != 0xFFu || dmr.swing[r % DM_NMAX] != 0xFFu; }
+static int dm_tweaked(uint32_t r) { return dmr.kit[dm_uid(r)] != 0xFFu || dmr.swing[dm_uid(r)] != 0xFFu; }
 static int16_t dm_v(uint32_t r) { return (int16_t)(dm_kit(r) | dm_swing(r) << 8); }
 static void dm_play(uint32_t r) { cf_post(CFE_DRUM, 1, (uint8_t)r, dm_v(r)); }
 static int dm_plays(uint32_t r) { return cf_sn.dm_on && cf_sn.dm_r == r; }
@@ -193,10 +236,10 @@ static void dm_knob_info(int k, cf_knob_t *o)
     uint32_t r = dm_cur(), s = dm_swing(r);
     switch (k) {
     case 0: kfmt(o->name, 12, "KIT"); kfmt(o->val, 14, SQ_KITS[dm_kit(r) % SQ_NKIT].name); break;
-    case 1:
-        kfmt(o->name, 12, "LEVEL");
-        kint(o->val, cs.level_drums * 100 / 127, "%");
-        o->bar = (int16_t)(cs.level_drums * 255 / 127);
+    case 1:                                      /* (the drums' VOLUME, the Drums row's K1: one name for one setting) */
+        kfmt(o->name, 12, "VOLUME");
+        kint(o->val, (int)(cs.level_drums * 100u / 127u), "%");
+        o->bar = (int16_t)(cs.level_drums * 255u / 127u);
         break;
     case 2:
         kfmt(o->name, 12, "TEMPO");
@@ -218,7 +261,7 @@ static void dm_knob_info(int k, cf_knob_t *o)
 static void dm_knob_turn(int k, int d)
 {
     uint32_t r = dm_cur();
-    if (k == 1) {                                /* (LEVEL: the drums' VOLUME, the SEQUENCER's K1 on Drums) */
+    if (k == 1) {                                /* (VOLUME: the drums', the SEQUENCER's K1 on Drums) */
         sq_level_set(SQ_DRUMS, cs.level_drums + d * 2);
         return;
     }
@@ -231,30 +274,62 @@ static void dm_knob_turn(int k, int d)
     }
     if (sqk.on)
         return;
-    if (k == 0) {
-        int v = clampi((int)dm_kit(r) + d, 0, (int)SQ_NKIT - 1);
-        dmr.kit[r] = (uint8_t)(v == DM_RHY[r].kit ? 0xFFu : (uint32_t)v);
+    if (k == 0) {                                /* (in the kits' list order: X Lo-Fi first, sq_kit_step) */
+        uint32_t v = sq_kit_step(dm_kit(r), d);
+        dmr.kit[dm_uid(r)] = (uint8_t)(v == DM_RHY[r].kit ? 0xFFu : v);
     } else {
         int v = clampi((int)dm_swing(r) + d * 5, 0, 100);
-        dmr.swing[r] = (uint8_t)(v == DM_RHY[r].swing ? 0xFFu : (uint32_t)v);
+        dmr.swing[dm_uid(r)] = (uint8_t)(v == DM_RHY[r].swing ? 0xFFu : (uint32_t)v);
     }
     if (dm_plays(r))
         cf_post(CFE_DRUM, 2, 0, dm_v(r));
 }
-static void dm_select(int d)                     /* SELECT: the rhythm; one playing: the next at the bar line */
+/* TIME SIG to rhythm r's, said (the owner's pick G1: one list of every rhythm, its TIME SIG under its name; picking one
+ * of another TIME SIG switches TIME SIG, with a message). The patterns play in it too then, as after K4 on METRONOME */
+static void dm_sig_for(uint32_t r)
 {
-    uint32_t b = dm_beats(), n = dm_count(b), k = dm_place_now();
+    uint32_t b = DM_RHY[r % DM_N].beats;
+    char m[16];
+    if (b == cs.beats)
+        return;
+    cs.beats = (uint8_t)b;
+    cf_send_metro();
+    cf_send_config();
+    str_cpy(m, "TIME SIG ", sizeof m);
+    kint(m + 9, (int)b, 0);
+    str_cpy(m + str_len(m), b == 6u ? "/8" : "/4", sizeof m - str_len(m));
+    cf_message(m);
+}
+/* SELECT: the rhythm, in one list (4/4's first, then the other TIME SIGs'). One playing: the next comes in at the bar
+ * line, its TIME SIG with it. A pattern or the song playing: it only shows the rhythm; TIME SIG switches when PLAY
+ * starts it. Nothing playing: TIME SIG switches at once */
+static void dm_select(int d)
+{
+    uint32_t i = dm_cur();
     int v;
-    if (sqk.on || !n)
+    const dm_rhythm_t *y;
+    if (sqk.on)
         return;
-    v = clampi((int)k + d, 0, (int)n - 1);
-    if ((uint32_t)v == k)
+    v = clampi((int)i + d, 0, (int)DM_N - 1);
+    if ((uint32_t)v == i)
         return;
-    dmr.pos[b] = (uint8_t)v;
+    y = &DM_RHY[v];
+    dmr.pos[y->beats & 7u] = y->id;              /* (kept by its id, for its TIME SIG) */
     dmr.last = 1;
     cv_turned(d);
-    if (cf_sn.dm_on)
-        dm_play(dm_cur());
+    if (y->beats == cs.beats) {
+        dm_view = 0xFF;
+        if (cf_sn.dm_on)
+            dm_play((uint32_t)v);
+    } else if (cf_sn.dm_on) {
+        dm_view = (uint8_t)v;                    /* (it waits for the bar line: dm_poll takes its TIME SIG then) */
+        dm_play((uint32_t)v);
+    } else if (cf_sn.sq_on) {
+        dm_view = (uint8_t)v;
+    } else {
+        dm_sig_for((uint32_t)v);
+        dm_view = 0xFF;
+    }
 }
 static void dm_sel(void)                         /* SEL: the rhythm's own KIT and SWING back */
 {
@@ -262,7 +337,7 @@ static void dm_sel(void)                         /* SEL: the rhythm's own KIT an
     char m[32];
     if (sqk.on || !dm_tweaked(r))
         return;
-    dmr.kit[r] = dmr.swing[r] = 0xFF;
+    dmr.kit[dm_uid(r)] = dmr.swing[dm_uid(r)] = 0xFF;
     str_cpy(m, DM_RHY[r].name, sizeof m);
     str_cpy(m + str_len(m), ": its own KIT, SWING", sizeof m - str_len(m));
     cf_message(m);
@@ -280,6 +355,7 @@ static void dm_page_play(void)                   /* PLAY in the drum machine */
     if (dm_stop_all())
         return;
     dmr.last = 1;
+    dm_sig_for(dm_cur());                        /* (picked in another TIME SIG while a pattern played: now) */
     dm_play(dm_cur());
 }
 
@@ -290,6 +366,7 @@ static int dm_home_play(void)
 {
     if (!dmr.last)
         return 0;
+    dm_sig_for(dm_cur());
     dm_play(dm_cur());
     return 1;
 }
@@ -306,6 +383,7 @@ static int dm_home_rec(void)
     }
     if (cf_sn.running || !dmr.last)
         return 0;
+    dm_sig_for(dm_cur());
     sq_home_rec_r(dm_cur());
     return 1;
 }
@@ -315,6 +393,8 @@ static void dm_page_rec(void)                    /* REC in the drum machine: alw
         sq_home_rec();                           /* (a take under way: REC ends it, as everywhere) */
         return;
     }
+    if (!cf_sn.dm_on)
+        dm_sig_for(dm_cur());                    /* (a pattern or the song stops for the count-in: TIME SIG first) */
     sq_home_rec_r(cf_sn.dm_on ? cf_sn.dm_r : dm_cur());
 }
 
@@ -332,6 +412,16 @@ static void dm_poll(void)
                                    (cu.scr == SCR_SQ && squ.pat == SQ_SONGPG && sq_st.song.n)))
         dmr.last = 0;
     was = cu.scr;
+    if (cf_sn.dm_on && DM_RHY[cf_sn.dm_r % DM_N].beats != cs.beats)
+        dm_sig_for(cf_sn.dm_r);                  /* (a rhythm of another TIME SIG came in at the bar line: cf_drum.c) */
+    {
+        static uint8_t seen;                     /* (TIME SIG changed, by a rhythm or on METRONOME: the list stands on
+                                                  * that TIME SIG's rhythm) */
+        if (cs.beats != seen) {
+            dm_view = 0xFF;
+            seen = cs.beats;
+        }
+    }
     dm_hold_poll();
     dm_poll_store(cu.now);
 }
@@ -340,9 +430,13 @@ static void dm_poll(void)
 /* what plays now, as the plaque says it (HOME's top line, and the METRONOME's, the SEQUENCER's, the drum machine's):
  * its kind and words; DMP_PALE: nothing plays, what PLAY would start */
 enum { DMP_NONE, DMP_SEQ, DMP_DRUM, DMP_REC, DMP_RECIN, DMP_PALE };
+/* a rhythm on the plaque: its name after a little drum (the owner's pick, rc4: "значок"; "RHYTHM Breakcore" left HOME's
+ * chord sound one letter) */
+static uint8_t dm_plaque_rhythm;                 /* (the plaque says a rhythm: cf_dmv.c draws the drum) */
 static uint32_t dm_plaque(char *b, uint32_t n)
 {
     b[0] = 0;
+    dm_plaque_rhythm = 0;
     if (sqk.on && sqk.rolled) {                  /* a take from HOME or the drum machine: its bar of 8 */
         str_cpy(b, "REC ", n);
         kint(b + 4, (int)(sqk.nbar % SQ_BARS) + 1, "/8");
@@ -366,8 +460,9 @@ static uint32_t dm_plaque(char *b, uint32_t n)
         return DMP_REC;
     }
     if (cf_sn.dm_on) {
-        str_cpy(b, "DRUM ", n);
-        str_cpy(b + 5, DM_RHY[cf_sn.dm_r % DM_N].name, n - 5u);
+        str_cpy(b, "", n);
+        str_cpy(b + str_len(b), DM_RHY[cf_sn.dm_r % DM_N].name, n - str_len(b));
+        dm_plaque_rhythm = 1;
         return DMP_DRUM;
     }
     if (cf_sn.sq_on) {
@@ -377,8 +472,9 @@ static uint32_t dm_plaque(char *b, uint32_t n)
         return DMP_SEQ;
     }
     if (dmr.last) {
-        str_cpy(b, "DRUM ", n);
-        str_cpy(b + 5, DM_RHY[dm_cur()].name, n - 5u);
+        str_cpy(b, "", n);
+        str_cpy(b + str_len(b), DM_RHY[dm_cur()].name, n - str_len(b));
+        dm_plaque_rhythm = 1;
     } else if (sqk.song && sq_st.song.n) {
         str_cpy(b, "SONG", n);
     } else if (sqk.last < SQ_NPAT && sq_has(sqk.last)) {

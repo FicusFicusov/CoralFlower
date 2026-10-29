@@ -543,7 +543,7 @@ static void cf_ui_draw(void)
             {                                    /* the plaque: what plays (a pattern, the song, a rhythm, a take: its
                                                   * count-in, then its bar of 8); nothing playing, pale, what PLAY
                                                   * would start (0.6, the owner: "Показывать") */
-                char b[16];
+                char b[24];
                 uint32_t kind = dm_plaque(b, sizeof b);
                 if (kind != DMP_NONE)
                     x = dm_plaque_chip(x, b, kind) - 4;
