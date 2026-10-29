@@ -743,6 +743,11 @@ static void sq_carry_turn(int d)                  /* SELECT in a track: the fram
         sq_undo_poll();
         squ.mv = 1;
         squ.mvi = (uint8_t)i;
+        squ.bar = p->ev[i].bar;                  /* (the frame on the chord's line, not its start: the frame goes to
+                                                  * its start first, so a click moves it one step, not to the frame.
+                                                  * rc4 snapped the chord's start to the frame, "не получилось", the
+                                                  * owner after a take, the frame on a held chord's line) */
+        squ.step = (uint8_t)(p->ev[i].pos / SQ_SU(p));
         sq_touch();
     }
     sq_select(d);
@@ -763,8 +768,18 @@ static void sq_edit_poll(void)                   /* every frame: EDIT let go in 
     p = sq_cur();
     if (squ.mv && squ.mvi < p->nev) {            /* (it lands: as written there) */
         sq_ev_t v = p->ev[squ.mvi];
+        uint32_t i, vs, vr = 0xFFFFFFFFu;
         int at;
         sq_del(p, squ.mvi);
+        vs = sq_ev_start(p, &v);
+        for (i = 0; i < p->nev; i++)             /* (its line ends where the next chord begins: a chord under its line
+                                                  * stays; only one where it lands is replaced. rc4 put it whole, and
+                                                  * the next chord of a take, held to it, went) */
+            if (p->ev[i].trk == v.trk && sq_ev_on(&p->ev[i]) && sq_ev_start(p, &p->ev[i]) > vs &&
+                sq_ev_start(p, &p->ev[i]) - vs < vr)
+                vr = sq_ev_start(p, &p->ev[i]) - vs;
+        if (v.len > vr)
+            v.len = (uint16_t)vr;
         at = sq_put(p, &v);
         if (at >= 0 && p->ev[at].len > sq_room(p, &p->ev[at]))
             p->ev[at].len = (uint16_t)sq_room(p, &p->ev[at]);
