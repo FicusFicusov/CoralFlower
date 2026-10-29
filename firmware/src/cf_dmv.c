@@ -142,11 +142,13 @@ static void draw_drum(void)
     fb_veil(0, Y_VIEW, FB_W, H_VIEW, FL_BG);    /* (the plant faint: the picture leads) */
     w = fb_text_w(&CF_FONT_UI, y->name, 2);
     if (!wait || (cu.now / 250u) & 1u)           /* (waiting for the bar line: it blinks) */
-        fb_text_halo(&CF_FONT_UI, FB_W / 2 - w / 2, HEAD_Y, y->name, FL_INK, FL_BG, 2);
+        fb_text_halo(&CF_FONT_UI, FB_W / 2 - w / 2, HEAD_Y, y->name, C_ACC(0), FL_BG, 2);
     if (dm_tweaked(r))                           /* (the user's KIT or SWING on it) */
-        fb_rect(FB_W / 2 + w / 2 + 4, HEAD_Y + 14, 4, 4, C_ACC(0));
-    draw_chevron(FB_W / 2 - w / 2 - 16, HEAD_Y + 7, 0, p ? (lit && cv_turn_dir < 0 ? C_ACC(0) : FL_INK2) : FL_BG3);
-    draw_chevron(FB_W / 2 + w / 2 + 12, HEAD_Y + 7, 1,
+        fb_rect(FB_W / 2 + w / 2 + 3, HEAD_Y + 14, 4, 4, C_ACC(0));
+    /* (one carousel with METRONOME's, as the design system's component: the name in the accent, the arrows 9 px from
+     * it; rc4 had it white with arrows 11 and 12 px off, the owner: "Выровнять в rc5") */
+    draw_chevron(FB_W / 2 - w / 2 - 14, HEAD_Y + 7, 0, p ? (lit && cv_turn_dir < 0 ? C_ACC(0) : FL_INK2) : FL_BG3);
+    draw_chevron(FB_W / 2 + w / 2 + 9, HEAD_Y + 7, 1,
                  p + 1u < n ? (lit && cv_turn_dir > 0 ? C_ACC(0) : FL_INK2) : FL_BG3);
     t[0] = 0;
     kint(t, (int)p + 1, 0);
