@@ -1,6 +1,19 @@
 {
  "releases": [
   {
+   "version": "0.6.1",
+   "tag": "v0.6.1",
+   "sha256": "de41c96a0979927d921a99064aca1b43cb871a5ab10736342abf22cab2845a22",
+   "pkg": "coralflower-0.6.1.fwsc",
+   "date": "2026-10-30",
+   "title": "Every chord in the take",
+   "notes": [
+    "A chord you play right after REC always goes into the take.",
+    "On the rhythm machine, REC counts one bar in, then the take and the rhythm start together.",
+    "Your patterns, sounds and settings stay as they are."
+   ]
+  },
+  {
    "version": "0.6",
    "tag": "v0.6",
    "sha256": "8cdc5ba6e0cce5a5c1e3a526d87ce0e55e02a9ae85bf2b4cb207dbb0dd461236",
