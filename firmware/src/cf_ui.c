@@ -657,8 +657,11 @@ static void cv_turned(int d)
 
 static void ui_select(int d)                     /* SELECT: the bass sound, or a screen's page */
 {
-    if (cu.scr == SCR_DRUM) {                    /* the drum machine: the rhythm */
-        dm_select(d);
+    if (cu.scr == SCR_DRUM) {                    /* the drum machine: the rhythm (OCT+ held: the pattern it goes into) */
+        if (dmc.down)
+            dm_copy_turn(d);
+        else
+            dm_select(d);
         return;
     }
     if (cu.scr == SCR_SEQ) {                     /* the METRONOME: where its SEQ goes, the SEQUENCER or the drum machine
@@ -891,6 +894,11 @@ static void ui_button(uint32_t b)
                                                   * other pages' buttons do nothing and are dark, GLO shows the help */
         if (b == B_FX || b == B_ENV || b == B_LFO || b == B_ARP || b == B_SAVE)
             return;
+        if ((b == B_PLAY || b == B_REC) && dm_copying()) {   /* (OCT+ held, a pattern picked: called off, as the EDIT
+                                                  * hold is) */
+            dmc.off = 1;
+            return;
+        }
         if (b == B_EDIT) {                       /* (EDIT opens, as in the SEQUENCER: the rhythm as a new pattern, its
                                                   * DRUMS; rc5) */
             dm_make_pattern();
@@ -1016,12 +1024,18 @@ static void ui_button(uint32_t b)
             squ.ocpy = 0;
             break;
         }
+        if (b == B_OCTUP && cu.scr == SCR_DRUM && !((fm1_in.buttons >> panel.btn[B_OCTDN]) & 1u)) {
+            dm_copy_press();                     /* (the rhythm page: held with SELECT turned it copies the rhythm into a
+                                                  * pattern; a tap is OCT+ on its release, cf_dmui.c dm_copy_poll) */
+            break;
+        }
         if ((fm1_in.buttons & ((1u << panel.btn[B_OCTDN]) | (1u << panel.btn[B_OCTUP]))) ==
             ((1u << panel.btn[B_OCTDN]) | (1u << panel.btn[B_OCTUP]))) {
             cs.chord.octave = 0;                 /* both: back to 0, and every note let go */
             squ.oct_down = 0;                    /* (the OCT+ waiting for its release on the sequencer's screens: not
                                                   * after this; it left the octave at +1) */
             squ.ocpy = 0;
+            dm_copy_cancel();                    /* (.. nor the rhythm page's) */
             cf_post(CFE_PANIC, 0, 0, 0);
         } else {
             cs.chord.octave = (int8_t)clampi(cs.chord.octave + (b == B_OCTUP ? 1 : -1), -3, 3);

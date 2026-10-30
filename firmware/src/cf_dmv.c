@@ -60,7 +60,8 @@ static void dm_draw_help(void)
 {
     /* (rc5, the owner on rc4: "keys: chords, as on HOME" and "[SEQ] home" "вообще не нужно", SEL "просто resets ритм";
      * [SELECT] stays: the page's caption names EDIT now) */
-    static const char *const L[] = {"[SELECT] a rhythm", "[SEL] reset the rhythm", "[EDIT] make it a pattern",
+    static const char *const L[] = {"[SELECT] a rhythm", "[SEL] reset the rhythm", "[EDIT] new pattern",
+                                    "hold [OCT+], turn [SELECT]:", "   copy into a pattern",   /* (0.7) */
                                     "[REC] record a pattern with it", "hold [REC]: undo last change", "[GLO] close", 0};
     int n = 0, i;
     while (L[n])
@@ -131,6 +132,32 @@ static void draw_drum(void)
     /* the head as every section's (rc6, the designer's R1, the owner's pick): the rhythm's name white at the left, the
      * drum at the right; under it its place as a counter "‹ 1/27 ›" with the pager's arrows, then its TIME SIG, bars and
      * tempo. The name blinks while it waits for the bar line; a dot after it: the user's KIT or SWING */
+    if (dm_copying()) {                          /* OCT+ held, SELECT turned: the pattern it goes into (0.7), the head
+                                                  * line a row of the patterns in the tabs' grammar: the target in the
+                                                  * accent with its bar, a free one plain, one with drums dim */
+        int i, x = 8 + draw_chip(8, HEAD_LINE, "SELECT") + 5;
+        str_cpy(t, "Copy to A", sizeof t);
+        t[8] = (char)('A' + dmc.tgt % SQ_NPAT);
+        draw_head(t);
+        for (i = 0; i < (int)SQ_NPAT; i++, x += 14) {
+            char l[2];
+            l[0] = (char)('A' + i);
+            l[1] = 0;
+            fb_text_halo(&CF_FONT_UI, x, HEAD_LINE, l, i == dmc.tgt ? C_ACC(0) : dm_copy_free(i) ? FL_INK2 : FL_INK3,
+                         FL_BG, 1);
+            if (i == dmc.tgt)
+                fb_rect(x + 1, HEAD_LINE + 12, 6, 2, C_ACC(1));
+        }
+        draw_view(view_drum);
+        draw_chip_text_c(Y_VIEW + H_VIEW - 14, "[EDIT] new pattern  [OCT+] copy", FL_INK3);
+        if (squ.help || squ.help_hold)
+            dm_draw_help();
+        {
+            static const char *const H[2] = {"GLO", "help"};
+            draw_hints(H, 1);
+        }
+        return;
+    }
     if (!wait || (cu.now / 250u) & 1u)
         draw_head(y->name);
     else
@@ -159,7 +186,7 @@ static void draw_drum(void)
     str_cpy(t + str_len(t), " BPM", sizeof t - str_len(t));
     fb_text_halo(&CF_FONT_UI, cv_head_x, HEAD_LINE, t, C_ACC(1), FL_BG, 1);
     draw_view(view_drum);
-    draw_chip_text_c(Y_VIEW + H_VIEW - 14, "[EDIT] make it a pattern", FL_INK3);   /* (rc5: the page's main use, on
+    draw_chip_text_c(Y_VIEW + H_VIEW - 14, "[EDIT] new pattern  [OCT+] copy", FL_INK3);   /* (rc5: the page's main use, on
                                                   * it; the owner on rc4: "потерялась функция чтобы вставить барабаны из
                                                   * драм-машины в паттерны") */
     if (squ.help || squ.help_hold)

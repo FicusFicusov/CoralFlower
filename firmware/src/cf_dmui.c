@@ -451,11 +451,125 @@ static void dm_make_pattern(void)
     cf_message(m);
 }
 
+/* hold OCT+, turn SELECT on the rhythm page: the rhythm into a pattern A..H whose Drums track is empty, its chords
+ * stay (0.7, the owner's pick: way 1 of the Designer's sheet). OCT+ goes on its release here, as on the SEQUENCER: a
+ * tap is OCT+, a turn while it is held picks the pattern, letting go puts the rhythm there */
+static void dm_rhythm_into(sq_pat_t *p, uint32_t r);
+static struct {
+    uint32_t down;               /* OCT+ down (cu.now), 0 up */
+    uint8_t on, tgt, off;        /* picking a pattern; which; called off (a refusal, PLAY or REC): the release does
+                                  * nothing */
+} dmc;
+static int dm_copying(void) { return dmc.down && dmc.on && !dmc.off; }
+static int dm_copy_free(int i) { return i >= 0 && i < (int)SQ_NPAT && !sq_drums(&sq_st.pat[i]); }
+static int dm_copy_next(int from, int d)        /* the next free pattern from "from" in d's way: -1 none */
+{
+    int i;
+    for (i = from + d; i >= 0 && i < (int)SQ_NPAT; i += d)
+        if (dm_copy_free(i))
+            return i;
+    return -1;
+}
+static void dm_copy_press(void)                  /* OCT+ down on the rhythm page */
+{
+    dmc.down = cu.now ? cu.now : 1u;
+    dmc.on = dmc.off = 0;
+}
+static void dm_copy_turn(int d)                  /* SELECT turned while OCT+ is held */
+{
+    uint32_t r = dm_cur();
+    int s = d > 0 ? 1 : -1, k, n = d < 0 ? -d : d;
+    if (dmc.off)
+        return;
+    if (!dmc.on) {
+        char m[48], a[8];
+        if (sqk.on || cf_sn.sq_rec != 0xFFu || cf_sn.dm_rin) {   /* (a take under way: nothing) */
+            dmc.off = 1;
+            return;
+        }
+        if (dm_copy_next(s > 0 ? -1 : (int)SQ_NPAT, s) < 0 && dm_copy_next(s > 0 ? (int)SQ_NPAT : -1, -s) < 0) {
+            cf_message("No pattern has\nan empty Drums track");
+            dmc.off = 1;
+            return;
+        }
+        if (DM_RHY[r % DM_N].beats != dm_beats()) {   /* (one in another TIME SIG: shown while a pattern plays) */
+            str_cpy(m, DM_RHY[r % DM_N].name, sizeof m);
+            str_cpy(m + str_len(m), " is ", sizeof m - str_len(m));
+            kint(a, DM_RHY[r % DM_N].beats, DM_RHY[r % DM_N].beats == 6u ? "/8" : "/4");
+            str_cpy(m + str_len(m), a, sizeof m - str_len(m));
+            str_cpy(m + str_len(m), ":\nTIME SIG is ", sizeof m - str_len(m));
+            kint(a, (int)dm_beats(), dm_beats() == 6u ? "/8" : "/4");
+            str_cpy(m + str_len(m), a, sizeof m - str_len(m));
+            cf_message(m);
+            dmc.off = 1;
+            return;
+        }
+        k = dm_copy_next(s > 0 ? -1 : (int)SQ_NPAT, s);   /* (the first turn: the first free one its way) */
+        if (k < 0)
+            k = dm_copy_next(s > 0 ? (int)SQ_NPAT : -1, -s);
+        dmc.on = 1;
+        dmc.tgt = (uint8_t)k;
+        n--;
+    }
+    while (n-- > 0) {                            /* (the free ones only; no wrap: it stops at the ends) */
+        k = dm_copy_next(dmc.tgt, s);
+        if (k < 0)
+            break;
+        dmc.tgt = (uint8_t)k;
+    }
+    cv_turned(d);
+}
+static void dm_copy_apply(void)                  /* OCT+ let go while copying */
+{
+    uint32_t r = dm_cur(), f = dmc.tgt % SQ_NPAT;
+    sq_pat_t *p = &sq_st.pat[f];
+    char m[40];
+    if (!dm_copy_free((int)f) || DM_RHY[r % DM_N].beats != dm_beats())
+        return;
+    sqh.busy = 0;
+    sq_undo_poll();                              /* (the undo: the pattern as it was) */
+    if (sq_empty(p)) {                           /* (nothing in it: a new pattern, as EDIT makes one) */
+        sq_fresh(p, cs.beats);
+        p->tonic = cs.chord.tonic;
+        p->scale = cs.chord.scale;
+    }
+    dm_rhythm_into(p, r);
+    sq_touch();
+    if (cf_sn.sq_on)                             /* (it plays: its drums come in where it is) */
+        cf_post(CFE_SEQ, 7, 0, 0);
+    str_cpy(m, DM_RHY[r % DM_N].name, sizeof m);
+    str_cpy(m + str_len(m), " into Pattern ", sizeof m - str_len(m));
+    m[str_len(m) + 1u] = 0;
+    m[str_len(m)] = (char)('A' + f);
+    cf_message(m);
+}
+static void dm_copy_cancel(void) { dmc.down = 0; dmc.on = dmc.off = 0; }
+static void dm_copy_poll(void)                   /* every frame: OCT+ let go on the rhythm page */
+{
+    if (!dmc.down)
+        return;
+    if (cu.scr != SCR_DRUM) {                    /* (left meanwhile: nothing) */
+        dm_copy_cancel();
+        return;
+    }
+    if ((fm1_in.buttons >> panel.btn[B_OCTUP]) & 1u)
+        return;
+    if (dmc.on && !dmc.off)
+        dm_copy_apply();
+    else if (!dmc.off) {                         /* (a tap: OCT+, as anywhere) */
+        cs.chord.octave = (int8_t)clampi(cs.chord.octave + 1, -3, 3);
+        cf_send_config();
+        cf_pop(POP_OCTAVE, 900);
+    }
+    dm_copy_cancel();
+}
+
 static void dm_hold_poll(void);
 /* every frame */
 static void dm_poll(void)
 {
     static uint8_t was = 0xFF;
+    dm_copy_poll();
     if (cu.scr == SCR_DRUM && was != SCR_DRUM && !sqk.on)   /* (opened, even only looked at: what PLAY on HOME plays) */
         dmr.last = 1;
     else if (sq_screen(cu.scr) && ((squ.pat < SQ_NPAT && sq_has(squ.pat)) ||
@@ -604,10 +718,28 @@ static void dm_hold_press(void)                  /* EDIT down in the DRUMS edito
     dmh.on = 1;
     dm_hold_say();
 }
+/* rhythm r as a pattern's DRUMS, its KIT and SWING: as long as the longest other track with something in it, one
+ * round of the rhythm at least, round and round from the top with the chords (1-2-1 under 3). The EDIT hold in the
+ * DRUMS editor and the rhythm page's copy (0.7) */
+static void dm_rhythm_into(sq_pat_t *p, uint32_t r)
+{
+    uint32_t rb = DM_RHY[r % DM_N].bars, n = 0, l, b, t;
+    rb = rb ? rb : 1u;
+    for (t = 0; t < SQ_DRUMS; t++)
+        if (sq_own(p, t) && sq_tbars(p, t) > n)
+            n = sq_tbars(p, t);
+    n = n < rb ? rb : n > SQ_BARS ? SQ_BARS : n;
+    dm_fill(p, r, 0);
+    for (l = 0; l < SQ_NLANE; l++)
+        for (b = 0; b < SQ_BARS; b++)
+            p->hit[l][b] = b < n ? dm_mask(r, l, b % rb) : 0u;
+    p->tb[SQ_DRUMS] = (uint8_t)n;
+    if (!p->bars)
+        p->bars = (uint8_t)n;
+}
 static void dm_hold_apply(void)                  /* the pattern's DRUMS as PRESETS stands */
 {
     sq_pat_t *p = &sq_st.pat[dmh.pat % SQ_NPAT];
-    uint32_t l, b, t;
     if (!dmh.k) {                                /* Keep: its own, as they were */
         memcpy(p->hit, dmh.hit, sizeof dmh.hit);
         memcpy(p->dkit, dmh.dkit, sizeof dmh.dkit);
@@ -618,19 +750,7 @@ static void dm_hold_apply(void)                  /* the pattern's DRUMS as PRESE
         p->tb[SQ_DRUMS] = dmh.tb;
         p->bars = dmh.bars;
     } else {
-        uint32_t r = dm_nth(dm_beats(), dmh.k - 1u), rb = DM_RHY[r % DM_N].bars, n = 0;
-        rb = rb ? rb : 1u;
-        for (t = 0; t < SQ_DRUMS; t++)           /* (as long as the longest other track with something in it) */
-            if (sq_own(p, t) && sq_tbars(p, t) > n)
-                n = sq_tbars(p, t);
-        n = n < rb ? rb : n > SQ_BARS ? SQ_BARS : n;
-        dm_fill(p, r, 0);
-        for (l = 0; l < SQ_NLANE; l++)           /* (round and round, from the top with the chords: 1-2-1 under 3) */
-            for (b = 0; b < SQ_BARS; b++)
-                p->hit[l][b] = b < n ? dm_mask(r, l, b % rb) : 0u;
-        p->tb[SQ_DRUMS] = (uint8_t)n;
-        if (!p->bars)
-            p->bars = (uint8_t)n;
+        dm_rhythm_into(p, dm_nth(dm_beats(), dmh.k - 1u));
     }
     sq_touch();
     if (cf_sn.sq_on)                             /* (the bars each track plays: read again now) */

@@ -409,6 +409,10 @@ static void draw_sq_track(void)
             fb_rframe(x - (w < 8), y, w + (w < 8), SQG_RH + 1, C_ACC(0));
         }
     }
+    /* the caption at the foot of the view, while the track's bars leave it room (its 8th bar's row is there): an
+     * empty Drums track says how a whole rhythm comes in (0.7: the gesture was in the GLO help alone) */
+    if (sq_ts(p, squ.trk) + sq_tbars(p, squ.trk) < SQ_BARS && drums && !sq_drums(p))
+        draw_chip_text_c(Y_VIEW + H_VIEW - 14, "hold [EDIT], [PRESETS]: a rhythm", FL_INK3);
     {
         static const char *const H[2] = {"GLO", "help"};   /* (the top bar names the track's sound: room for one) */
         static const char *const R[2] = {"REC", "stop"};
