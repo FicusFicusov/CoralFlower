@@ -411,8 +411,22 @@ static void draw_sq_track(void)
     }
     /* the caption at the foot of the view, while the track's bars leave it room (its 8th bar's row is there): an
      * empty Drums track says how a whole rhythm comes in (0.7: the gesture was in the GLO help alone) */
-    if (sq_ts(p, squ.trk) + sq_tbars(p, squ.trk) < SQ_BARS && drums && !sq_drums(p))
-        draw_chip_text_c(Y_VIEW + H_VIEW - 14, "hold [EDIT], [PRESETS]: a rhythm", FL_INK3);
+    if (sq_ts(p, squ.trk) + sq_tbars(p, squ.trk) < SQ_BARS && cf_sn.sq_rec == 0xFFu) {
+        if (drums && !sq_drums(p)) {
+            draw_chip_text_c(Y_VIEW + H_VIEW - 14, "hold [EDIT], [PRESETS]: a rhythm", FL_INK3);
+        } else {                                 /* (SEL: a tap, a hold; the drum's name while it fits) */
+            char c2[48];
+            str_cpy(c2, "[SEL] clear ", sizeof c2);
+            if (drums) {
+                str_cpy(c2 + str_len(c2), sq_lane_name(squ.lane), sizeof c2 - str_len(c2));
+                str_cpy(c2 + str_len(c2), " ", sizeof c2 - str_len(c2));
+            }
+            str_cpy(c2 + str_len(c2), " hold [SEL]: all", sizeof c2 - str_len(c2));
+            if (chip_text(0, 0, c2, FL_INK3, 0) > 228)   /* (its drawn width, chips and all) */
+                str_cpy(c2, "[SEL] clear  hold [SEL]: all", sizeof c2);
+            draw_chip_text_c(Y_VIEW + H_VIEW - 14, c2, FL_INK3);
+        }
+    }
     {
         static const char *const H[2] = {"GLO", "help"};   /* (the top bar names the track's sound: room for one) */
         static const char *const R[2] = {"REC", "stop"};
@@ -535,7 +549,9 @@ static void draw_sq_tracks(void)
     for (r = 0; r < SQ_NTRK; r++) {             /* four rows, 18 px, 1 apart (0.7: room for the caption under
                                                   * them); a muted track's dark */
         int y = VIEW_Y - 4 + (int)r * 19, sel = r == squ.trk, mute = (p->mute >> r) & 1u, ym = y + 9;
-        int has = !sq_empty(p) && (r == SQ_DRUMS ? sq_drums(p) : sq_count(p, r) > 0);
+        int has = !sq_empty(p) && (r == SQ_DRUMS ? sq_drums(p) : r == SQ_BASS ? sq_own(p, SQ_BASS) :
+                                   sq_count(p, r) > 0);   /* (Bass: by its window, as the playback follows the chords
+                                                  * when it has nothing there: 0.7) */
         sq_ink_t k = r == SQ_DRUMS ? sq_lane_ink(0) : sq_root_ink(r == SQ_BASS ? 7u : r == SQ_LAYER ? 4u : 0u);
         fb_rbox(6, y, 228, 18, 3, sel ? cf_panel(2) : FL_BG1);
         if (sel && squ.sel_down && !squ.cpy && sq_track_has(p, r)) {   /* SEL held: the row fills as the seconds go
@@ -755,18 +771,20 @@ static void draw_sq_help(void)
     /* (a gesture says "turn", and the copy where it lands: "copy the bar there" explained it, the owner, 2026-10-19) */
     /* (no PRESETS line, no SEL-held eraser: "тут лишнее SEL + hold, и лишнее PRESETS", the owner, 2026-10-20; the
      * gestures stay) */
-    static const char *const NO[] = {"[SELECT] move the frame", "keys: write in the frame", "[SEL] clear the step",
+    static const char *const NO[] = {"[SELECT] move the frame", "keys: write in the frame", "[SEL] clear  hold [SEL]: all",
                                      "[ARP] arpeggio", "hold [EDIT], turn [SELECT]: move",
                                      "hold [OCT+], turn [SELECT]:", "   copy the bar there",
                                      "hold [REC]: undo last change", "[SAVE] back  [GLO] close", 0};
-    static const char *const BA[] = {"[SELECT] move the frame", "keys: write in the frame", "[SEL] clear the step",
+    static const char *const BA[] = {"[SELECT] move the frame", "keys: write in the frame", "[SEL] clear  hold [SEL]: all",
                                      "hold [EDIT], turn [SELECT]: move",
                                      "hold [OCT+], turn [SELECT]:", "   copy the bar there",
                                      "hold [REC]: undo last change", "[SAVE] back  [GLO] close", 0};   /* (no ARP) */
-    static const char *const DR[] = {"upper keys: pick a drum", "lower keys: steps on / off",
-                                     "[SELECT] bar  [PRESETS] the kit",   /* (no eraser line: "Стереть убрать, набор
-                                                  * оставить", the owner, 2026-10-20) */
-                                     "hold [OCT+], turn [SELECT]:", "   copy the bar there",
+    static const char *const DR[] = {"upper keys: drum  lower: steps",
+                                     "[SELECT] bar  [PRESETS] the kit",
+                                     "[SEL] clear  hold [SEL]: all",   /* (0.7: the SEL clear) */
+                                     "hold [SEL], turn [SELECT]: erase",   /* (0.7, the Designer's spec the owner took;
+                                                  * on 2026-10-20 he had said "Стереть убрать") */
+                                     "hold [OCT+], [SELECT]: copy bar",   /* ("turn" did not fit) */
                                      "hold [EDIT], [PRESETS]: a rhythm",   /* (0.6: cf_dmui.c; "turn" did not fit) */
                                      "REC on: upper keys are pads", "hold [REC]: undo last change",
                                      "[SAVE] back  [GLO] close", 0};

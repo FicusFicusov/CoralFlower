@@ -52,6 +52,7 @@ static struct {
     uint32_t sel_down;           /* SEL down in a track (0: up): a tap clears the step, held with SELECT turned erases
                                   * all the frame passes over (the owner, 2026-10-19) */
     uint8_t cpy;                 /* .. SELECT turned while it is down: erasing */
+    uint8_t sel_off, sel_cue;    /* .. in a track: called off (PLAY, REC, EDIT or OCT+ meanwhile); its cue shown (0.7) */
     uint32_t oct_down;           /* OCT+ down in a track (0: up): a tap is OCT+, held with SELECT turned it copies the
                                   * frame's bar to where the frame goes (the owner's pick, 2026-10-19) */
     uint8_t ocpy, ofrom;         /* .. SELECT turned while it is down; the bar copied */
@@ -837,9 +838,58 @@ static int sq_track_has(const sq_pat_t *p, uint32_t t)
 {
     return !sq_empty(p) && (t == SQ_DRUMS ? sq_drums(p) : sq_count(p, t) > 0);
 }
+/* SEL in a track (0.7, the owner: "единичное нажатие удаляет то, что выбрано крутилкой селекта, а зажатие, полностью
+ * всё со всего что активно параметром bars", "И только выбранный барабан в редакторе!", the clear on the release:
+ * his pick A). A tap (let go within SQ_SEL_HOLD_MS, no SELECT turned) clears what the frame is on; held past it a cue
+ * says what letting go does, and letting go clears the track in its window (POSITION's first bar, BARS long; DRUMS:
+ * the picked drum only). A SELECT turn meanwhile is the eraser, as before; nothing clears on a timer */
+#define SQ_SEL_HOLD_MS 500u
+static void sq_sel_window(char *m, uint32_t n, int cue)   /* "clear Rim, bars 1-2" and the like */
+{
+    const sq_pat_t *p = sq_cur();
+    uint32_t b0 = sq_ts(p, squ.trk), b1 = b0 + sq_tbars(p, squ.trk);
+    str_cpy(m, cue ? "let go: clear " : "", n);
+    if (squ.trk == SQ_DRUMS) {
+        str_cpy(m + str_len(m), sq_lane_name(squ.lane), n - str_len(m));
+        str_cpy(m + str_len(m), ", ", n - str_len(m));
+    }
+    str_cpy(m + str_len(m), b1 - b0 > 1u ? "bars " : "bar ", n - str_len(m));
+    kint(m + str_len(m), (int)b0 + 1, 0);
+    if (b1 - b0 > 1u) {
+        str_cpy(m + str_len(m), "-", n - str_len(m));
+        kint(m + str_len(m), (int)b1, 0);
+    }
+    if (cue)
+        str_cpy(m + str_len(m), "\nturn [SELECT]: erase", n - str_len(m));
+}
+static int sq_clear_window(void)                 /* the track in its window (DRUMS: the picked drum): 1 if any went */
+{
+    sq_pat_t *p = sq_cur();
+    uint32_t b0 = sq_ts(p, squ.trk), b1 = b0 + sq_tbars(p, squ.trk), i, b;
+    int n = 0;
+    if (sq_empty(p))
+        return 0;
+    if (squ.trk == SQ_DRUMS) {
+        for (b = b0; b < b1 && b < SQ_BARS; b++) {
+            n |= p->hit[squ.lane % SQ_NLANE][b] != 0u;
+            p->hit[squ.lane % SQ_NLANE][b] = 0;
+        }
+    } else {
+        for (i = 0; i < p->nev;)
+            if (p->ev[i].trk == squ.trk && p->ev[i].bar >= b0 && p->ev[i].bar < b1) {
+                sq_del(p, i);
+                n = 1;
+            } else {
+                i++;
+            }
+    }
+    if (n)
+        sq_touch();
+    return n;
+}
 static void sq_sel_poll(void)                    /* every frame: SEL let go in a track */
 {
-    char m[24];
+    char m[64];
     if (!squ.sel_down)
         return;
     if ((fm1_in.buttons >> panel.btn[B_SCL]) & 1u && cu.scr == SCR_SQ) {   /* held a second: the track goes */
@@ -850,25 +900,59 @@ static void sq_sel_poll(void)                    /* every frame: SEL let go in a
         }
         return;
     }
-    if ((fm1_in.buttons >> panel.btn[B_SCL]) & 1u && cu.scr == SCR_SQED)
-        return;
-    squ.sel_down = 0;
-    if (!squ.cpy) {                              /* a tap: the step cleared */
-        if (cu.scr == SCR_SQED && !squ.nofr)     /* (no frame: nothing to clear) */
-            sq_clear();
+    if ((fm1_in.buttons >> panel.btn[B_SCL]) & 1u && cu.scr == SCR_SQED) {
+        if (squ.cpy || squ.sel_off) {            /* (erasing, or called off: the cue goes) */
+            if (squ.sel_cue && cu.pop == POP_MSG)
+                cu.pop = POP_NONE;
+            squ.sel_cue = 0;
+        } else if (cu.now - squ.sel_down >= SQ_SEL_HOLD_MS) {   /* held: what letting go does, while it is held */
+            if (!squ.sel_cue) {
+                sq_sel_window(m, sizeof m, 1);
+                cf_message(m);
+                squ.sel_cue = 1;
+            }
+            if (cu.pop == POP_MSG)
+                cu.pop_until = cu.now + 400u;
+        }
         return;
     }
-    squ.cpy = 0;                                 /* (an erase: done as it went) */
-    (void)m;
+    {
+        int held = cu.now - squ.sel_down >= SQ_SEL_HOLD_MS, off = squ.sel_off, cpy = squ.cpy;
+        squ.sel_down = 0;
+        squ.cpy = squ.sel_off = squ.sel_cue = 0;
+        if (cpy || off || cu.scr != SCR_SQED)    /* (an erase: done as it went; called off: nothing) */
+            return;
+        if (held) {                              /* held, let go: the track in its window */
+            if (sq_clear_window())
+                cf_message("Cleared. Hold REC: undo");
+            else if (cu.pop == POP_MSG)
+                cu.pop = POP_NONE;
+            return;
+        }
+        if (!squ.nofr || squ.trk == SQ_DRUMS)    /* a tap: the step cleared (no frame: nothing to clear) */
+            sq_clear();
+    }
 }
 
-/* SEL in CHORDS / BASS: the step under the cursor cleared. DRUMS: nothing (it cleared the drum's bar at one tap, no
- * question asked; the owner, 2026-10-18: not that, not on SEL; a step goes off on its key) */
+/* SEL tapped in CHORDS / BASS / LAYER: the step under the cursor cleared. DRUMS: the picked drum in the frame's bar,
+ * said so (0.7, the owner: "по нажатию sel чистить бар выбранного барабана"; he had turned the silent one down on
+ * 2026-10-18, "not that, not on SEL") */
 static void sq_clear(void)
 {
     sq_pat_t *p = sq_cur();
-    if (squ.trk == SQ_DRUMS)
+    if (squ.trk == SQ_DRUMS) {
+        char m[32];
+        uint32_t l = squ.lane % SQ_NLANE, b = squ.bar % SQ_BARS;
+        if (sq_empty(p) || !p->hit[l][b])
+            return;
+        p->hit[l][b] = 0;
+        sq_touch();
+        str_cpy(m, sq_lane_name(l), sizeof m);
+        str_cpy(m + str_len(m), " cleared in bar ", sizeof m - str_len(m));
+        kint(m + str_len(m), (int)b + 1, 0);
+        cf_message(m);
         return;
+    }
     sq_touch();
     {
         int i = sq_at(p, squ.trk, squ.bar, squ.step);

@@ -909,6 +909,9 @@ static void ui_button(uint32_t b)
             return;
         }
     }
+    if (cu.scr == SCR_SQED && squ.sel_down && !squ.cpy &&
+        (b == B_PLAY || b == B_REC || b == B_EDIT || b == B_OCTUP))
+        squ.sel_off = 1;                         /* (SEL held in a track: these call its clear off, and do their own) */
     if (sq_screen(cu.scr)) {                     /* the sequencer's own: EDIT / SEL open, SEL clears, SAVE back, GLO */
         if (cu.scr == SCR_SQED && b == B_ARP) {  /* ARP in a track: its own arpeggiator on / off (CHORDS, LAYER) */
             sq_arp_toggle();
@@ -943,10 +946,12 @@ static void ui_button(uint32_t b)
             }
             return;
         }
-        if (cu.scr == SCR_SQED && b == B_SCL) {   /* (a tap clears on its release; held, SELECT copies the bar:
-                                                  * sq_sel_poll) */
+        if (cu.scr == SCR_SQED && b == B_SCL) {   /* (a tap clears on its release, a hold let go clears the window, held
+                                                  * with SELECT turned it erases: sq_sel_poll; a take: nothing) */
+            if (squ_rec_on())
+                return;
             squ.sel_down = cu.now ? cu.now : 1u;
-            squ.cpy = 0;
+            squ.cpy = squ.sel_off = squ.sel_cue = 0;
             sqh.busy = 0;                        /* (SEL begins an action of its own: undo takes back the erase
                                                   * alone, not what was written just before) */
             sq_undo_poll();
