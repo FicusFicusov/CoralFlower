@@ -346,7 +346,7 @@ static void dm_sel(void)                         /* SEL: the rhythm's own KIT an
     if (dm_plays(r))
         cf_post(CFE_DRUM, 2, 0, dm_v(r));
 }
-static void sq_home_rec_r(uint32_t r);
+static void sq_home_rec_r(uint32_t r, int counted);
 static void dm_page_play(void)                   /* PLAY in the drum machine */
 {
     if (sqk.on) {                                /* (taking: it is kept, and all stops) */
@@ -380,16 +380,19 @@ static int dm_home_rec(void)
     if (sqk.on || cf_sn.sq_rec != 0xFFu || cf_sn.sq_on)
         return 0;
     if (cf_sn.dm_on) {                           /* (its beat runs too: cf_sn.running) */
-        sq_home_rec_r(cf_sn.dm_r);
+        sq_home_rec_r(cf_sn.dm_r, 0);
         return 1;
     }
     if (cf_sn.running || !dmr.last)
         return 0;
     dm_sig_for(dm_cur());
-    sq_home_rec_r(dm_cur());
+    sq_home_rec_r(dm_cur(), 0);
     return 1;
 }
-static void dm_page_rec(void)                    /* REC in the drum machine: always under the rhythm on screen */
+/* REC in the drum machine: always under the rhythm playing (else the one on screen), always after the count-in: what
+ * plays stops, and the take and the rhythm begin together from its first bar (0.6.1, the owner: "нет, останавливаться
+ * и потом отсчёт", "только когда в ритм машине"; on HOME a rhythm playing is still taken over at once) */
+static void dm_page_rec(void)
 {
     if (sqk.on || cf_sn.sq_rec != 0xFFu) {
         sq_home_rec();                           /* (a take under way: REC ends it, as everywhere) */
@@ -397,7 +400,7 @@ static void dm_page_rec(void)                    /* REC in the drum machine: alw
     }
     if (!cf_sn.dm_on)
         dm_sig_for(dm_cur());                    /* (a pattern or the song stops for the count-in: TIME SIG first) */
-    sq_home_rec_r(cf_sn.dm_on ? cf_sn.dm_r : dm_cur());
+    sq_home_rec_r(cf_sn.dm_on ? cf_sn.dm_r : dm_cur(), 1);
 }
 
 /* what PLAY on HOME plays now: a rhythm (1) or what the SEQUENCER keeps (0) */

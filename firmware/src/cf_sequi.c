@@ -1247,7 +1247,7 @@ static void sq_hint_once(uint32_t bit)
     cu.pop_until = cu.now + 1500u;
     sqh_scr = cu.scr;
 }
-static void sq_home_rec_r(uint32_t r);
+static void sq_home_rec_r(uint32_t r, int counted);
 static void sq_home_rec(void)                    /* REC tapped */
 {
     if (sqk.on) {
@@ -1264,14 +1264,16 @@ static void sq_home_rec(void)                    /* REC tapped */
     }
     if (dm_home_rec())                           /* (under a rhythm: cf_dmui.c) */
         return;
-    sq_home_rec_r(DM_N);
+    sq_home_rec_r(DM_N, 0);
 }
 /* a take into a new pattern; r < DM_N: under rhythm r of the drum machine, its DRUMS that rhythm (the one playing:
- * from the bar it plays, it takes over at once; else after a bar counted in) */
-static void sq_home_rec_r(uint32_t r)
+ * from the bar it plays, it takes over at once; else after a bar counted in). counted: always after the count-in, the
+ * rhythm playing stopped and the take from its first bar (0.6.1, REC in the drum machine: the owner, "нет,
+ * останавливаться и потом отсчёт", "только когда в ритм машине") */
+static void sq_home_rec_r(uint32_t r, int counted)
 {
     sq_pat_t *p;
-    int f, under = r < DM_N, live = under && cf_sn.dm_on && cf_sn.dm_r == r;
+    int f, under = r < DM_N, live = under && !counted && cf_sn.dm_on && cf_sn.dm_r == r;
     f = sq_home_free();
     if (f < 0) {
         cf_message("All 8 patterns are used:\nclear one in the SEQUENCER");
