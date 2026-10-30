@@ -422,10 +422,24 @@ static void cfk_head(uint32_t st, const cfk_rec_t *r)   /* the store's index fro
     cfk_st[st].slot = r->slot;
     memcpy(cfk_st[st].name, r->name, sizeof cfk_st[st].name);
 }
+/* two sound names, as strings: what lies after a name's end is no part of it (a name buffer keeps the tail of a
+ * longer one before it: "POLY KEYS" after "SYNTH BRASS" held an "S" past its end, and the tweak, written so, was not
+ * taken back at power-on) */
+static int cfk_name_eq(const char *a, const char *b)
+{
+    uint32_t i;
+    for (i = 0; i < sizeof ((cf_snd_t *)0)->name; i++) {
+        if (a[i] != b[i])
+            return 0;
+        if (!a[i])
+            return 1;
+    }
+    return 1;
+}
 static int cfk_same(uint32_t st, const cf_snd_t *m)   /* the store's tweak was made on sound m */
 {
     return cfk_st[st].edited && cfk_st[st].engine == m->engine && cfk_st[st].kind == m->kind &&
-           cfk_st[st].fk == m->fk && cfk_st[st].slot == m->slot && !memcmp(cfk_st[st].name, m->name, sizeof m->name);
+           cfk_st[st].fk == m->fk && cfk_st[st].slot == m->slot && cfk_name_eq(cfk_st[st].name, m->name);
 }
 static int cfk_find(uint32_t pat1, uint32_t part)   /* the store of an owner's tweak: -1 none */
 {
@@ -453,7 +467,8 @@ static void cfk_build(uint32_t part, cfk_rec_t *r)   /* the live part's record (
         r->kind = cf_snd[part].kind;
         r->fk = cf_snd[part].fk;
         r->slot = cf_snd[part].slot;
-        memcpy(r->name, cf_snd[part].name, sizeof r->name);
+        for (i = 0; i < sizeof r->name - 1u && cf_snd[part].name[i]; i++)   /* (the name alone: r is zeroed) */
+            r->name[i] = cf_snd[part].name[i];
         for (i = 0; i < P_COUNT; i++)
             r->p[i] = param_kept(i) ? 0 : t->p[i];
         if (d) {
