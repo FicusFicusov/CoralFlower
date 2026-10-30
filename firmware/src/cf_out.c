@@ -245,7 +245,8 @@ enum {
     CFE_TRANSPORT,    /* v: 1 start (from beat 1), 0 stop */
     CFE_SEQ,          /* the sequencer: a 0 stop, 1 play pattern b (SQ_NPAT: the song from place v), 2 drum b heard (kit v),
                        * 3 pattern b next (the song from place v), 4 a take on pattern b, track v, 5 the take ends,
-                       * 6 a take from HOME on pattern b, track v (8 bars at most), 7 the tracks' bars read again */
+                       * 6 a take from HOME on pattern b, track v (8 bars at most), 7 the tracks' bars read again,
+                       * 8 REC went down b ms ago (the chord begun since is a take's: cf_seqp.c sqp_pre) */
     CFE_ROOT,         /* a root from outside (NOTES IN Roots): a its MIDI note, b its age in ms, v down */
     CFE_DRUM,         /* the drum machine (cf_drum.c): a 0 stop, 1 play rhythm b (or next at the bar line), 2 the one
                        * playing's kit and SWING, 3 REC in the SEQUENCER: pattern b, track v, after the rhythm's bar,
@@ -529,13 +530,17 @@ static void cf_apply(const cf_ev_in_t *e)
 {
     switch (e->op) {
     case CFE_KEY:
-        if (e->v)
+        if (e->v) {
             sqp.rage = e->b;                     /* (its age, ms: a take puts it back where it was played) */
+            sqp_pre.key_ms = cf_now_ms - e->b;
+        }
         cfp_key(e->a, e->v);
         break;
     case CFE_ROOT:
-        if (e->v)
+        if (e->v) {
             sqp.rage = e->b;
+            sqp_pre.key_ms = cf_now_ms - e->b;
+        }
         cfp_key(CF_KEY_EXT + e->a, e->v);
         break;
     case CFE_CONFIG: cfp_config(); break;
@@ -561,7 +566,8 @@ static void cf_apply(const cf_ev_in_t *e)
         } else if (e->a == 7) {                  /* (its tracks' bars changed: each track's bar read again) */
             if (sqp.on)
                 sqp_bars();
-        }
+        } else if (e->a == 8)                    /* (REC went down, e->b ms ago: the chord begun since is a take's) */
+            sqp_rec_down(e->b);
         else
             sqp_stop();
         break;
@@ -640,6 +646,7 @@ static void cf_audio_block(uint32_t n)
         cfx_in.active = cfp_cfg.clock_in && cfx_in.bpm && (uint32_t)(cf_now_ms - cfx_in.last_ms) < 300u;
         cfa_tick(n);                             /* (the arpeggiator: its steps, its strum) */
         sqp_arp_tick(n);                         /* (the sequencer's tracks' with ARP on) */
+        sqp_pre_watch();                         /* (since REC went down, before a take begins) */
         sqp_tick(n, pulses);                     /* (the sequencer) */
         dmp_tick(n, pulses);                     /* (.. or the drum machine's rhythm) */
         cfm_tick(n, pulses);

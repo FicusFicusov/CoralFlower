@@ -93,8 +93,9 @@ static int32_t fm1_enc_take(uint32_t e) { return __atomic_exchange_n(&host_enc[e
  * (hal/fm1_input.h note_t0), the edges not taken yet, and the pump's entry: EMU_PUMP=0: no pump; emu.c's mark (the
  * longest stretch with no key read, EMU_UI_GAP=1), then the CPU lock as emu_fw_idle takes it. A strip composed and
  * sent (cr_draw.c CR_HOOK_STRIP): the emulator's clock (emu.c: a strip's time passes, EMU_STRIP_US) */
-static uint32_t emu_key_t0[27];
+static uint32_t emu_key_t0[27], emu_btn_t0[14];
 #define CU_KEY_T0(k) emu_key_t0[(k) % 27u]
+#define CU_BTN_T0(i) emu_btn_t0[(i) % 14u]
 #define CU_BTN_EDGES() host_pressed
 #define CU_KEY_EDGES() host_notes
 static int emu_pump_begin(void)

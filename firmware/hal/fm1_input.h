@@ -136,6 +136,7 @@ static volatile struct {
     uint8_t raw[FM1_NCOL];       /* last frame, packed rows, 1 = closed */
     uint8_t cnt[FM1_NKEY];       /* frames in a row against the debounced state */
     uint32_t note_t0[27];        /* TIMER4 tick of the first scan that saw note key n closed */
+    uint32_t btn_t0[14];         /* .. button i */
     uint8_t enc_prev[FM1_NENC], enc_last[FM1_NENC];
     uint8_t enc_rest[FM1_NENC];  /* the detent state (0..3) */
     uint16_t enc_still[FM1_NENC]; /* frames since the last state change */
@@ -255,8 +256,12 @@ static void fm1__key(uint32_t id, uint32_t closed)
         *c = 0;
         return;
     }
-    if (!on && note && *c == 0u)
-        fm1_in.note_t0[id - 14u] = FM1_INPUT_NOW();
+    if (!on && *c == 0u) {
+        if (note)
+            fm1_in.note_t0[id - 14u] = FM1_INPUT_NOW();
+        else
+            fm1_in.btn_t0[id] = FM1_INPUT_NOW();
+    }
     if (++*c < (on ? FM1_DEB_RELEASE : FM1_DEB_PRESS))
         return;
     *c = 0;

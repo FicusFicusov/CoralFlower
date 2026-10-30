@@ -165,9 +165,11 @@ void emu_fw_tick(uint32_t ms)
     down = b & ~in_btn;
     for (i = 0; i < EMU_NBTN; i++) {
         uint32_t m = 1u << i;
-        if (down & m)
+        if (down & m) {
             btn_ms[i] = ms;
-        else if ((in_btn & m) && !(b & m) && ms - btn_ms[i] < EMU_RELEASE_MS)
+            if (i < 14u)
+                emu_btn_t0[i] = fm1_ticks();      /* (hal/fm1_input.h btn_t0) */
+        } else if ((in_btn & m) && !(b & m) && ms - btn_ms[i] < EMU_RELEASE_MS)
             b |= m;                               /* (held at least the debounce time) */
     }
     in_btn = b;

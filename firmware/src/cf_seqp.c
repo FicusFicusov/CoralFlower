@@ -78,6 +78,18 @@ typedef struct {
 } sqr_ev_t;
 static sqr_ev_t sqp_rq[SQR_N];
 static volatile uint32_t sqp_rw;                 /* (the UI's read index: cf_sequi.c squ.rr) */
+/* REC went down: the last chord begun since is the take's, on its first step, though the take begins later (on REC's
+ * release, after a count-in, at a rhythm's bar line), and though it was let go before. A chord held from before stays
+ * out (0.6.1, the owner: "аккорд после нажатия ... обязательно"; "A: попадает": let go early, it goes in as long as it
+ * was held) */
+static struct {
+    uint8_t on;                  /* REC went down; no take has begun since */
+    uint8_t n, open;             /* .. a chord begun since (e), still sounding */
+    uint32_t ser;                /* .. the chord model's serial last seen */
+    uint32_t rec_ms, t0, t1;     /* .. REC's moment, the chord's start and end (cf_now_ms) */
+    uint32_t key_ms;             /* the last key down's moment (cf_now_ms, its age taken off) */
+    sqr_ev_t e;
+} sqp_pre;
 /* a pattern comes in: the sounds made ready for it go on its parts now, before its first notes (cf_sound.c) */
 static void cf_stage_in(uint32_t pat);
 
@@ -589,16 +601,37 @@ static void sqp_drum_offs(void)                  /* the drums' MIDI notes of the
             sqp.doff &= (uint16_t)~(1u << l);
         }
 }
+/* a take's chord begins: what the chord model sounds now (kind 1; the caller sets where) */
+static void sqp_rec_chord(sqr_ev_t *e)
+{
+    const cf_chord_out_t *o = &cfc.out;
+    uint32_t i;
+    e->kind = 1;
+    e->rkey = (uint8_t)(o->single && o->n > 1u ? 0xFFu : cfc.nroots ? cfc.root_key[cfc.nroots - 1u] : 0xFFu);
+    /* (the root key the chord model built it on: the last one down; a take read the lowest held when the UI got
+     * there, and a legato change wrote the chord before) */
+    e->n = (uint8_t)(o->n > 6u ? 6u : o->n);
+    for (i = 0; i < e->n; i++)
+        e->note[i] = o->note[o->n - e->n + i];
+    e->root = o->root_pc;
+    e->mask = (uint16_t)(o->mask & 0xFFFu);
+    e->single = o->single;
+    e->btns = o->buttons;
+    e->nb = (uint8_t)(cfp.nb < 2u ? cfp.nb : 2u);
+    e->bass[0] = cfp.bass[0];
+    e->bass[1] = cfp.bass[1];
+}
 /* a take on a synth track: the chord model changed (the serial): what sounded ends here, what sounds now begins */
 static void sqp_rec_watch(void)
 {
     const cf_chord_out_t *o = &cfc.out;
     sqr_ev_t e;
-    uint32_t i, back;
+    uint32_t back;
     if (sqp.rec == 0xFFu || sqp.rec == SQ_DRUMS || o->serial == sqp.rserial)
         return;
     sqp.rserial = o->serial;
-    if (sqp.cin >= SQ_PPQN / 4u)                 /* (the count-in: only its last sixteenth counts, as the first step) */
+    if (sqp.cin >= SQ_PPQN / 4u)                 /* (the count-in: only its last sixteenth counts, as the first step;
+                                                  * a chord begun before it, since REC went down: sqp_pre) */
         return;
     back = sqp.rage * SQ_PPQN * cfm.bpm / 60000u;   /* (the key's age: where in the bar it was played) */
     sqp.rage = 0;
@@ -614,23 +647,71 @@ static void sqp_rec_watch(void)
     if (!o->sounding || !o->n)
         return;
     sqp.rback = sqp.cin ? 0u : back;
-    e.kind = 1;
-    e.rkey = (uint8_t)(o->single && o->n > 1u ? 0xFFu : cfc.nroots ? cfc.root_key[cfc.nroots - 1u] : 0xFFu);
-    sqp.rheld = 0;                               /* (the root key the chord model built it on: the last one down; a
-                                                  * take read the lowest held when the UI got there, and a legato
-                                                  * change wrote the chord before) */
-    e.n = (uint8_t)(o->n > 6u ? 6u : o->n);
-    for (i = 0; i < e.n; i++)
-        e.note[i] = o->note[o->n - e.n + i];
-    e.root = o->root_pc;
-    e.mask = (uint16_t)(o->mask & 0xFFFu);
-    e.single = o->single;
-    e.btns = o->buttons;
-    e.nb = (uint8_t)(cfp.nb < 2u ? cfp.nb : 2u);
-    e.bass[0] = cfp.bass[0];
-    e.bass[1] = cfp.bass[1];
+    sqp_rec_chord(&e);
+    sqp.rheld = 0;
     sqp_rpush(&e);
     sqp.ropen = 1;
+}
+
+/* REC went down (age: ms ago, as the scan saw it; the UI's frame lets it through later than the keys, so a chord
+ * struck after it can be here first): a chord sounding that began after that moment is the take's already */
+static void sqp_rec_down(uint32_t age)
+{
+    const cf_chord_out_t *o = &cfc.out;
+    sqp_pre.on = 1;
+    sqp_pre.n = sqp_pre.open = 0;
+    sqp_pre.ser = o->serial;
+    sqp_pre.rec_ms = cf_now_ms - age;
+    if (o->sounding && o->n && (int32_t)(sqp_pre.key_ms - sqp_pre.rec_ms) >= 0) {
+        sqp_rec_chord(&sqp_pre.e);
+        sqp_pre.n = sqp_pre.open = 1;
+        sqp_pre.t0 = sqp_pre.key_ms;
+    }
+}
+/* every audio block, till the take begins: the last chord begun since REC went down */
+static void sqp_pre_watch(void)
+{
+    const cf_chord_out_t *o = &cfc.out;
+    if (!sqp_pre.on || o->serial == sqp_pre.ser)
+        return;
+    sqp_pre.ser = o->serial;
+    if (sqp_pre.open) {                          /* (the one before ends here) */
+        sqp_pre.open = 0;
+        sqp_pre.t1 = cf_now_ms;
+    }
+    if (!o->sounding || !o->n)
+        return;
+    sqp_rec_chord(&sqp_pre.e);
+    sqp_pre.n = sqp_pre.open = 1;
+    sqp_pre.t0 = (int32_t)(sqp_pre.key_ms - sqp_pre.rec_ms) >= 0 ? sqp_pre.key_ms : sqp_pre.rec_ms;
+}
+/* the take begins (its count-in's last sixteenth, or at once): that chord on its first step. Still sounding, it lasts
+ * from there as one struck in the take; let go, as long as it was held */
+static void sqp_pre_flush(void)
+{
+    sqr_ev_t e;
+    sqp_pre.on = 0;
+    if (!sqp_pre.n || sqp.rec == SQ_DRUMS)
+        return;
+    sqp_pre.n = 0;
+    e = sqp_pre.e;
+    e.pat = sqp.pat;
+    e.bar = sqp.sb[sqp.rec % SQ_NTRK];
+    e.t = sqp.cin ? 0u : sqp.t;
+    sqp_rpush(&e);
+    sqp.rage = 0;                                /* (its key's age: not the next change's) */
+    if (sqp_pre.open) {
+        sqp.rserial = cfc.out.serial;
+        sqp.rheld = sqp.rback = 0;
+        sqp.ropen = 1;
+        return;
+    }
+    e.kind = 2;
+    e.dur = sqp_pre.t1 - sqp_pre.t0;
+    e.dur = (e.dur < 30000u ? e.dur : 30000u) * SQ_PPQN * (cfx_in.active ? cfx_in.bpm : cfm.bpm) / 60000u;
+    if (!e.dur)
+        e.dur = 1;
+    sqp_rpush(&e);
 }
 static void sqp_tick1(void)
 {
@@ -732,6 +813,8 @@ static void sqp_tick(uint32_t n, uint32_t pulses)
     uint32_t k;
     if (!sqp.on)
         return;
+    if (sqp_pre.on && sqp.rec != 0xFFu && sqp.cin < SQ_PPQN / 4u)
+        sqp_pre_flush();
     sqp_rec_watch();
     if (cfx_in.active) {
         for (k = 0; k < pulses * (SQ_PPQN / 24u); k++)

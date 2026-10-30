@@ -15,6 +15,13 @@ static void cf_message(const char *s);
 #define CF_KEY_T0(k) fm1_in.note_t0[k]           /* the first scan that saw key k closed (hal/fm1_input.h) */
 #endif
 #endif
+#ifndef CF_BTN_T0
+#ifdef CU_BTN_T0
+#define CF_BTN_T0(i) CU_BTN_T0(i)
+#else
+#define CF_BTN_T0(i) fm1_in.btn_t0[i]           /* .. button i (0.6.1: REC's moment, cf_rec_down) */
+#endif
+#endif
 static void cf_pop(uint32_t kind, uint32_t ms);
 static int cf_editing_part(void);
 static void cf_edited(uint32_t part);
@@ -856,6 +863,13 @@ static void cf_reset_save(void)
     }
 }
 
+/* REC went down: the audio side marks the moment, as the scan saw it (the frame lets a button through later than the
+ * keys: a chord struck just after REC can get there first), and the chord begun since is the take's (0.6.1) */
+static void cf_rec_down(void)
+{
+    uint32_t age = (fm1_ticks() - CF_BTN_T0(panel.btn[B_REC] % 14u)) / FM1_TICKS_PER_US / 1000u;
+    cf_post(CFE_SEQ, 8, age <= 250u ? age : 0u, 0);
+}
 static void ui_button(uint32_t b)
 {
     if (cfr.go)                                  /* (erasing: no button any more) */
@@ -947,6 +961,7 @@ static void ui_button(uint32_t b)
         if (b == B_REC) {                        /* a tap: a take; held 1 s: undo (cf_loop_poll) */
             cu.rec_hold = cu.now ? cu.now : 1u;
             cu.rec_fired = 0;
+            cf_rec_down();
             return;
         }
     }
@@ -987,6 +1002,7 @@ static void ui_button(uint32_t b)
     case B_REC:                                  /* a tap records a new pattern, a hold undoes (cf_rec_poll) */
         cu.rec_hold = cu.now ? cu.now : 1u;
         cu.rec_fired = 0;
+        cf_rec_down();
         break;
     case B_OCTDN:
     case B_OCTUP:
