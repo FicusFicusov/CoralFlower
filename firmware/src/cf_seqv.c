@@ -482,7 +482,7 @@ static void sq_pat_row(int y0)                   /* the patterns' letters and SO
      * box, then a frame, read as a button: "song как кнопка выглядит", "и A как кнопка выглядит"). A pattern with steps
      * in its colour, as its blocks in the song; an empty one dim. Playing: the firefly over it, as over a playing block
      * and a track's playhead (an underline would read as the tab's bar); coming in next: a dot there, blinking */
-    int i, x = 8 + draw_chip(8, y0, "ALGO") + 5;
+    int i, x = 8 + draw_chip(8, y0, "SELECT") + 5;   /* (0.7: SELECT turns the tabs) */
     for (i = 0; i <= (int)SQ_NPAT; i++) {
         char b[6];
         int w, cur = i == squ.pat, used = i < (int)SQ_NPAT && sq_has((uint32_t)i);   /* (steps in it: a pattern
@@ -517,7 +517,7 @@ static void draw_sq_tracks(void)
     sqv_update(p);
     char t[12];
     uint32_t r;
-    if (squ.ocpy) {                              /* (OCT+ held, ALGORITHM turned: the copy's way) */
+    if (squ.ocpy) {                              /* (OCT+ held, SELECT turned: the copy's way) */
         str_cpy(t, "Copy A to A", sizeof t);
         t[5] = (char)('A' + squ.ofrom % SQ_NPAT);
         t[10] = (char)('A' + squ.pat % SQ_NPAT);
@@ -528,18 +528,19 @@ static void draw_sq_tracks(void)
     }
     draw_head(t);
     sq_pat_row(HEAD_LINE);
-    for (r = 0; r < SQ_NTRK; r++) {             /* four rows, 20 px, 2 apart; a muted track's dark */
-        int y = VIEW_Y - 4 + (int)r * 22, sel = r == squ.trk, mute = (p->mute >> r) & 1u, ym = y + 10;
+    for (r = 0; r < SQ_NTRK; r++) {             /* four rows, 18 px, 1 apart (0.7: room for the caption under
+                                                  * them); a muted track's dark */
+        int y = VIEW_Y - 4 + (int)r * 19, sel = r == squ.trk, mute = (p->mute >> r) & 1u, ym = y + 9;
         int has = !sq_empty(p) && (r == SQ_DRUMS ? sq_drums(p) : sq_count(p, r) > 0);
         sq_ink_t k = r == SQ_DRUMS ? sq_lane_ink(0) : sq_root_ink(r == SQ_BASS ? 7u : r == SQ_LAYER ? 4u : 0u);
-        fb_rbox(6, y, 228, 20, 3, sel ? cf_panel(2) : FL_BG1);
+        fb_rbox(6, y, 228, 18, 3, sel ? cf_panel(2) : FL_BG1);
         if (sel && squ.sel_down && !squ.cpy && sq_track_has(p, r)) {   /* SEL held: the row fills as the seconds go
                                                   * (then it clears) */
             uint32_t t = cu.now - squ.sel_down;
-            fb_rect(7, y + 1, (int)(t >= SQ_CLEAR_MS ? 226u : t * 226u / SQ_CLEAR_MS), 18, FL_C(FL_R_FIRE, 3));
+            fb_rect(7, y + 1, (int)(t >= SQ_CLEAR_MS ? 226u : t * 226u / SQ_CLEAR_MS), 16, FL_C(FL_R_FIRE, 3));
         }
         if (sel)
-            fb_rframe(6, y, 228, 20, squ.sel_down && !squ.cpy && sq_track_has(p, r) ? FL_C(FL_R_FIRE, 1) : C_ACC(1));
+            fb_rframe(6, y, 228, 18, squ.sel_down && !squ.cpy && sq_track_has(p, r) ? FL_C(FL_R_FIRE, 1) : C_ACC(1));
         sq_track_icon(13, ym - 5, r, k);
         fb_text(&CF_FONT_UI, 30, ym - 6, SQ_TRK_NAME[r], mute ? FL_INK3 : sel ? FL_INK : FL_INK2, 1);
         if (sel)                                 /* (what opens it, on the row itself: the top bar has no room) */
@@ -560,6 +561,9 @@ static void draw_sq_tracks(void)
                     FL_C(FL_R_SAND, 0));
         }
     }
+    /* what the lower knob does here: the top bar has room for one hint (0.7, the owner's pick: a caption at the
+     * bottom, where the song's sits) */
+    draw_chip_text_c(VIEW_Y - 1 + 3 * 24 + 2, "[ALGO] track  [EDIT] open it", FL_INK2);
     if (squ.sel_down && !squ.cpy && squ.pat < SQ_NPAT && sq_track_has(p, squ.trk)) {
         /* SEL held on a track: what will happen, the seconds left to it, how to keep it (the owner, 2026-10-19: three
          * seconds, a countdown, "чтобы пользователь понимал что произойдёт") */
@@ -722,7 +726,7 @@ static void draw_sq_song(void)
     str_cpy(b + str_len(b), t, 4);
     if (n)
         fb_text_r(&CF_FONT_UI, 212, HEAD_Y + 8, b, FL_INK2, 1);   /* (left of the section's icon, rc6) */
-    draw_chip_text_c(SQS_Y0 + 3 * SQS_RH + 2, n ? "[SEL] remove  [EDIT] open it" : "", FL_INK2);
+    draw_chip_text_c(SQS_Y0 + 3 * SQS_RH + 2, n ? "[ALGO] move  [SEL] remove  [EDIT] open" : "", FL_INK2);
     {
         static const char *const H[2] = {"GLO", "help"};
         draw_hints(H, 1);
@@ -736,11 +740,11 @@ static void draw_sq_help(void)
 {
     /* (what the knobs do their cells say: the owner, 2026-10-19, "K1-4 are not needed here") */
     /* (PLAY and REC need no line: the owner, 2026-10-19; REC held undoes any last change, not only a take) */
-    static const char *const TR[] = {"[SELECT] track", "[ALGO] pattern A..H, song", "[EDIT] open the track",
-                                     "hold [OCT+], turn [ALGO]:", "   copy the pattern there",
+    static const char *const TR[] = {"[SELECT] pattern A..H, song", "[ALGO] track", "[EDIT] open the track",
+                                     "hold [OCT+], turn [SELECT]:", "   copy the pattern there",
                                      "hold [SEL]: clear the track", "hold [REC]: undo last change",
                                      "[GLO] close", 0};
-    static const char *const SO[] = {"upper keys A..H: add at the end", "[SELECT] move the frame",
+    static const char *const SO[] = {"upper keys A..H: add at the end", "[ALGO] move the frame",
                                      "[SEL] remove it  [EDIT] open it", "[PLAY] play from the frame",
                                      "hold [REC]: undo last change", "[GLO] close", 0};
     /* (no "[SEQ] home": SEQ's way home is no news, "лишнее", the owner on rc4) */

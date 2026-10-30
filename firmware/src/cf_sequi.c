@@ -2,13 +2,14 @@
  * CoralFlower: the SEQUENCER screens' controls (the data: cf_seqd.c; the pictures: cf_seqv.c). Included by cf_ui.c.
  *
  *   SEQ         METRONOME, again the SEQUENCER, again HOME
- *   SEQUENCER   a pattern's four tracks, or the song. ALGORITHM turns the pattern (A..H, then the song), SELECT
- *               picks the track, EDIT opens it; the knobs are the picked track's (the owner, 2026-10-18: the
+ *   SEQUENCER   a pattern's four tracks, or the song. SELECT turns the pattern (A..H, then the song), ALGORITHM
+ *               picks the track (0.7, knob swap B: the upper knob the top row, the lower the list under it; the
+ *               owner's pick), EDIT opens it; the knobs are the picked track's (the owner, 2026-10-18: the
  *               tracks' controls at hand, the metronome on its own screen): K1 VOLUME, K2 SOUND (DRUMS: KIT),
  *               K3 KEY (the pattern follows HOME's key or stays), K4 MUTE.
  *   the song    a row of patterns, typed: the upper keys are the patterns A..H, a key puts its pattern after the
- *               frame (the owner, 2026-10-18: three knobs to put B after A "непонятно, неинтуитивно"). SELECT moves
- *               the frame, K1 changes the pattern in it, K2 moves it along, SEL takes it out (the pattern stays),
+ *               frame (the owner, 2026-10-18: three knobs to put B after A "непонятно, неинтуитивно"). ALGORITHM
+ *               moves the frame (0.7), K1 changes the pattern in it, K2 moves it along, SEL takes it out (the pattern stays),
  *               EDIT goes to that pattern, PLAY plays from it.
  *   a track     CHORDS / BASS: SELECT walks the steps, what the keys play is written on the step under the frame
  *               (while a key is down it is the same step, so a root then a button is one chord; the frame stays
@@ -2026,7 +2027,8 @@ static void sq_knob_turn(int k, int d)
 /* ALGORITHM on SEQUENCER: the pattern, then the song */
 static void sq_algo(int d)
 {
-    if (squ.oct_down && squ.pat < SQ_NPAT) {     /* OCT+ held: where the pattern goes (sq_oct_poll copies it) */
+    if (squ.oct_down && squ.pat < SQ_NPAT) {     /* OCT+ held, SELECT turned (0.7): where the pattern goes (sq_oct_poll
+                                                  * copies it) */
         if (!squ.ocpy) {
             squ.ocpy = 1;
             squ.ofrom = squ.pat;
@@ -2050,7 +2052,7 @@ static void sq_algo(int d)
     else if (sq_st.song.n)
         cf_post(CFE_SEQ, 3, SQ_NPAT, 0);
 }
-/* SELECT on SEQUENCER: the track (the song: the place) */
+/* ALGORITHM on SEQUENCER (0.7; SELECT before): the track (the song: the place) */
 /* a track of the pattern shown cleared whole (SEL held 1 s on the SEQUENCER: sq_sel_poll; a sweep of SEL held and
  * SELECT turned, as in a track, made no sense over four rows: the first detent took two tracks, the owner,
  * 2026-10-19) */

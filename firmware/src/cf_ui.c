@@ -670,8 +670,9 @@ static void ui_select(int d)                     /* SELECT: the bass sound, or a
         dm_seq_to = (uint8_t)v;
         return;
     }
-    if (cu.scr == SCR_SQ) {                      /* SEQUENCER: the track, the song's place */
-        sq_pick(d);
+    if (cu.scr == SCR_SQ) {                      /* SEQUENCER: the top row, the patterns A..H and the song (0.7, knob swap
+                                                  * B: the upper knob turns the top row, the owner's pick) */
+        sq_algo(d);
         return;
     }
     if (cu.scr == SCR_SQED) {                    /* a track: its step (DRUMS: its bar) */
@@ -746,8 +747,9 @@ static void ui_algo(int d)                       /* ALGORITHM: the chord algorit
         cfx_move(d);
         return;
     }
-    if (cu.scr == SCR_SQ) {                      /* SEQUENCER: the pattern, then the song */
-        sq_algo(d);
+    if (cu.scr == SCR_SQ) {                      /* SEQUENCER: the frame in the list under the tabs, the track (the
+                                                  * song: the place) (0.7: it was SELECT's) */
+        sq_pick(d);
         return;
     }
     {   /* ALGORITHM turns through the Lock variants first (the owner's order): Top Lock, Top, Side Lock, Side. The
