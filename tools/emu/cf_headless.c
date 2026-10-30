@@ -83,8 +83,21 @@ static void mo_drain(void)
         mo_count[(p >> 8) & 0xFFu]++;
 }
 extern uint32_t emu_render_ms;                   /* (emu_web.c: a device's frame time, CF_RENDER_MS) */
+static double clk_per, clk_t, clk_next;          /* clockon BPM: MIDI clock pulses under every step (clockoff) */
 static void step(uint32_t ms)
 {
+    if (clk_per > 0 && !wav) {                   /* (1 ms at a time, a pulse whenever one is due) */
+        while (ms--) {
+            if (clk_t >= clk_next) {
+                web_midi_in(0x0Fu | 0xF8u << 8);
+                clk_next += clk_per;
+            }
+            web_step(1);
+            mo_drain();
+            clk_t += 1.0;
+        }
+        return;
+    }
     if (!wav) {
         while (ms) {                             /* (10 ms at a time: MIDI out drained before its queue fills) */
             uint32_t k = ms > 10u ? 10u : ms;
@@ -193,6 +206,11 @@ int main(int argc, char **argv)
                 web_buttons(buttons);
                 step(20);
             }
+        } else if (!strcmp(cmd, "clockon")) {      /* clockon BPM: MIDI clock under all that follows (keys too) */
+            clk_per = 60000.0 / (atof(a) * 24.0);
+            clk_t = clk_next = 0;
+        } else if (!strcmp(cmd, "clockoff")) {
+            clk_per = 0;
         } else if (!strcmp(cmd, "clock")) {        /* clock BPM MS: MIDI clock pulses (24 a beat) for MS ms */
             double per = 60000.0 / (atof(a) * 24.0), t = 0, next = 0;
             int ms = atoi(b), done = 0;

@@ -431,6 +431,10 @@ void emu_fw_dump(void)
             for (e = 0; squ.pat < SQ_NPAT && e < p->nev; e++)
                 if (p->ev[e].trk == squ.trk)
                     printf(" %u.%u(%u)", (unsigned)p->ev[e].bar, (unsigned)p->ev[e].pos, (unsigned)p->ev[e].root);
+            printf("\n  sq lengths:");                /* (bar.pos+len, 1/24 of a beat: a take's first chord, 0.6.1) */
+            for (e = 0; squ.pat < SQ_NPAT && e < p->nev; e++)
+                if (p->ev[e].trk == squ.trk)
+                    printf(" %u.%u+%u", (unsigned)p->ev[e].bar, (unsigned)p->ev[e].pos, (unsigned)p->ev[e].len);
         }
         {                                         /* (rc2 cost study: part 0's VA patch, what a voice renders) */
             const int8_t *vp = va_patch[0];
