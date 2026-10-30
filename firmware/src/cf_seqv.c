@@ -779,12 +779,12 @@ static void draw_sq_help(void)
                                      "hold [EDIT], turn [SELECT]: move",
                                      "hold [OCT+], turn [SELECT]:", "   copy the bar there",
                                      "hold [REC]: undo last change", "[SAVE] back  [GLO] close", 0};   /* (no ARP) */
-    static const char *const DR[] = {"upper keys: drum  lower: steps",
+    /* (0.7, the Designer's sheet: no eraser line, as the owner said on 2026-10-20, "Стереть убрать"; the SEL-held
+     * cue names the eraser where it works. Every line keeps 8 px inside the panel.) */
+    static const char *const DR[] = {"upper: a drum  lower: steps",
                                      "[SELECT] bar  [PRESETS] the kit",
                                      "[SEL] clear  hold [SEL]: all",   /* (0.7: the SEL clear) */
-                                     "hold [SEL], turn [SELECT]: erase",   /* (0.7, the Designer's spec the owner took;
-                                                  * on 2026-10-20 he had said "Стереть убрать") */
-                                     "hold [OCT+], [SELECT]: copy bar",   /* ("turn" did not fit) */
+                                     "hold [OCT+], turn [SELECT]:", "   copy the bar there",
                                      "hold [EDIT], [PRESETS]: a rhythm",   /* (0.6: cf_dmui.c; "turn" did not fit) */
                                      "REC on: upper keys are pads", "hold [REC]: undo last change",
                                      "[SAVE] back  [GLO] close", 0};
