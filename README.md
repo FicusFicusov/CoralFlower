@@ -33,6 +33,7 @@ before you install anything.
   metronome or to an external MIDI clock.
 - **A sequencer** with eight patterns of chords, bass, drums and one more sound (the layer), and a song made of them.
   REC on the main screen records what you play into a new pattern, after a one-bar count-in.
+  In SEQUENCER, turn SELECT to pick a pattern or open SONG. Turn ALGORITHM to select a track or a block in the song.
 - **Six effects** in an order you choose: filter, drive, chorus, phaser, delay and reverb.
 - **About 60 sounds** from two synth engines, virtual analogue and FM: pads, keys, strings and basses. Many pads
   change slowly on their own. Chords and basses have separate lists. Every sound has an editor, and you can save your
