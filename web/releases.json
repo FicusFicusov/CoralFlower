@@ -1,6 +1,20 @@
 {
  "releases": [
   {
+   "version": "0.7",
+   "tag": "v0.7",
+   "sha256": "5baad0bb088d1bba9a60d0b7d47ca370db38a4faa7ccffada526c2e21134d5ea",
+   "pkg": "coralflower-0.7.fwsc",
+   "date": "2026-11-10",
+   "title": "Newer FM-1 support and sequencer controls",
+   "notes": [
+    "FM-1s with the newer UC25HQ80 chip can save sounds, settings and patterns across power-off and enter update mode from CoralFlower.",
+    "SELECT now picks patterns and SONG. ALGORITHM selects tracks and song blocks.",
+    "Copy a rhythm into a pattern with an empty Drums track. In DRUMS, hold and release SEL to clear the selected drum from its active bars.",
+    "Sound edits now survive power-off, including edits to a pattern’s own sounds."
+   ]
+  },
+  {
    "version": "0.6.1",
    "tag": "v0.6.1",
    "sha256": "de41c96a0979927d921a99064aca1b43cb871a5ab10736342abf22cab2845a22",
