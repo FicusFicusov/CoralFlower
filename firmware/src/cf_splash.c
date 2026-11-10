@@ -34,6 +34,7 @@ static void cf_splash(void)
 {
     cs_defaults(&cs);
     cf_settings_load();                          /* (what was set before the power-off, unless SAFE MODE) */
+    cf_usb_apply(1);                             /* (GLO > Audio: before audio_init and usb_start, main.c) */
     cf_palette_build();
     fb_full = 1;
     if (cr_safe) {

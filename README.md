@@ -43,6 +43,9 @@ before you install anything.
   [PlantStudio](https://github.com/pdfernhout/PlantStudio), a program that models real plants.
 - **MIDI over USB.** The chords, the bass and the sequencer's Layer and Drums go out on four channels you set. The
   FM-1 follows an external MIDI clock or sends its own.
+- **Audio over USB.** The computer sees an audio input, "CoralFlower In", with no driver: the master in stereo, and
+  the chords and the bass on their own pairs, at 44.1 or 48 kHz. In GLOBAL > Audio, USB REC turns it on or off, and
+  USB LVL picks whether the volume knob turns it down too (Volume) or only the speaker and the jack (Fixed).
 
 <table>
   <tr>

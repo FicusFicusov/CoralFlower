@@ -23,7 +23,9 @@
 #define FELUCCA_CDC 1
 #endif
 #ifndef FELUCCA_UAC
-#define FELUCCA_UAC 0            /* USB audio recording: later (the settings that switch it are not here yet) */
+#define FELUCCA_UAC 1            /* USB audio recording ("ChoralRoot In", master L/R): always on. No Options entry
+                                  * yet, so ua_off stays 0 (usb_audio.c): recording presented, 44.1 + 48 kHz offered.
+                                  * The CDC console is not presented with it (usb.c); updates and backups are SysEx */
 #endif
 #ifndef FELUCCA_UART
 #define FELUCCA_UART 1
@@ -152,7 +154,19 @@ static void mix_block(int32_t *out, uint32_t n)
 {
     CR_PROF_START();
     cf_audio_block(n);
+#if FELUCCA_UAC
+    ua_stage_on = ua.cap_alt && !USB_CDC_ON;     /* the computer records: fx.c stages the block's capture frames */
+#endif
     fx_mix_block(out, n);
+#if FELUCCA_UAC
+    if (ua_stage_on) {   /* USB audio: the master pair (fx.c ua_stage), before the click (as choralroot.c had it) */
+        uint32_t i;
+        for (i = 0; i < n; i++) {
+            ua_stage[i * UA_CAP_CHANNELS] = ua_sat(out[2u * i]);
+            ua_stage[i * UA_CAP_CHANNELS + 1u] = ua_sat(out[2u * i + 1u]);
+        }
+    }
+#endif
     cf_click_mix(out, n);
     CR_PROF(CRP_MASTER);
 }

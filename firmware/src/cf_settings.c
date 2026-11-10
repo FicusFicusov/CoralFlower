@@ -38,6 +38,8 @@ _Static_assert(sizeof(cf_set_t) == 188u, "settings: 0.4.1 takes a record of this
 _Static_assert(__builtin_offsetof(cf_set_t, notes_in) == 172u && __builtin_offsetof(cf_set_t, mark) == 174u &&
                __builtin_offsetof(cf_set_t, in_ch) == 175u,
                "settings: NOTES IN, the ARP's byte, 0.5's mark and IN CH sit where 0.4.x keeps the looper's four");
+_Static_assert(__builtin_offsetof(cf_set_t, usb_opts) == 181u && __builtin_offsetof(cf_set_t, snd_layer) == 182u,
+               "settings: GLO > Audio's byte is the padding before snd_layer (the record's size and layout stay)");
 _Static_assert(OBJ_PROJECT0 + 3u == ST_LOG_OBJ, "settings: the object that keeps the log");
 
 static cf_rec_t cf_rec;
@@ -114,6 +116,7 @@ static void cfs_sanitize(cf_set_t *s)
     if (s->retrig >= CF_NRT) s->retrig = d.retrig;
     if (s->clock_in > 2u) s->clock_in = 0;      /* (0 Off, 1 In, 2 Out) */
     s->boot_sound = s->boot_sound != 0;
+    s->usb_opts &= (uint8_t)(CF_USB_OFF | CF_USB_VOL);
     if (!(s->resume & CF_RESUME_ON))
         s->resume = 0;
     if (s->arp.mode >= CF_ARP_NMODES || s->arp.oct < 1u || s->arp.oct > 4u || s->arp.rate >= CF_ARP_NRATES ||
