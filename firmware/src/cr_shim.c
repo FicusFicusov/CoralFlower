@@ -45,7 +45,7 @@ static void persist_boot(void)         /* before settings_init / panel_init (pro
 #if FELUCCA_FLASH
     uint32_t f = irq_save(), k;
     CR_STAGE(BS_FLASH);
-    flash_ok = FL_FAR(fl_jedec_ram)() == 0x856014u;       /* the expected 1 MiB part, else stay RAM-only */
+    flash_ok = fm1_flash_supported(FL_FAR(fl_jedec_ram)());
     irq_restore(f);
     if (!flash_ok)
         return;

@@ -4,9 +4,12 @@
  * audio keeps up, erases and writes only inside the storage areas, the audio buffer silenced
  * first. The host tests (storage_test.c) provide their own st_* on a simulated NOR. */
 static uint8_t flash_ok;                 /* JEDEC id matched at boot (persist_boot) */
+/* All app object I/O must respect the probe, including callers with no local check. */
 static int st_read(uint32_t off, void *dst, uint32_t n)   /* 256-byte IRQ-off windows: audio keeps up */
 {
     uint8_t *d = dst;
+    if (!flash_ok)
+        return -8;
     while (n) {
         uint32_t k = n > 256u ? 256u : n, f = irq_save();
         int rc = FL_FAR(fl_read_ram)(off, d, k);
@@ -30,7 +33,7 @@ static int st_erase(uint32_t off)
 {
     uint32_t took, f;
     int rc;
-    if (!FL_STORE_OK(off, 0x1000u))
+    if (!flash_ok || !FL_STORE_OK(off, 0x1000u))
         return -8;
     st_erases++;
     st_holes += (uint32_t)audio_loud();
@@ -54,7 +57,7 @@ static void st_after_render(void)
 #endif
 static int st_prog(uint32_t off, const void *src, uint32_t n)
 {
-    if (!FL_STORE_OK(off, n))                   /* only inside the storage areas */
+    if (!flash_ok || !FL_STORE_OK(off, n))      /* only inside the storage areas */
         return -8;
     return fl_write(off, src, n);
 }

@@ -60,6 +60,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p build/host
+          cc -std=c99 -Wall -Wextra -Werror -Ifirmware/hal -o build/host/fm1_flash_id_test tests/fm1_flash_id_test.c
+          build/host/fm1_flash_id_test
           # (the emulator's <os/lock.h> is macOS's; tools/emu/web/compat has the single-threaded one, as the headless build)
           cc -std=gnu11 -O1 -w -Itools/emu/web/compat -Ibuild/gen -Ifirmware/src -Itests -o build/host/cf_backup_test \
              tests/cf_backup_test.c -lm
