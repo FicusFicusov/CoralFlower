@@ -526,8 +526,7 @@ static void dm_copy_apply(void)                  /* OCT+ let go while copying */
     char m[40];
     if (!dm_copy_free((int)f) || DM_RHY[r % DM_N].beats != dm_beats())
         return;
-    sqh.busy = 0;
-    sq_undo_poll();                              /* (the undo: the pattern as it was) */
+    sq_touch_pat(f);                             /* (the undo: the target pattern as it was) */
     if (sq_empty(p)) {                           /* (nothing in it: a new pattern, as EDIT makes one) */
         sq_fresh(p, cs.beats);
         p->tonic = cs.chord.tonic;

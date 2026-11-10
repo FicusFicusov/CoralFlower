@@ -906,8 +906,8 @@ static void sq_sel_poll(void)                    /* every frame: SEL let go in a
                 cu.pop = POP_NONE;
             squ.sel_cue = 0;
         } else if (cu.now - squ.sel_down >= SQ_SEL_HOLD_MS) {   /* held: what letting go does, while it is held */
-            if (!squ.sel_cue) {
-                sq_sel_window(m, sizeof m, 1);
+            sq_sel_window(m, sizeof m, 1);
+            if (!squ.sel_cue || !str_eq(cu.msg, m)) {
                 cf_message(m);
                 squ.sel_cue = 1;
             }

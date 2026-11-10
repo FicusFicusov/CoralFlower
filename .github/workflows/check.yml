@@ -66,6 +66,11 @@ jobs:
           cc -std=gnu11 -O1 -w -Itools/emu/web/compat -Ibuild/gen -Ifirmware/src -Itests -o build/host/cf_backup_test \
              tests/cf_backup_test.c -lm
           build/host/cf_backup_test
+          cc -std=gnu11 -O1 -w -Itools/emu/web/compat -Ibuild/gen -Ifirmware/src -DEMU_WEB \
+             -o build/host/cf_ui_gestures_test tests/cf_ui_gestures_test.c
+          for scenario in copy-other copy-same copy-empty copy-cancel-play copy-cancel-rec sel-bars sel-position sel-drum; do
+            build/host/cf_ui_gestures_test "$scenario"
+          done
           cc -std=c99 -Wall -Wextra -Ifirmware/src -o build/cf_chord_test tests/cf_chord_test.c firmware/src/cf_chord.c \
              firmware/src/cf_theory.c
           build/cf_chord_test
