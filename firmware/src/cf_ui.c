@@ -68,6 +68,24 @@ static void cf_send_config(void)                 /* the chord settings -> the au
     cf_fx_apply(&cs.fx);
     cf_post(CFE_CONFIG, 0, 0, 0);
 }
+
+/* GLO > Audio -> the USB recording (usb.c, usb_audio.c) and fx.c's level split. boot: before usb_start (cf_splash,
+ * after the settings load), the host is given that configuration from the first enumeration; else a turn of
+ * USB AUDIO: ua_off_set, and the main loop replugs once it has rested 0.6 s ("USB RECONNECTING", main.c). USB LEVEL
+ * at once: from the next audio block the knob scales the DAC only (Fixed) or the USB pair too (Volume). The jack and
+ * the speaker are one DAC: both always sound, both follow the knob */
+static void cf_usb_apply(int boot)
+{
+    fx_usb_fixed = (uint8_t)!(cs.usb_opts & CF_USB_VOL);
+#if FELUCCA_UAC
+    if (boot)
+        ua_off = ua_off_want = (uint8_t)(cs.usb_opts & CF_USB_OFF ? UA_OFF_IN : 0u);   /* (44.1 + 48 kHz offered) */
+    else
+        ua_off_set(UA_OFF_IN, !(cs.usb_opts & CF_USB_OFF), fm1_ms);
+#else
+    (void)boot;
+#endif
+}
 static void cf_send_metro(void)
 {
     sq_beats = (uint8_t)(cs.beats >= 2u && cs.beats <= 7u ? cs.beats : 4u);   /* (the sequencer's bar: cf_seqd.c) */
@@ -361,7 +379,15 @@ static void ui_knob_info(int k, cf_knob_t *o)
             if (k == 2) { kfmt(o->name, 12, "LAYER CH"); kint(o->val, cs.ch_layer + 1, 0); }
             if (k == 3) { kfmt(o->name, 12, "DRUMS CH"); kint(o->val, cs.ch_drums + 1, 0); }
             break;
-        case 4: /* Reset: K4 the first step */
+        case 4: /* Audio: the USB recording on or off, its level with the knob or fixed */
+            if (k == 0) { kfmt(o->name, 12, "USB REC"); kfmt(o->val, 14, cs.usb_opts & CF_USB_OFF ? "Off" : "On"); }
+            if (k == 1) {
+                kfmt(o->name, 12, "USB LVL");
+                kfmt(o->val, 14, cs.usb_opts & CF_USB_VOL ? "Volume" : "Fixed");
+                o->dis = (uint8_t)!!(cs.usb_opts & CF_USB_OFF);
+            }
+            break;
+        case 5: /* Reset: K4 the first step */
             if (k == 3) {
                 kfmt(o->name, 12, "ACTION");
                 kfmt(o->val, 14, cfr.arm ? "Reset" : "Keep");
@@ -575,7 +601,15 @@ static void ui_knob_turn(int k, int d)
                 cs.ch_drums = (uint8_t)clampi(cs.ch_drums + d, 0, 15);
             cf_send_config();
             break;
-        case 4:                                  /* Reset: K4 arms it (the steps after: SAVE) */
+        case 4:                                  /* Audio: K1 USB AUDIO, K2 USB LEVEL (right: On / Volume) */
+            if (k == 0)
+                cs.usb_opts = (uint8_t)(d > 0 ? cs.usb_opts & ~CF_USB_OFF : cs.usb_opts | CF_USB_OFF);
+            if (k == 1 && !(cs.usb_opts & CF_USB_OFF))
+                cs.usb_opts = (uint8_t)(d > 0 ? cs.usb_opts | CF_USB_VOL : cs.usb_opts & ~CF_USB_VOL);
+            if (k <= 1)
+                cf_usb_apply(0);
+            break;
+        case 5:                                  /* Reset: K4 arms it (the steps after: SAVE) */
             if (k == 3 && !cfr.go) {
                 cfr.arm = (uint8_t)(d > 0);
                 cfr.fin = 0;
@@ -633,7 +667,7 @@ static void ui_say(const char *a, const char *b)
 static uint32_t screen_pages(uint32_t scr)
 {
     if (scr == SCR_GLO)
-        return 5u;                               /* Display, MIDI, Channels, Play, Reset */
+        return 6u;                               /* Display, MIDI, Channels, Play, Audio, Reset */
     if (scr == SCR_ENV)
         return 3u;                               /* chord + bass, chord, bass */
     if (scr == SCR_ARP)
@@ -819,7 +853,7 @@ static void ui_open(uint32_t scr)
 /* GLOBAL > Reset: everything the user made goes (cf_backup.c cf_factory_erase), after three steps, each its own
  * gesture (the owner, 2026-10-19: "полный резет, с подтверждениями несколькими"): K4 to Reset; SAVE held 3 s; SAVE
  * once more within 6 s. Leaving the page, letting SAVE go early or the 6 s passing undoes them */
-static int cf_reset_page(void) { return cu.scr == SCR_GLO && cu.page[SCR_GLO] == 4u; }
+static int cf_reset_page(void) { return cu.scr == SCR_GLO && cu.page[SCR_GLO] == 5u; }
 static void cf_reset_poll(void)                  /* every frame */
 {
     uint32_t now = cu.now;

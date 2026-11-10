@@ -332,6 +332,67 @@ static void view_midi(int x0)
     }
 }
 
+/* ---------------------------------------------------- GLOBAL > Audio --- */
+/* the unit and its two ways out, drawn as GLO > MIDI draws its lanes: USB to the computer (cut when USB AUDIO is
+ * Off) and the speaker with the jack (one DAC: always on). At the end of each a bar at the level it gets: the knob's
+ * (song.master_q12) for the speaker and the jack, and for USB the knob's too with USB LEVEL Volume, full with Fixed.
+ * Turn the volume knob and the bars show which way follows it. While anything sounds (cfs_sounding) the sound runs
+ * down the open lanes */
+static void view_audio(int x0)
+{
+    static const char *const NM[2] = {"USB", "SPEAKER + JACK"};
+    int ym = VIEW_Y + 26, xa = x0 + 54, xb = x0 + 160, p, i;
+    int usb = !(cs.usb_opts & CF_USB_OFF), fixed = !(cs.usb_opts & CF_USB_VOL), snd = cfs_sounding();
+    int32_t knob = (int32_t)song.master_q12;
+    char l1[40], l2[40];
+    /* the unit, as on GLO > MIDI */
+    fb_rbox(x0 + 12, ym - 15, 36, 30, 3, cf_panel(2));
+    for (i = 0; i < 5; i++)
+        fb_rect(x0 + 16 + i * 6, ym + 4, 4, 7, cf_panel(1));
+    fb_rect(x0 + 16, ym - 10, 28, 3, C_ACC(1));
+    fb_text_c(&CF_FONT_MICRO, x0 + 30, ym + 19, "FM-1", FL_INK3, 1);
+    for (p = 0; p < 2; p++) {
+        int lane = ym - 11 + p * 22, mid = (xa + xb) / 2, on = p ? 1 : usb;
+        int32_t lv = p ? knob : (fixed ? MASTER_FULL : knob);
+        uint8_t c = on ? (p ? FL_INK2 : C_ACC(1)) : FL_BG3;
+        fb_line(x0 + 48, ym, xa, lane, c);
+        if (on) {
+            fb_hline(xa, lane, xb - xa, c);
+        } else {                                 /* cut */
+            fb_hline(xa, lane, mid - 6 - xa, c);
+            fb_hline(mid + 6, lane, xb - mid - 6, c);
+        }
+        if (on && snd)
+            for (i = 0; i < 3; i++) {           /* the sound going out: three dots 420 ms apart, 1.26 s a lane (a
+                                                 * steady flow, slower than GLO > MIDI's note pulses) */
+                int px = xa + (int)((cu.now + (uint32_t)i * 420u) % 1260u) * (xb - xa) / 1260;
+                fb_rect(px - 2, lane - 2, 5, 5, p ? FL_INK : C_ACC(0));
+            }
+        fb_text_halo(&CF_FONT_UI, xa + 6, lane - 13, NM[p], on ? FL_INK2 : FL_INK3, FL_BG, 1);
+        fb_rbox(xb, lane - 7, 46, 14, 3, on ? cf_panel(2) : cf_panel(1));
+        if (on) {                                /* the level it gets: 0 .. 40 px */
+            int w = (int)(clamp(lv, 0, MASTER_FULL) * 40 / MASTER_FULL);
+            fb_rect(xb + 3, lane - 3, 40, 6, FL_BG3);
+            if (w > 0)
+                fb_rect(xb + 3, lane - 3, w, 6, p ? FL_INK : C_ACC(0));
+        } else {
+            fb_text_c(&CF_FONT_UI, xb + 23, lane - 6, "Off", FL_INK3, 1);
+        }
+    }
+    if (!usb) {
+        str_cpy(l1, "USB: MIDI only, no recording", sizeof l1);
+        str_cpy(l2, "Speaker and jack as always", sizeof l2);
+    } else if (fixed) {
+        str_cpy(l1, "Volume knob: speaker + jack only", sizeof l1);
+        str_cpy(l2, "USB records at full level", sizeof l2);
+    } else {
+        str_cpy(l1, "Volume knob: speaker, jack", sizeof l1);
+        str_cpy(l2, "and USB together", sizeof l2);
+    }
+    fb_text_halo(&CF_FONT_UI, x0 + 108 - fb_text_w(&CF_FONT_UI, l1, 1) / 2, VIEW_Y + 61, l1, FL_INK2, FL_BG, 1);
+    fb_text_halo(&CF_FONT_UI, x0 + 108 - fb_text_w(&CF_FONT_UI, l2, 1) / 2, VIEW_Y + 72, l2, FL_INK2, FL_BG, 1);
+}
+
 /* ----------------------------------------------------- GLOBAL > Play --- */
 /* two chords on a little piano roll, the way the settings make them sound: GLIDE (Legato: the second pressed while the
  * first is held, the voices slide; Always: they slide even after a release), the loudness under them (VELOCITY its
