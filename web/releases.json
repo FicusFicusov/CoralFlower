@@ -1,6 +1,18 @@
 {
  "releases": [
   {
+   "version": "0.7.1",
+   "tag": "v0.7.1",
+   "sha256": "d87d6327e0f98000cfa740bab70487728de85d3d64fd96c3a65dfd6bbdf71bbd",
+   "pkg": "coralflower-0.7.1.fwsc",
+   "date": "2026-11-10",
+   "title": "Fixes for Undo and SEL",
+   "notes": [
+    "After you copy a rhythm into a pattern, Undo now restores that pattern to its previous state and leaves other patterns unchanged.",
+    "While you hold “SEL” in a track editor, the message now updates when you change “BARS”, “POSITION”, or the selected drum. It shows what will be cleared when you let go."
+   ]
+  },
+  {
    "version": "0.7",
    "tag": "v0.7",
    "sha256": "5baad0bb088d1bba9a60d0b7d47ca370db38a4faa7ccffada526c2e21134d5ea",
