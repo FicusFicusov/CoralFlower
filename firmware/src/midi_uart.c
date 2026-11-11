@@ -7,8 +7,8 @@
  * USB-MIDI packets (cable 0, CIN = status >> 4), so seq.c routes them by channel
  * exactly as USB (CH1-4 or SEL;
  * host tests: midi_uart_test, hostsim TRACKS trs_test);
- * Clock/Start/Continue/Stop retain timestamps and source; other realtime,
- * system common and SysEx are ignored (no SysEx->UBOOT from DIN). */
+ * Clock/Start/Continue/Stop and Song Position Pointer retain timestamps and
+ * source; other realtime/system common and SysEx are ignored (no SysEx->UBOOT from DIN). */
 #include "../hal/fm1_uart.h"   /* registers; relative, so the host tests find it too */
 
 #define UM_RING 128u
@@ -24,7 +24,7 @@ static void uart_midi_init(void)                   /* before timer5_start(): POR
     fm1_uart1_midi_init(um_ring, UM_RING);
 }
 
-static uint32_t um_len(uint32_t s)                 /* data bytes of a channel status */
+static uint32_t um_len(uint32_t s)                 /* data bytes of a channel status or SPP */
 {
     return (s & 0xE0u) == 0xC0u ? 1u : 2u;         /* Cx Dx: 1, else 2 */
 }
@@ -42,7 +42,7 @@ static void um_byte(uint32_t b)
     }
     if (b & 0x80u) {
         um.sysex = b == 0xF0u;
-        um.st = b < 0xF0u ? (uint8_t)b : 0;        /* system common/SysEx cancel running status */
+        um.st = b < 0xF0u || b == 0xF2u ? (uint8_t)b : 0; /* SPP replaces running status until complete */
         um.need = (uint8_t)um_len(b);
         um.got = 0;
         return;
@@ -56,8 +56,11 @@ static void um_byte(uint32_t b)
     }
     {
         uint32_t d1 = um.need == 2u ? um.d0 : b, d2 = um.need == 2u ? b : 0u;
-        uint32_t pkt = (um.st >> 4) | (uint32_t)um.st << 8 | d1 << 16 | d2 << 24;
+        uint32_t cin = um.st == 0xF2u ? 3u : um.st >> 4;
+        uint32_t pkt = cin | (uint32_t)um.st << 8 | d1 << 16 | d2 << 24;
         um.got = 0;
+        if (um.st == 0xF2u)
+            um.st = 0;                            /* system common never establishes running status */
         if (midi_enqueue(pkt, 2u)) {
             um.msgs++;
         } else {

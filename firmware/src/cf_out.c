@@ -292,19 +292,31 @@ static struct {
 } cfm = {0, 0, 0, 4, 120, 0, 0, 0, 0, 0};
 
 #include "cr_midi.c"                             /* (MIDI in's pure part: the clock's follower, the channels' map) */
-/* MIDI clock in (GLO > MIDI > CLOCK IN, cf_midi_in): while its pulses come, they run the beat (a pulse is 1/24 of
- * one) instead of the tempo, so the metronome, the arpeggiator and the sequencer follow the other instrument */
+/* External clock state is owned by the audio ISR. The selected PLAY target is
+ * one atomic word published by the UI; receiving transport never calls the UI. */
+static volatile uint32_t cft_target;
 static struct {
-    crm_clock_t f;               /* (cr_midi.c's tempo follower) */
-    uint32_t pulses;             /* come since the last block */
-    uint32_t last_ms;            /* the last one (cf_now_ms) */
-    uint8_t active;              /* pulses within the last 300 ms */
-    uint16_t bpm;                /* the tempo they make (0: none yet) */
+    crm_clock_t f;
+    uint32_t last_ms, elapsed, period;
+    uint8_t active, enabled, source, seen, fresh, lost;
+    uint8_t wait;                 /* 1 first pulse, 2 Continue, 3 located Continue */
+    uint8_t sub, metro_sub;       /* 96 PPQN: 0..3 since F8, 0..95 since beat */
+    uint8_t resume, located;      /* stopped target: 1 pattern/song, 2 rhythm, 3 beat */
+    uint16_t bpm;
 } cfx_in;
+static uint32_t cf_tempo(void)
+{
+    return cfp_cfg.clock_in && cfx_in.bpm ? cfx_in.bpm :
+           cfp_cfg.bpm >= 30u && cfp_cfg.bpm <= 300u ? cfp_cfg.bpm : 120u;
+}
 
-static void cfm_tick(uint32_t n, uint32_t pulses)
+static void cfm_tick(uint32_t n, uint32_t ticks)
 {
     uint32_t k;
+    if (cfp_cfg.clock_in && (!cfm.running || cfx_in.wait)) {
+        cf_grid.on = 1;                          /* frozen: an external slave never falls back to its own tempo */
+        return;
+    }
     if (!cfm.on && !cfm.running) {
         cf_grid.on = 0;
         return;
@@ -315,8 +327,11 @@ static void cfm_tick(uint32_t n, uint32_t pulses)
         cfm.beats_done++;
         cfm.beat_ms = cf_now_ms;
     }
-    if (cfx_in.active) {                         /* the clock's pulses: FS x 60 / 24 each */
-        cfm.acc += pulses * (FS * 60u / 24u);
+    if (cfp_cfg.clock_in) {
+        uint32_t total = cfx_in.metro_sub + ticks;
+        cfx_in.metro_sub = (uint8_t)(total % 96u);
+        /* Convert the remainder once: FS*60/96 is fractional at 44.1 kHz. */
+        cfm.acc = (total / 96u) * (FS * 60u) + cfx_in.metro_sub * (FS * 60u) / 96u;
     } else {
         cfm.acc += n * cfm.bpm;
     }
@@ -338,7 +353,7 @@ static void cfm_tick(uint32_t n, uint32_t pulses)
 /* MIDI clock out (CLOCK Out): while the beat runs (PLAY, the sequencer), 24 pulses a beat on the metronome's
  * own grid (cf_grid.g24: a beat's first pulse is its downbeat), a start when it begins, a stop when it ends. USB MIDI
  * CIN 0x0F: a single-byte system real-time message (as ChoralRoot's cr_out.c sent them) */
-static struct { uint8_t was; uint32_t g24, gen; } cfo;
+static struct { uint8_t was, first; uint32_t g24, gen, start_ms; } cfo;
 static void cf_clock_out(void)
 {
     int run = cfp_cfg.clock_out && cfp_cfg.midi_out && cfm.running && !cfx_in.active;
@@ -347,8 +362,8 @@ static void cf_clock_out(void)
         midi_out_event(0x0Fu | (run ? 0xFAu : 0xFCu) << 8);
         cfo.g24 = cf_grid.g24;
         cfo.gen = cf_grid.gen;
-        if (run)
-            midi_out_event(0x0Fu | 0xF8u << 8);  /* (the downbeat's pulse with the start) */
+        cfo.first = (uint8_t)run;
+        cfo.start_ms = fm1_ms;               /* MIDI 1.0: leave at least 1 ms between Start and first Clock */
         return;
     }
     if (!run)
@@ -358,8 +373,15 @@ static void cf_clock_out(void)
         cfo.gen = cf_grid.gen;
         cfo.g24 = cf_grid.g24;
         midi_out_event(0x0Fu | 0xFAu << 8);
-        midi_out_event(0x0Fu | 0xF8u << 8);
+        cfo.first = 1;
+        cfo.start_ms = fm1_ms;
         return;
+    }
+    if (cfo.first) {
+        if ((uint32_t)(fm1_ms - cfo.start_ms) < 1u)
+            return;
+        midi_out_event(0x0Fu | 0xF8u << 8);
+        cfo.first = 0;
     }
     while (cfo.g24 < cf_grid.g24) {
         cfo.g24++;
@@ -372,6 +394,12 @@ static void cfm_restart(void)
     cfm.acc = 0;
     cfm.beat = 0;
     cfm.beats_done = 0;
+    cfx_in.metro_sub = 0;
+    if (cfp_cfg.clock_in && !cfm.running) {
+        cfx_in.wait = 1;
+        cfx_in.sub = 0;
+        cfx_in.resume = cfx_in.located = 0;
+    }
     cf_grid.gen++;
 }
 
@@ -379,6 +407,8 @@ static void cfm_restart(void)
 #include "cf_seqd.c"                             /* (the sequencer's patterns and song) */
 #include "cf_seqp.c"                             /* (.. playing them) */
 #include "cf_drum.c"                             /* (the drum machine's rhythms and their player, 0.6) */
+
+#include "cf_clock.c"                           /* MIDI transport, shared external phase and source selection */
 
 /* the metronome's sounds: a decaying resonator (the accent on the downbeat a different pitch), some with noise.
  * a1 = 2 r cos w and a2 = r^2 (Q14), s = sin w (x 10000) sets the start; len: samples to -60 dB; noise: % */
@@ -487,23 +517,8 @@ static void cf_midi_in(void)
         uint32_t at = mi_r % MQ, pkt = midi_in_q[at], status = (pkt >> 8) & 0xFFu;
         uint32_t d1 = (pkt >> 16) & 0x7Fu, d2 = (pkt >> 24) & 0x7Fu;
         mi_r++;
-        if (status >= 0xF8u) {                   /* MIDI clock in (CLOCK IN On): the pulses, start, continue, stop */
-            if (!cfp_cfg.clock_in)
-                continue;
-            if (status == 0xF8u) {
-                int b = crm_clock_pulse(&cfx_in.f, midi_in_ms[at]);
-                if (b) {
-                    cfx_in.bpm = (uint16_t)b;
-                    cfm.bpm = (uint16_t)b;
-                }
-                cfx_in.pulses++;
-                cfx_in.last_ms = cf_now_ms;
-            } else if (status == 0xFAu || status == 0xFBu) {   /* start / continue: from beat 1 */
-                cfm_restart();
-                cfm.running = 1;
-            } else if (status == 0xFCu) {        /* stop */
-                cfm.running = 0;
-            }
+        if (status >= 0xF8u || status == 0xF2u) {
+            cf_clock_event(status, d1 | d2 << 7, midi_in_ms[at], midi_in_source[at]);
             continue;
         }
         if (cfp_cfg.notes_in != CF_NI_DIRECT && (status & 0xE0u) == 0x80u) {   /* a note on or off: IN CH's, or any
@@ -592,9 +607,16 @@ static void cf_apply(const cf_ev_in_t *e)
         cfm.on = e->a;
         cfm.level = e->b;
         break;
-    case CFE_TEMPO: cfm.bpm = (uint16_t)(e->v < 30 ? 30 : e->v > 300 ? 300 : e->v); break;
+    case CFE_TEMPO:
+        cfm.bpm = cfp_cfg.clock_in && cfx_in.bpm ? cfx_in.bpm :
+                  (uint16_t)(e->v < 30 ? 30 : e->v > 300 ? 300 : e->v);
+        break;
     case CFE_SIG: cfm.beats = (uint8_t)(e->v < 1 ? 1 : e->v > 12 ? 12 : e->v); break;
     case CFE_TRANSPORT:
+        if (!e->v && cfp_cfg.clock_in) {
+            cf_clock_stop();
+            break;
+        }
         if (e->v)
             cfm_restart();
         cfm.running = (uint8_t)(e->v != 0);
@@ -634,24 +656,28 @@ static void cf_audio_block(uint32_t n)
         cf_apply(&cf_evq[cf_evq_r % CF_EVQ]);
         cf_evq_r++;
     }
+    cf_clock_mode();
     cf_midi_in();
     cf_ms_rem += n * 1000u;
     while (cf_ms_rem >= FS) {
         cf_ms_rem -= FS;
         cf_now_ms++;
     }
-    {
-        uint32_t pulses = cfx_in.pulses;         /* (MIDI clock in: the pulses come since the last block) */
-        cfx_in.pulses = 0;
-        cfx_in.active = cfp_cfg.clock_in && cfx_in.bpm && (uint32_t)(cf_now_ms - cfx_in.last_ms) < 300u;
-        cfa_tick(n);                             /* (the arpeggiator: its steps, its strum) */
-        sqp_arp_tick(n);                         /* (the sequencer's tracks' with ARP on) */
-        sqp_pre_watch();                         /* (since REC went down, before a take begins) */
-        sqp_tick(n, pulses);                     /* (the sequencer) */
-        dmp_tick(n, pulses);                     /* (.. or the drum machine's rhythm) */
-        cfm_tick(n, pulses);
-        cf_clock_out();
+    if (cfp_cfg.clock_in) {
+        sqp_pre_watch();
+        cf_clock_tick(n);
+        cfa_tick(n);
+        sqp_arp_tick(n);
+        sqp_tick(n, 0);                          /* recording observes input even between clock subdivisions */
+    } else {
+        cfa_tick(n);
+        sqp_arp_tick(n);
+        sqp_pre_watch();
+        sqp_tick(n, 0);
+        dmp_tick(n, 0);
+        cfm_tick(n, 0);
     }
+    cf_clock_out();
 }
 
 /* ---------------------------------------------------- what the UI reads --- */

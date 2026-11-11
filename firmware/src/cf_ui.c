@@ -1417,6 +1417,20 @@ static void cf_ui_input(void)
     for (i = 0; i < 4u; i++)
         if ((d = panel_enc(EN_K1 + i)) != 0)
             ui_knob_turn((int)i, d), cu.idle_ms = 0;
+    /* The audio ISR can start exactly the content local PLAY would choose,
+     * without calling UI routines or mutating the stored pattern/song. */
+    if (cu.scr == SCR_DRUM || (!sq_screen(cu.scr) && dmr.last)) {
+        uint32_t r = dm_cur();
+        cft_target = 2u | r << 8 | dm_kit(r) << 16 | dm_swing(r) << 24;
+    } else if (sq_screen(cu.scr)) {
+        cft_target = squ.pat < SQ_NPAT ? 1u | (uint32_t)squ.pat << 8 :
+                     sq_st.song.n ? 1u | SQ_NPAT << 8 : 0u;
+    } else if (sqk.song && sq_st.song.n) {
+        cft_target = 1u | SQ_NPAT << 8;
+    } else {
+        cft_target = sqk.last < SQ_NPAT && sq_has(sqk.last) ? 1u | (uint32_t)sqk.last << 8 : 0u;
+    }
+
 }
 
 /* ------------------------------------------------------------ key caps --- */

@@ -739,6 +739,7 @@ static void sqp_stop(void)
 {
     if (!sqp.on)
         return;
+    cfx_in.resume = 1;
     sqp_chord_off();
     sqp_bass_off();
     sqp_layer_off();
@@ -802,13 +803,13 @@ static void sqp_begin(uint32_t pat, uint32_t slot, int cin)
     cfm.running = 1;
     if (cin)
         sqp.cin = sqp_bar_ticks();
-    else
+    else if (!cfp_cfg.clock_in)
         sqp_now();
 }
 static void sqp_start(uint32_t pat, uint32_t slot) { sqp_begin(pat, slot, 0); }
 
 /* every audio block */
-static void sqp_tick(uint32_t n, uint32_t pulses)
+static void sqp_tick(uint32_t n, uint32_t ticks)
 {
     uint32_t k;
     if (!sqp.on)
@@ -816,8 +817,8 @@ static void sqp_tick(uint32_t n, uint32_t pulses)
     if (sqp_pre.on && sqp.rec != 0xFFu && sqp.cin < SQ_PPQN / 4u)
         sqp_pre_flush();
     sqp_rec_watch();
-    if (cfx_in.active) {
-        for (k = 0; k < pulses * (SQ_PPQN / 24u); k++)
+    if (cfp_cfg.clock_in) {
+        for (k = 0; k < ticks && sqp.on; k++)
             sqp_tick1();
         return;
     }

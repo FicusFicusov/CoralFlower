@@ -223,6 +223,7 @@ static void dmp_stop(void)
 {
     if (!dmp.on)
         return;
+    cfx_in.resume = 2;
     dmp.on = 0;
     dmp.next = 0xFF;
     dmp.rin = 0;
@@ -244,9 +245,11 @@ static void dmp_start(uint32_t r, uint32_t kit, uint32_t swing)
     dmp.acc = 0;
     dmp.nh = 0;
     dmp.on = 1;
+    cfm.running = 0;                            /* a new rhythm, including Start after clock loss, arms at zero */
     cfm_restart();
     cfm.running = 1;
-    dmp_now();
+    if (!cfp_cfg.clock_in)
+        dmp_now();
 }
 /* REC in the SEQUENCER while a rhythm plays: its bar ends first, then pattern pat plays from its top, the take into
  * track trk */
@@ -270,6 +273,11 @@ static void dmp_next_bar(void)
         uint32_t pat = dmp.rin - 1u, trk = dmp.rtrk;
         dmp_stop();
         sqp_begin(pat, 0, 0);
+        if (cfp_cfg.clock_in) {                 /* this boundary IS the clock to start on; do not wait another F8 */
+            cfx_in.wait = 0;
+            cfm_tick(0, 0);
+            sqp_now();
+        }
         sqp_rec_set(trk);
         return;
     }
@@ -299,13 +307,13 @@ static void dmp_tick1(void)
     if (dmp.on)
         dmp_now();
 }
-static void dmp_tick(uint32_t n, uint32_t pulses)   /* every audio block, as sqp_tick */
+static void dmp_tick(uint32_t n, uint32_t ticks)   /* every audio block, as sqp_tick */
 {
     uint32_t k;
     if (!dmp.on)
         return;
-    if (cfx_in.active) {
-        for (k = 0; k < pulses * (SQ_PPQN / 24u) && dmp.on; k++)
+    if (cfp_cfg.clock_in) {
+        for (k = 0; k < ticks && dmp.on; k++)
             dmp_tick1();
         return;
     }

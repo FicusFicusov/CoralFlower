@@ -53,7 +53,8 @@ static void sqp_off(uint32_t part, uint32_t note);   /* (cf_seqp.c: a note of th
                                                      * sound it) */
 static uint32_t cfa_part(void) { return cfa.part == 0xFFu ? cfp_cp : cfa.part; }
 
-static uint32_t cfa_bpm(void) { return cfp_cfg.bpm >= 30u && cfp_cfg.bpm <= 300u ? cfp_cfg.bpm : 120u; }
+static uint32_t cf_tempo(void);                 /* cf_out.c: external tempo also sets note gate lengths */
+static uint32_t cfa_bpm(void) { return cf_tempo(); }
 static uint32_t cfa_oct(void) { return cfp_cfg.arp.oct >= 1u && cfp_cfg.arp.oct <= 4u ? cfp_cfg.arp.oct : 1u; }
 
 /* the step about to come, in samples x BPM x 2400: the RATE's length, a pair's first stretched by SWING */

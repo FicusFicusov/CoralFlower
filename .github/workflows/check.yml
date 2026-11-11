@@ -71,6 +71,18 @@ jobs:
           for scenario in copy-other copy-same copy-empty copy-cancel-play copy-cancel-rec sel-bars sel-position sel-drum; do
             build/host/cf_ui_gestures_test "$scenario"
           done
+          cc -std=c99 -O2 -Wall -Wextra -Wno-unused-function -Wno-int-to-pointer-cast \
+             -o build/host/midi_spp_test tests/midi_spp_test.c
+          build/host/midi_spp_test
+          cc -std=gnu11 -O2 -w -Itools/emu/web/compat -Ibuild/gen -Ifirmware/src -DEMU_WEB \
+             -o build/host/cf_clock_test tests/cf_clock_test.c
+          for scenario in transport acquisition locate rhythm recovery arp out count-in switch transfer restart; do
+            build/host/cf_clock_test "$scenario"
+          done
+          for bpm in 90 120 137 300; do
+            build/host/cf_clock_test timing "$bpm" 0
+          done
+          build/host/cf_clock_test timing 120 1
           cc -std=c99 -Wall -Wextra -Ifirmware/src -o build/cf_chord_test tests/cf_chord_test.c firmware/src/cf_chord.c \
              firmware/src/cf_theory.c
           build/cf_chord_test
