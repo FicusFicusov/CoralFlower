@@ -778,10 +778,12 @@ static void midi_in_event(uint32_t pkt)
         midi_enqueue(0xFu | st << 8, 1u);
         return;
     }
+#ifndef FELUCCA_LOADER                         /* playback only; keep the shared update loader byte-identical */
     if (cin == 3u && st == 0xF2u && !(pkt & 0x80800000u)) {
         midi_enqueue(pkt, 1u);                         /* Song Position Pointer: two 7-bit data bytes */
         return;
     }
+#endif
     if (cin >= 8u && cin <= 0xEu && (st >> 4) == cin && !((pkt >> 16) & 0x80u) &&
         ((cin == 0xCu || cin == 0xDu) || !(pkt & 0x80000000u))) {
         midi_enqueue(pkt, 1u);
