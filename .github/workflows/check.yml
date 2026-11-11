@@ -37,9 +37,16 @@ jobs:
       - name: Python packages (Pillow with Raqm, fontTools)
         run: |
           set -euo pipefail
-          sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends libfribidi0 libraqm0
-          python3 -m pip install --disable-pip-version-check "Pillow==$PILLOW_VERSION" "fonttools==$FONTTOOLS_VERSION"
+          # Pillow wheels bundle Raqm; do not require an Ubuntu mirror when its
+          # runtime dependencies are already on the runner. Still verify Raqm.
+          python3 -m pip install --disable-pip-version-check --only-binary=Pillow "Pillow==$PILLOW_VERSION" "fonttools==$FONTTOOLS_VERSION"
+          required_packages=()
+          python3 -c 'from PIL import features; import sys; sys.exit(0 if features.check("raqm") else 1)' || required_packages+=(libfribidi0)
+          if (( ${#required_packages[@]} )); then
+            sudo apt-get update -q
+            sudo apt-get install -y -q --no-install-recommends "${required_packages[@]}"
+          fi
+          python3 -c 'from PIL import features; import sys; ok = features.check("raqm"); print("raqm", features.version("raqm")); sys.exit(0 if ok else "Pillow has no Raqm layout")'
 
       - name: Generated headers (tools/build.py --gen-only)
         run: python3 tools/build.py --gen-only
