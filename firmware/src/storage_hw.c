@@ -2,6 +2,7 @@
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* The firmware side of storage.c (FELUCCA_FLASH). CoralFlower suspends writes
  * between bounded IRQ-off windows; legacy users retain their original path. */
+#include "cf_diag.h"
 static uint8_t flash_ok;                 /* JEDEC id matched at boot (persist_boot) */
 #ifdef CF_FLASH_COOP
 #ifndef ST_FLASH_PUMP

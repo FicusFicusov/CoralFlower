@@ -125,7 +125,6 @@ static void cf_boot_note(void);            /* (cf_fx.c) */
 
 /* ----------------------------------------------------------- sound --- */
 #include "core.h"
-#define CFD_TICKS() FM1_T4_CNT
 #include "cf_diag.c"
 #include "engines.c"
 #include "params.c"
