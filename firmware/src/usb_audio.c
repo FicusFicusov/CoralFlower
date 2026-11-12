@@ -57,14 +57,14 @@ static struct {
     uint32_t arm_calls;                               /* ungated arm checks (main.c ua_service_paced) */
     uint32_t take_bin[6], first_take_ms, first_take_max, open_close_ms, holds;   /* the host's takes after an
                                                  * open (50 ms bins); its first take; open to close; reads stopped */
-    uint32_t pk528, pk540, pk_other, pk_other_last;   /* packets armed by size (44, 45 frames; anything else) */
+    uint32_t pk528, pk540, pk_other, pk_other_last;   /* legacy field names: 44/45-frame packets at the selected channel count */
     uint32_t frames_open, frames_last_open;           /* frames sent in this open / the last whole one */
     uint32_t isr_busy, t5_busy;                       /* skipped: the SIE was in another context's sequence */
     uint32_t stalls, log_n, ovr_seen;                 /* EP0 requests stalled; events logged; overruns logged */
     uint32_t log[16][2];                              /* the last 16 events: fm1_ms, what (UA_EV_*) */
     /* 0.19, 48 kHz (cr_backup.c's USB command, 79): packets armed at 48 kHz by size (48 frames; 47, 49: the drift),
      * and the rate of the last whole open (1 = 48 kHz): what ua_frames_last_open is measured against */
-    uint32_t pk576, pk564, pk588, rate_last_open;
+    uint32_t pk576, pk564, pk588, rate_last_open; /* legacy field names: 48/47/49-frame packets, respectively */
     uint32_t rate_refused;                      /* SET_CURs for 48 kHz while it is not offered (UA_OFF_48) */
 } ua_dbg;
 /* an event: a SETUP (bmRequestType | bRequest << 8 | wValue low << 16 | wIndex low << 24, the stalled ones repeated
@@ -79,7 +79,7 @@ static void ua_log(uint32_t ms, uint32_t what)
 /* CFG_DESC without the recording when ua_off has it (MIDI only: a build without the console). The AC header's
  * streaming interface list is kept as it is (the function goes whole); an absent stream gets UA_NO_IF.
  * UA_OFF_48 (Options > USB Rate 44.1 kHz): the streaming interface as 0.18 had it, byte for byte: the type I format
- * with one sampling frequency (11 bytes for the 14) and the endpoint's wMaxPacketSize 640 (UA_EP_MAXP44); the
+ * with one sampling frequency (11 bytes for the 14) and the endpoint's wMaxPacketSize UA_EP_MAXP44; the
  * configuration is then 208 bytes (tests/cr_usbrate_test.c compares it with a copy of 0.18's) */
 static void ua_cfg_build(void)
 {
@@ -157,6 +157,8 @@ static void ua_tx_fill(void)
         uint32_t csr;
         sie_wr(S_INDEX, 2);
         csr = sie_rd(S_TXCSR1);
+        if (usb.timeouts || !usb.up)
+            return;                             /* an unread CSR is not proof that DMA released its buffer */
         ua_dbg.csr_or |= csr;
         ua_dbg.csr_last = csr;
         if (csr & 1u) {
@@ -165,6 +167,8 @@ static void ua_tx_fill(void)
             if (ua_armed && !ua.cap_hold && ua_dbg.arm_last && UA_DBG_NOW() - ua_dbg.arm_last > 20000u * UA_DBG_US) {
                 ua.cap_hold = 1;
                 ua_cap_reset();
+                ua.rs_on = 0;
+                ua_tx_bytes = 0;                /* discard only the prepared slot; DMA still owns the other */
                 ua_dbg.holds++;
             }
         }
@@ -176,6 +180,8 @@ static void ua_tx_fill(void)
                 if (ua.cap_hold) {              /* its first (or first again): the ring is fed from now, primes, */
                     ua.cap_hold = 0;            /* then plays: no overrun while the host has not started */
                     ua_cap_reset();
+                    ua.rs_on = 0;
+                    ua_tx_bytes = 0;
                     if (since > ua_dbg.first_take_max)
                         ua_dbg.first_take_max = since;
                     ua_dbg.first_take_ms = since;
@@ -197,15 +203,15 @@ static void ua_tx_fill(void)
             }
             if (!ua_tx_bytes)                   /* first packet after a stream reset */
                 ua_tx_bytes = ua_transmit(ua_tx[ua_tx_slot]);
-            if (ua_tx_bytes == 528u)
+            if (!ua.r48 && ua_tx_bytes == 44u * UA_CAP_CHANNELS * 2u)
                 ua_dbg.pk528++;
-            else if (ua_tx_bytes == 540u)
+            else if (!ua.r48 && ua_tx_bytes == 45u * UA_CAP_CHANNELS * 2u)
                 ua_dbg.pk540++;
-            else if (ua.r48 && ua_tx_bytes == 576u)
+            else if (ua.r48 && ua_tx_bytes == 48u * UA_CAP_CHANNELS * 2u)
                 ua_dbg.pk576++;                 /* 48 kHz: 48 frames; 47 or 49 on a nudge */
-            else if (ua.r48 && ua_tx_bytes == 564u)
+            else if (ua.r48 && ua_tx_bytes == 47u * UA_CAP_CHANNELS * 2u)
                 ua_dbg.pk564++;
-            else if (ua.r48 && ua_tx_bytes == 588u)
+            else if (ua.r48 && ua_tx_bytes == 49u * UA_CAP_CHANNELS * 2u)
                 ua_dbg.pk588++;
             else {
                 ua_dbg.pk_other++;
@@ -234,8 +240,8 @@ static int ua_set_interface(uint16_t interface, uint16_t alt)
     if (UAC_BLOCKED())
         alt = 0;                                /* (SAFE MODE presents no audio function: belt and braces) */
     ua_cap_reset();
+    ua.rs_on = 0;                               /* every SET_INTERFACE initializes a new stream, even alt1 again */
     if (alt && !ua.cap_alt) {
-        ua.rs_on = 0;                           /* (48 kHz: the resampler's history is the last stream's) */
         ua_dbg.open_at = fm1_ms;
         ua_dbg.opens++;
         ua_dbg.arm_last = 0;
@@ -367,6 +373,9 @@ static void ua_hw_poll(void)
     if (usb.suspended) {
         if (!ua_paused) {
             ua_cap_reset();
+            ua.rs_on = 0;
+            ua.cap_hold = ua.cap_alt;
+            ua_armed = 0;
             if (ua.cap_alt)
                 ua_cap_config();
             ua_paused = 1;

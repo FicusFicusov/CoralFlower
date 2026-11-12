@@ -23,8 +23,10 @@
 #define FELUCCA_CDC 1
 #endif
 #ifndef FELUCCA_UAC
-#define FELUCCA_UAC 0            /* USB audio recording: later (the settings that switch it are not here yet) */
+#define FELUCCA_UAC 1            /* final stereo output to the computer, UAC1 capture; MIDI stays available */
 #endif
+#define UA_CAP_CHANNELS 2u
+#define FX_UA_STAGE 0            /* capture the final mix in audio.c, not ChoralRoot's dry part stems */
 #ifndef FELUCCA_UART
 #define FELUCCA_UART 1
 #endif

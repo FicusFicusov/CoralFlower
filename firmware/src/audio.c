@@ -89,6 +89,10 @@ static inline void ua_isr_service(void)                 /* the recording's endpo
 }
 #endif
 
+#if FELUCCA_UAC && defined(CF_UNIT)
+#include "cf_usb_audio.c"
+#endif
+
 static void audio_block(int32_t *out, uint32_t n)       /* mix (fx.c), then Q15 -> 24 bit */
 {
     uint32_t i;
@@ -96,6 +100,9 @@ static void audio_block(int32_t *out, uint32_t n)       /* mix (fx.c), then Q15 
     if (fx_usb_fixed)                                   /* Options > USB Level = Fixed: USB took the full level, the */
         usb_fixed_dac(out, n);                          /* DAC (speaker, headphones) gets MASTER's (fx.c) */
 #if FELUCCA_UAC
+#if defined(CF_UNIT)
+    cf_usb_audio_capture(out, n);
+#else
     /* the USB recording's ring (usb_audio_stream.c): the capture frames in (fx.c ua_stage). TIMER5 serves the
      * endpoint nested in this render (main.c): only this short copy goes without IRQs, stream resets and alternate
      * changes included, not the synth and FX work (Melodee's). 0.19: when the host runs ChoralRoot In at 48 kHz the
@@ -113,6 +120,7 @@ static void audio_block(int32_t *out, uint32_t n)       /* mix (fx.c), then Q15 
             ua_feed(st, fn, r48);
         fm1_irq_on();
     }
+#endif
 #endif
     for (i = 0; i < n; i++) {
         if (i & 1u)

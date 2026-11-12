@@ -10,6 +10,7 @@
  *   66 GET      id, offset u32, count (<= 256) -> id, rc, offset u32, count, pack7 data
  *   67 PUT      0 begin (id, size u32, crc u32) / 1 data (id, offset u32, pack7) / 2 commit (id) / 3 abort (id)
  *   72 RESTART  -> rc; the device restarts once the host has the reply
+ *   80 USB AUDIO -> schema 1, count, count x u32 (read-only; tools/cf_usb_audio_stats.py)
  *
  * Objects. Those CoralFlower shares with ChoralRoot keep ChoralRoot's ids and formats (the sounds: a ChoralRoot backup's
  * sounds restore here, and back): 6, 7 the user sound banks (upreset.c, 2 x 16 records), 8 the FM6 patch bank
@@ -34,7 +35,7 @@
 #define CRB_HDR0 0x7Du
 #define CRB_HDR1 0x46u
 #define CRB_HDR2 0x4Cu
-enum { CRB_INFO = 1, CRB_LIST = 65, CRB_GET, CRB_PUT, CRB_RESTART = 72 };
+enum { CRB_INFO = 1, CRB_LIST = 65, CRB_GET, CRB_PUT, CRB_RESTART = 72, CRB_USB_AUDIO = 80 };
 #define CRB_VA 9u
 #define CRB_FM6S 10u                                 /* 10, 11: the FM6 patch store's halves */
 #define CFB_SET 30u                                  /* CoralFlower's settings record */
@@ -447,6 +448,48 @@ static uint32_t crb_put(const uint8_t *a, uint32_t n)
     return 0;
 }
 
+#if FELUCCA_UAC
+/* Read-only diagnostic snapshot over MIDI, also while EP2 is recording (CDC is absent then).
+ * Counter order is the schema in tools/cf_usb_audio_stats.py. No clearing, saving or stream restart. */
+static void crb_usb_audio(void)
+{
+    uint32_t v[27], i;
+    fm1_irq_off();
+    v[0] = fm1_ms;
+    v[1] = ua.r48 ? UA_RATE48 : UA_RATE;
+    v[2] = UA_CAP_CHANNELS;
+    v[3] = ua.cap_alt;
+    v[4] = ua.cap_hold;
+    v[5] = usb.suspended;
+    v[6] = ua.cw - ua.cr;
+    v[7] = ua.cap_underruns;
+    v[8] = ua.cap_overruns;
+    v[9] = ua.tx_packets;
+    v[10] = ua.missed_frames;
+    v[11] = ua_dbg.arm_gap_max / FM1_TICKS_PER_US;
+    v[12] = ua.poll_max_ticks / FM1_TICKS_PER_US;
+    v[13] = ua.service_max_ticks / FM1_TICKS_PER_US;
+    v[14] = ua.rs_blocks ? ua.rs_ticks / ua.rs_blocks / FM1_TICKS_PER_US : 0u;
+    v[15] = ua.rs_max_ticks / FM1_TICKS_PER_US;
+    v[16] = ua_dbg.opens;
+    v[17] = ua.rate_changes;
+    v[18] = felucca_dbg.halves;
+    v[19] = felucca_dbg.last_us;
+    v[20] = felucca_dbg.max_us;
+    v[21] = felucca_dbg.late;
+    v[22] = cr_dbg.stale;
+    v[23] = cr_dbg.c1;
+    v[24] = st_erases;
+    v[25] = st_holes;
+    v[26] = ua_dbg.holds;
+    fm1_irq_on();
+    crb_b(1);
+    crb_b(NELEM(v));
+    for (i = 0; i < NELEM(v); i++)
+        crb_u32(v[i]);
+}
+#endif
+
 /* ------------------------------------------------------------------ the dispatcher --- */
 /* f: the bytes between F0 and F7 (7D 46 4C cmd args); 1 = answered */
 static int crb_handle(const uint8_t *f, uint32_t n)
@@ -505,6 +548,13 @@ static int crb_handle(const uint8_t *f, uint32_t n)
             crb.reboot_ms = fm1_ms;
         crb.reboot = 1;
         break;
+#if FELUCCA_UAC
+    case CRB_USB_AUDIO:
+        if (na)
+            return 0;
+        crb_usb_audio();
+        break;
+#endif
     default:
         return 0;
     }

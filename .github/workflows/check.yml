@@ -81,6 +81,18 @@ jobs:
           cc -std=c99 -O2 -Wall -Wextra -Wno-unused-function -Wno-int-to-pointer-cast \
              -o build/host/midi_spp_test tests/midi_spp_test.c
           build/host/midi_spp_test
+          cc -std=c11 -O1 -g -w -fsanitize=address,undefined -fno-omit-frame-pointer \
+             tests/cf_usb_audio_protocol_test.c -o build/host/cf_usb_audio_protocol_test
+          build/host/cf_usb_audio_protocol_test
+          cc -std=gnu11 -O1 -g -w -fsanitize=address,undefined -DEMU_WEB \
+             -Itools/emu/web/compat -Ibuild/gen -Ifirmware/src \
+             tests/cf_usb_audio_mix_test.c -o build/host/cf_usb_audio_mix_test -lm
+          for rate in 44100 48000; do
+            for preset in 0 25 30; do
+              build/host/cf_usb_audio_mix_test "$preset" "$rate" "build/host/usb-$preset-$rate.wav"
+            done
+          done
+          build/host/cf_usb_audio_mix_test 30 48000 build/host/usb-allfx.wav allfx
           cc -std=gnu11 -O2 -w -Itools/emu/web/compat -Ibuild/gen -Ifirmware/src -DEMU_WEB \
              -o build/host/cf_clock_test tests/cf_clock_test.c
           for scenario in transport acquisition locate rhythm recovery arp out count-in switch transfer restart; do

@@ -3,13 +3,15 @@
  * ChoralRoot changes (six capture channels, the capture ring's size, 16-bit capture, the playback removed; 0.19:
  * 48 kHz for six channels, after SLOOP 2.5's and Felucca 1.1.5's stereo resampler)
  * Copyright (C) 2026 ChoralRoot FM-1 contributors */
-/* UAC1 six-channel capture ("ChoralRoot In"): Melodee's usb_audio_stream.c (Melodee 0.11.1) without its playback
+/* UAC1 PCM16 capture: CoralFlower selects UA_CAP_CHANNELS=2 for its final master
+ * L/R after effects, MASTER and metronome. The guarded six-channel default keeps
+ * the inherited ChoralRoot layout available. Melodee's usb_audio_stream.c (Melodee 0.11.1) without its playback
  * (the computer's audio through the FM-1: removed in 0.14, docs/USB-AUDIO.md). No hardware dependencies: callers
  * serialize USB service and each short audio block (the host test tests/cr_usbaudio_test.c builds this file alone).
  *
- * Capture: master L R, CHORD L R, BASS L R (fx.c ua_stage). Capture is PCM16 only: the mix is 16-bit (Q15), a
- * 24-bit format would only pad a zero byte; 45 frames x 6 channels x 2 bytes = 540 bytes the largest packet at
- * 44.1 kHz (49 frames, 588 bytes, at 48 kHz).
+ * Capture is PCM16 only. Stereo packets contain up to 45 frames/180 bytes at
+ * 44.1 kHz and 49 frames/196 bytes at 48 kHz; legacy six-channel packets are
+ * 540 and 588 bytes, respectively.
  *
  * The I2S clock (~44,117.6 Hz) is independent of USB SOF; the endpoint is asynchronous (the host follows the
  * packets' lengths). The lengths are a fixed 44.1-frame pattern (a 45-frame packet every 10th), the ring's drift
@@ -20,7 +22,7 @@
  * 48 kHz (0.19; SLOOP 2.5, https://github.com/isod89/sloop-fm1, after Felucca 1.1.5, Leo Kuroshita: "the FM-1's USB
  * audio input now also runs at 48 kHz when the host asks for it"): the format has two discrete rates and the host
  * picks one with SET_CUR on the endpoint (ua_rate_set). The synth stays at 44.1 kHz. At 48 kHz the audio ISR resamples
- * each block's six channels x 160 / 147 (ua_resample: SLOOP's polyphase FIR, uac_fir.h, 12 taps a phase in Q15;
+ * each block's channels x 160 / 147 (ua_resample: SLOOP's polyphase FIR, uac_fir.h, 12 taps a phase in Q15;
  * Felucca's is 24 taps in Q30; both are stereo) and the ring holds 48 kHz frames; a packet is 48 frames, 47 or 49
  * for the drift. At 44.1 kHz, the rate until a host asks for the other, nothing is resampled and the packets are
  * what they were, byte for byte (tests/cr_usbaudio_test.c "golden"). docs/USB-AUDIO.md "48 kHz". */
@@ -51,8 +53,15 @@
  * zeros never; docs/USB-AUDIO.md). 640 covered the worst case at 44.1 kHz (540 x 7 / 6 = 630). 0.19: the one
  * endpoint serves both rates and a 48 kHz packet is up to 49 frames, 588 bytes: 588 x 7 / 6 = 686, so 688; the
  * full-speed maximum is 1023 */
+#if UA_CAP_CHANNELS == 2u
+/* CoralFlower records the final stereo mix. Preserve the conservative stuffing
+ * allowance without reserving six-channel bandwidth: 196 ->232, 180 ->212. */
+#define UA_EP_MAXP 232u
+#define UA_EP_MAXP44 212u
+#else
 #define UA_EP_MAXP 688u
-#define UA_EP_MAXP44 640u                       /* with 48 kHz not offered (usb_audio.c UA_OFF_48): 0.18's, 45 frames */
+#define UA_EP_MAXP44 640u                       /* legacy six-channel configuration */
+#endif
 _Static_assert(UA_EP_MAXP >= UA_PACKET * 7u / 6u && UA_EP_MAXP <= 1023u,
                "wMaxPacketSize: the largest packet, bit-stuffed .. 1023");
 /* the resampler (48 kHz): the audio ISR's block is CTL = 32 frames; 32 x 160 / 147 = 34.8: 34 or 35 frames out */
@@ -64,7 +73,7 @@ _Static_assert(UA_FILL_HI + UA_RS_OUT + UA_FRAMES48 + 1u < UA_CAP_RING && UA_FIL
 #ifdef __APPLE__
 #define UA_POOL                                 /* (the host tests: Mach-O has no such section) */
 #else
-#define UA_POOL __attribute__((section(".pool")))   /* the ring, 6 KiB: the pool (zeroed at boot), not RAM */
+#define UA_POOL __attribute__((section(".pool")))   /* the ring, stereo 2 KiB / legacy 6 KiB: pool, zeroed at boot */
 #endif
 
 static struct {
@@ -88,7 +97,7 @@ static struct {
     uint32_t rs_blocks, rs_ticks, rs_max_ticks; /* blocks resampled; their time (usb_audio.c ua_block48: halved with
                                                  * rs_blocks at 65536, so rs_ticks / rs_blocks is a recent average)
                                                  * and the longest, TIMER5 nested in it included */
-    /* the resampler's history, six channels a frame: the last UA_RS_HIST frames of the block before, then room for
+    /* the resampler's history: the last UA_RS_HIST frames of the block before, then room for
      * the first UA_RS_HIST of the block being resampled (ua_resample) */
     int16_t rs_in[2u * UA_RS_HIST * UA_CAP_CHANNELS];
     int16_t rs_out[UA_RS_OUT * UA_CAP_CHANNELS];   /* a block at 48 kHz, for ua_feed */
@@ -106,6 +115,7 @@ static void ua_cap_reset(void)
 static void ua_reset(void)
 {
     ua.cap_alt = 0;
+    ua.cap_hold = 0;
     ua.r48 = 0;                                 /* (a bus reset, a new configuration, usb_start: 44.1 kHz again) */
     ua.rs_on = 0;
     ua_cap_reset();
@@ -207,8 +217,8 @@ static uint32_t ua_transmit(uint8_t *p)
 }
 
 /* The audio ISR, once per block of CTL (32) frames while the computer records, with USB service excluded during
- * this copy (the IRQs off): stage is the block's capture frames at the rate they were made for (r48: 0 = fx.c
- * ua_stage as it is, the master pair and the parts; 1 = ua.rs_out, the same resampled). A block made for the other
+ * this copy (the IRQs off): stage is the block's capture frames at the rate they were made for (r48: 0 = the
+ * final stereo stage (legacy: master and parts); 1 = ua.rs_out, the same resampled). A block made for the other
  * rate (the host changed it meanwhile) is dropped */
 static inline __attribute__((always_inline)) void ua_feed(const int16_t *stage, uint32_t n, uint32_t r48)
 {
@@ -238,6 +248,32 @@ static inline int16_t ua_rs_sat(int32_t v)
     return (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
 }
 
+#if UA_CAP_CHANNELS == 2u
+/* Stereo has its own two-accumulator FIR: a third channel would read into the
+ * next frame and write beyond every stereo output, including the final one. */
+#define UA_TAP2(j) do { \
+        int32_t t = c[(int32_t)(j) * step]; \
+        a0 += (int64_t)t * w[(j) * 2u]; \
+        a1 += (int64_t)t * w[(j) * 2u + 1u]; \
+    } while (0)
+static inline __attribute__((always_inline)) void ua_fir2(const int16_t *w, const int16_t *c, int32_t step, int16_t *o)
+{
+    int64_t a0 = 1 << (UAC_FIR_Q - 1), a1 = a0;
+    UA_TAP2(0); UA_TAP2(1); UA_TAP2(2); UA_TAP2(3); UA_TAP2(4); UA_TAP2(5);
+    UA_TAP2(6); UA_TAP2(7); UA_TAP2(8); UA_TAP2(9); UA_TAP2(10); UA_TAP2(11);
+    o[0] = ua_rs_sat((int32_t)(a0 >> UAC_FIR_Q));
+    o[1] = ua_rs_sat((int32_t)(a1 >> UAC_FIR_Q));
+}
+_Static_assert(UAC_FIR_N == 12u, "ua_fir2 is written out for 12 taps");
+static __attribute__((noinline)) void ua_fir_fwd(const int16_t *w, const int16_t *c, int16_t *o)
+{
+    ua_fir2(w, c, 1, o);
+}
+static __attribute__((noinline)) void ua_fir_bwd(const int16_t *w, const int16_t *c, int16_t *o)
+{
+    ua_fir2(w, c, -1, o);
+}
+#else
 /* three channels of one output frame: the UAC_FIR_N taps c[0], c[step], .. over the window w (oldest frame first,
  * six channels a frame), Q15, rounded. The sums are 64 bits wide for the unit's sake, not for their size (a phase's
  * taps sum to 1.0 and their absolute values to under 2.0: 32 bits hold them): its compiler then multiplies and adds
@@ -277,22 +313,27 @@ static __attribute__((noinline)) void ua_fir6_bwd(const int16_t *w, const int16_
     ua_fir3(w, c, -1, o);
     ua_fir3(w + 3, c, -1, o + 3);
 }
+#define ua_fir_fwd ua_fir6_fwd
+#define ua_fir_bwd ua_fir6_bwd
+#endif
 
 static inline void ua_rs_copy(int16_t *d, const int16_t *s, uint32_t frames)   /* (d below s if they overlap) */
 {
     for (; frames; frames--, d += UA_CAP_CHANNELS, s += UA_CAP_CHANNELS) {
         d[0] = s[0];
         d[1] = s[1];
+#if UA_CAP_CHANNELS == 6u
         d[2] = s[2];
         d[3] = s[3];
         d[4] = s[4];
         d[5] = s[5];
+#endif
     }
 }
 
-/* 44.1 -> 48 kHz (x 160 / 147), one block of n <= UA_RS_BLOCK frames of six channels into ua.rs_out; returns the
+/* 44.1 -> 48 kHz (x 160 / 147), one block of n <= UA_RS_BLOCK frames into ua.rs_out; returns the
  * frames made (n x 160 / 147: 34 or 35 for 32, exactly 160 for every 147 in). SLOOP 2.5's uac_tap48 (after Felucca
- * 1.1.5) for six channels: each input frame is the newest of the 1 or 2 output frames at phase ph, whose window is
+ * 1.1.5): each input frame is the newest of the 1 or 2 output frames at phase ph, whose window is
  * the UAC_FIR_N frames ending at it. The windows of the block's first UA_RS_HIST frames reach back into the block
  * before: they run over ua.rs_in (that block's last frames, then copies of these first ones); the others run over
  * the block where it lies. The audio ISR only, interrupts on (TIMER5 and its USB service nest); the first block of
@@ -318,9 +359,9 @@ static __attribute__((noinline)) uint32_t ua_resample(const int16_t *in, uint32_
             x = in;                                     /* (frame UA_RS_HIST's window is the block's first 12) */
         do {
             if (ph < UAC_FIR_L / 2u)
-                ua_fir6_fwd(x, UAC_FIR[ph], o);
+                ua_fir_fwd(x, UAC_FIR[ph], o);
             else
-                ua_fir6_bwd(x, &UAC_FIR[UAC_FIR_L - 1u - ph][UAC_FIR_N - 1u], o);
+                ua_fir_bwd(x, &UAC_FIR[UAC_FIR_L - 1u - ph][UAC_FIR_N - 1u], o);
             o += UA_CAP_CHANNELS;
             k++;
             ph += UAC_FIR_M;

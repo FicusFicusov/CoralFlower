@@ -11,8 +11,9 @@
  * FELUCCA_CDC=1 adds a CDC-ACM serial function (IAD composite: EP2 notify,
  * EP3 bulk data) for the console in console.c.
  * FELUCCA_UAC=1 adds Melodee's USB audio recording (usb_audio.c,
- * docs/USB-AUDIO.md): one UAC1 function, the six-channel input device
- * "ChoralRoot In" (EP2 IN: the master, CHORD and BASS, each a stereo pair),
+ * docs/USB-AUDIO.md): one UAC1 capture function on EP2 IN. CoralFlower selects
+ * UA_CAP_CHANNELS=2 for the final master L/R; legacy builds default to six
+ * channels (master, CHORD and BASS, each a stereo pair),
  * 44.1 kHz, or 48 kHz when the host asks and Options > USB Rate offers it
  * (0.19, usb_audio_stream.c: after SLOOP 2.5 / Felucca 1.1.5); Melodee's playback function is not there. Its endpoint is served
  * from the TIMER5 ISR by elapsed time (ua_service, main.c), nested in the
@@ -158,10 +159,18 @@ static void midi_out_event(uint32_t pkt)            /* from the audio ISR */
  * a host that cached one reads the other when the option changes */
 #include "usb_audio_stream.c"
 #define CFG_LEN 211
+#if UA_CAP_CHANNELS == 2u
+/* Distinct from ChoralRoot's six-channel descriptors: hosts cache by version. */
+#define UA_BCD_DEVICE 0x0400u
+#define UA_BCD_DEVICE44 0x0401u
+#else
+#define UA_BCD_DEVICE 0x0323u
+#define UA_BCD_DEVICE44 0x0322u
+#endif
 static const uint8_t DEV_DESC[18] = {18, 1, 0x00, 0x02, 0xEF, 0x02, 0x01, 64, 0x09, 0x12, FELUCCA_USB_PID & 0xFF,
-                                     FELUCCA_USB_PID >> 8, 0x23, 0x03, 1, 2, 0, 1};   /* misc/IAD, 3.23 */
+                                     FELUCCA_USB_PID >> 8, UA_BCD_DEVICE & 0xFF, UA_BCD_DEVICE >> 8, 1, 2, 0, 1};
 static const uint8_t DEV_DESC44[18] = {18, 1, 0x00, 0x02, 0xEF, 0x02, 0x01, 64, 0x09, 0x12, FELUCCA_USB_PID & 0xFF,
-                                       FELUCCA_USB_PID >> 8, 0x22, 0x03, 1, 2, 0, 1};  /* 3.22: 44.1 kHz only (0.18's) */
+                                       FELUCCA_USB_PID >> 8, UA_BCD_DEVICE44 & 0xFF, UA_BCD_DEVICE44 >> 8, 1, 2, 0, 1};
 static const uint8_t CFG_DESC[] = {
     9, 2, CFG_LEN & 0xFF, CFG_LEN >> 8, 4, 1, 0, 0x80, 50,   /* 211 bytes, four interfaces */
     8, 0x0B, 0, 2, 1, 1, 0, 0,                          /* IAD: MIDI (IF 0-1) */
@@ -308,10 +317,14 @@ static int get_desc(uint32_t wvalue, const uint8_t **d, uint16_t *l)
 }
 #else
 /* the device's strings: 1 the maker, 2 the product (the MIDI port's name: tools/fm1_install.py and web/fm1ota.js
- * match "FM-1"; 16 characters at most: usb_str), 3 the recording device, 4..9 its channel names
+ * match "FM-1"; 16 characters at most: usb_str), 3 the recording device, 4..5 its stereo channel names (4..9 in legacy builds)
  * (usb_audio_desc.h). Built from ASCII into usb_str on request (one control transfer at a time) */
 static const char *const USB_STRS[] = {0, "CoralFlower", "CoralFlower FM-1", "CoralFlower In",
-                                       "Master L", "Master R", "Chord L", "Chord R", "Bass L", "Bass R"};
+                                       "Master L", "Master R"
+#if !FELUCCA_UAC || UA_CAP_CHANNELS != 2u
+                                       , "Chord L", "Chord R", "Bass L", "Bass R"
+#endif
+};
 #define USB_NSTR (FELUCCA_UAC ? sizeof USB_STRS / sizeof USB_STRS[0] : 3u)
 static uint8_t usb_str[2 + 2 * 16];
 
@@ -328,7 +341,7 @@ static int get_desc(uint32_t wvalue, const uint8_t **d, uint16_t *l)
         }
 #endif
 #if FELUCCA_UAC
-        if (ua_dev44) {                                 /* Options > USB Rate 44.1 kHz: 0.18's device, 3.22 */
+        if (ua_dev44) {                                 /* the separately cached single-rate configuration */
             *d = DEV_DESC44;
             *l = sizeof DEV_DESC44;
             return 1;
@@ -550,6 +563,8 @@ static USB_COLD void ep0_service(void)
             goto ack;
         goto stall;
     }
+    if (sie_rd(S_COUNT0) != 8u)                          /* a SETUP is exactly 8 bytes; never parse stale tail data */
+        goto stall;
 #endif
     for (i = 0; i < 8u; i++)
         s[i] = ep0buf[i];
@@ -586,6 +601,10 @@ static USB_COLD void ep0_service(void)
         goto stall;
     }
     case 0x0009:                                        /* SET_CONFIGURATION: 0 or 1 only */
+#if FELUCCA_UAC
+        if (s[3] || s[4] || s[5] || wlength)
+            goto stall;
+#endif
         if (s[2] > 1u)
             goto stall;
 #if FELUCCA_UAC
@@ -620,7 +639,7 @@ static USB_COLD void ep0_service(void)
         goto stall;
     case 0x810A:
 #if FELUCCA_UAC
-        if (wvalue || s[5] || s[4] >= ua_nif || !usb.config)
+        if (wvalue || s[5] || s[4] >= ua_nif || !usb.config || wlength != 1u)
             goto stall;
         if (s[4] == ua_if_cap) {
             e0_send(&ua.cap_alt, 1, wlength);
@@ -1152,6 +1171,11 @@ static void usb_detach(void)
 {
     usb.detached = 1;
     usb.up = 0;
+#if FELUCCA_UAC
+    ua_hw_stop();
+    usb.config = 0;
+    usb.suspended = 0;
+#endif
     fm1_usb_off();
 }
 
@@ -1164,6 +1188,7 @@ static void usb_replug(uint32_t now_ms)
         return;
     usb.up = 0;
     RING_PUBLISH();
+    ua_hw_stop();
     usb.config = 0;
     usb.suspended = 0;
     fm1_usb_off();

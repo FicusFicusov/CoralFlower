@@ -14,6 +14,9 @@
 #define CF_EMU 1                                      /* the device-only parts left out (cf_shim.c, cf_backup.c) and
                                                        * the palette as designed (cf_state.h: no panel correction);
                                                        * first, before cf_ui.c brings cf_state.h in */
+#define CF_UNIT 1
+#define UA_CAP_CHANNELS 2u
+#define FX_UA_STAGE 0                                /* as coralflower.c: capture after MASTER and the click */
 #define main hostsim_main
 #ifndef FELUCCA_SEQ
 #define FELUCCA_SEQ 0                                 /* as choralroot.c: no Felucca sequencer */
@@ -112,7 +115,6 @@ static void cf_fx_chain(int32_t *l, int32_t *r, uint32_t n);
 #include "emu_hal_fw.h"
 #include "../../firmware/src/cf_fx.c"
 /* ------------------------------------------------- the instrument --- */
-#define CF_UNIT 1
 #include "../../firmware/src/cf_theory.c"
 #include "../../firmware/src/cf_chord.c"
 #include "../../firmware/src/cf_play.c"
