@@ -303,7 +303,9 @@ static int32_t drum_amp(track_t *t, voice_t *v, int32_t adsr)
     return 32767;
 }
 
-/* the hit's level now (Q15): its drum's body envelope (RIM and CLAVE: their one fast envelope) at its velocity */
+/* The hit's level (Q15) at its velocity. A pending strike has not initialized
+ * its envelopes yet. The clap's slow body starts only AFTER its attack teeth;
+ * those sounding/scheduled impulses must not be mistaken for a silent tail. */
 static int32_t drum_level(track_t *t, const voice_t *v)
 {
     const drum_lane_t *L = drum_lane_of(t, v);
@@ -314,7 +316,17 @@ static int32_t drum_level(track_t *t, const voice_t *v)
     if (L->eng)
         return mulq15(ds_level(&L->n), v->vel * 258);
 #endif
-    e = L->role == DVT_RIM || L->role == DVT_CLAVE ? (int32_t)(L->v.e[0] >> 1) : L->v.q[0] >> 15;
+    if (L->v.trig)
+        e = 32767;
+    else if (L->role == DVT_RIM || L->role == DVT_CLAVE)
+        e = (int32_t)(L->v.e[0] >> 1);
+    else {
+        e = L->v.q[0] >> 15;
+        if (L->role == DVT_CLAP) {
+            int32_t attack = L->v.cnt ? 32767 : (int32_t)(L->v.e[0] >> 1);
+            if (attack > e) e = attack;
+        }
+    }
     return mulq15(e > 32767 ? 32767 : e, v->vel * 258);
 }
 

@@ -416,11 +416,14 @@ static void ds_run(ds_voice_t *v, int32_t *y, uint32_t n)
               v->ce > 4u;
 }
 
-/* the hit's level now (Q15): its louder envelope */
+/* The louder envelope (Q15), including the clap's sounding/scheduled teeth.
+ * Its noise body remains zero until the last tooth has struck. */
 static int32_t ds_level(const ds_voice_t *v)
 {
     int32_t q = v->qo > v->qn ? v->qo : v->qn;
-    return v->live ? q >> 15 : 0;
+    int32_t e = q >> 15, attack = v->teeth ? 32767 : (int32_t)(v->te >> 1);
+    if (attack > e) e = attack;
+    return v->live ? (e > 32767 ? 32767 : e) : 0;
 }
 
 #include "drum_kits.c"                            /* DS_KITS: the kits */

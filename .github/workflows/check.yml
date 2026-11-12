@@ -78,6 +78,11 @@ jobs:
              -Itools/emu/web/compat -Ibuild/gen -Ifirmware/src tests/cf_shed_policy_test.c -o build/host/cf_shed_policy_test -lm
           build/host/cf_shed_policy_test
           cc -std=gnu11 -O1 -g -w -fsanitize=address,undefined -DEMU_WEB -DCF_EVENT_DIAG=1 \
+             -Itools/emu/web/compat -Ibuild/gen -Ifirmware/src tests/cf_drum_level_test.c -o build/host/cf_drum_level_test -lm
+          for kit in 0 1 2 3 4 5 6; do
+            build/host/cf_drum_level_test "$kit"
+          done
+          cc -std=gnu11 -O1 -g -w -fsanitize=address,undefined -DEMU_WEB -DCF_EVENT_DIAG=1 \
              -Itools/emu/web/compat -Ibuild/gen -Ifirmware/src tests/cf_event_trace_test.c -o build/host/cf_event_trace_test -lm
           cc -std=gnu11 -O1 -g -w -fsanitize=address,undefined -DEMU_WEB -DCF_EVENT_DIAG=0 \
              -Itools/emu/web/compat -Ibuild/gen -Ifirmware/src tests/cf_event_trace_test.c -o build/host/cf_event_trace_off -lm
