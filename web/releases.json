@@ -1,6 +1,21 @@
 {
  "releases": [
   {
+   "version": "0.7.2",
+   "tag": "v0.7.2",
+   "sha256": "868614c1af95cb198195a402c887d13130533231b7bf36dcd09d2ff698240ed8",
+   "pkg": "coralflower-0.7.2.fwsc",
+   "date": "2026-11-12",
+   "title": "Record over USB",
+   "notes": [
+    "USB audio. Record the FM-1’s stereo mix in your DAW at 44.1 or 48 kHz (16-bit). The recording includes effects and any metronome clicks. Look for “CoralFlower In” or “CoralFlower FM-1” in your DAW’s audio settings. MIDI works over the same USB connection, and the analogue output stays on.",
+    "MIDI Clock In. When playback is stopped, MIDI Start plays the selected rhythm, pattern or song from the beginning. MIDI Stop halts playback, and MIDI Continue resumes from that point. If your DAW sends a song position while playback is stopped, the FM-1 can resume from there. After your DAW sends MIDI Stop, you can still play the arpeggiator from the FM-1’s keys. You can also play it if the external clock drops out during playback. The sequencer and rhythm hold their place, and the arpeggiator syncs again when the clock returns.",
+    "PLAY without an external clock. With CLOCK set to In and no external clock, press PLAY to start a rhythm or pattern at the FM-1’s own tempo. If the clock drops out during playback, press PLAY to stop, then press it again to restart. If there’s still no external clock, the FM-1 uses its own tempo.",
+    "Notes and drums under heavy load. When the FM-1 has to cut sounds, it looks for fading sounds to cut before considering held polyphonic notes. It now accounts for the attack of a clap in both the classic and X kits when deciding which sounds to cut.",
+    "USB fix. This update fixes a case where the firmware could get stuck after a USB controller timeout."
+   ]
+  },
+  {
    "version": "0.7.1",
    "tag": "v0.7.1",
    "sha256": "d87d6327e0f98000cfa740bab70487728de85d3d64fd96c3a65dfd6bbdf71bbd",

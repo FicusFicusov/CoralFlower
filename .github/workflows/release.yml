@@ -2,7 +2,8 @@
 # Build the CoralFlower package (after ChoralRoot FM-1's release.yml).
 #   workflow_dispatch (version)  -> build only; the package is a workflow artifact (coralflower-X.Y): a candidate to
 #                                   test on a unit (the web installer's "Choose a .fwsc file")
-#   push of a tag vX.Y           -> build, create the GitHub release vX.Y with the assets, then run pages.yml
+#   provenance_preview          -> also rebuild/attest through fm1-build@v1; a branch never publishes
+#   push of a tag vX.Y           -> verify two source builds agree, attest/release, then add notes and licences
 # On ubuntu (x86-64) tools/build.py runs the JieLi toolchain natively, no Docker.
 name: release
 
@@ -17,6 +18,10 @@ on:
         type: string
       event_diagnostics:
         description: "Enable temporary RAM event tracing (explicit -rcN test build only)."
+        type: boolean
+        default: false
+      provenance_preview:
+        description: "Also verify the production build through Firmware Hub's workflow. Use a branch; no release."
         type: boolean
         default: false
 
@@ -46,16 +51,29 @@ jobs:
     timeout-minutes: 45
     outputs:
       version: ${{ steps.version.outputs.version }}
+      sha256: ${{ steps.build.outputs.sha256 }}
     steps:
       - name: Version
         id: version
         env:
           INPUT_VERSION: ${{ inputs.version }}
+          PROVENANCE_PREVIEW: ${{ inputs.provenance_preview }}
+          EVENT_DIAGNOSTICS: ${{ inputs.event_diagnostics }}
         run: |
           set -euo pipefail
           if [ "$GITHUB_EVENT_NAME" = push ]; then v="${GITHUB_REF_NAME#v}"; else v="$INPUT_VERSION"; fi
           if [[ ! "$v" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?(-[A-Za-z0-9.]+)?$ ]]; then
             echo "::error::version '$v' is not X.Y, X.Y.Z or X.Y-suffix; tags are vX.Y"
+            exit 1
+          fi
+          # The shared workflow publishes on any tag, even a manual dispatch.
+          # Keep manual builds strictly on branches so preview never publishes.
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$GITHUB_REF_TYPE" != branch ]; then
+            echo "::error::manual builds and provenance previews require a branch"
+            exit 1
+          fi
+          if [ "$PROVENANCE_PREVIEW" = true ] && { [ "$EVENT_DIAGNOSTICS" = true ] || [[ "$v" = *-* ]]; }; then
+            echo "::error::provenance preview requires a stable version with event diagnostics disabled"
             exit 1
           fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
@@ -116,6 +134,7 @@ jobs:
           PY
 
       - name: Build (./build.sh --release)
+        id: build
         run: |
           set -euo pipefail
           ulimit -n 8192 || true          # the JieLi linker opens many files (the toolchain's README)
@@ -128,7 +147,35 @@ jobs:
             fi
           done
           (cd "$rel" && sha256sum -c SHA256SUMS && zip -q -r LICENSES.zip LICENSES)
+          echo "sha256=$(sha256sum "$rel/coralflower-$VERSION.fwsc" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
           ls -l "$rel"
+
+      - name: Check the production manifest and the reviewed Hub workflow
+        if: github.event_name == 'push' || inputs.provenance_preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # The Hub accepts @v1, not a caller-owned attestation. Fail if its
+          # supposedly immutable reviewed tag has changed before publication.
+          hub_sha=$(gh api repos/zvenson/fm1-build/git/ref/tags/v1 --jq .object.sha)
+          test "$hub_sha" = 85a003ab455b1c074b0bd6d7c282c096a464b973
+          python3 - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          version = os.environ['VERSION']
+          if '-' not in version:
+              releases = json.loads(Path('web/releases.json').read_text())['releases']
+              matches = [r for r in releases if r['version'] == version]
+              assert len(matches) == 1, 'stable release needs exactly one installer entry'
+              entry = matches[0]
+              package = f'coralflower-{version}.fwsc'
+              assert entry['tag'] == f'v{version}' and entry['pkg'] == package, 'installer identity differs'
+              actual = hashlib.sha256((Path(f'build/release-{version}') / package).read_bytes()).hexdigest()
+              assert actual == entry['sha256'], 'package differs from the reviewed installer SHA256'
+              assert Path(f'docs/releases/{version}.md').read_text().strip(), 'release notes missing'
+              print(f'installer and release notes verified: {version} {actual}')
+          PY
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -149,8 +196,34 @@ jobs:
             build/ramtext.bin
           if-no-files-found: error
 
-  release:
+  attest:
     needs: build
+    if: github.event_name == 'push' || inputs.provenance_preview
+    # Firmware Hub requires this reviewed tag. The build job checks its SHA.
+    uses: zvenson/fm1-build/.github/workflows/build.yml@v1
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    with:
+      sdk: false                      # use the same hash-checked, vendored SDK as the ordinary build
+      build: |
+        set -euo pipefail
+        python3 -m pip install --disable-pip-version-check --only-binary=Pillow 'Pillow==11.1.0' 'fonttools==4.66.1'
+        python3 -c 'from PIL import features; assert features.check("raqm"), "Pillow has no Raqm layout"'
+        export AC79_SDK="$PWD/tools/sdk" CF_EVENT_DIAG=0
+        ulimit -n 8192 || true
+        ./build.sh --release '${{ needs.build.outputs.version }}'
+      packages: build/release-${{ needs.build.outputs.version }}/coralflower-${{ needs.build.outputs.version }}.fwsc
+      test: |
+        set -euo pipefail
+        # This runs inside the shared workflow BEFORE it attests or publishes.
+        # Its Python/toolchain environment must reproduce the checked package.
+        echo '${{ needs.build.outputs.sha256 }}  build/release-${{ needs.build.outputs.version }}/coralflower-${{ needs.build.outputs.version }}.fwsc' | sha256sum -c -
+      tests-block: true
+
+  release:
+    needs: [build, attest]
     if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -174,7 +247,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir assets
-          for f in "coralflower-$VERSION.fwsc" "coralflower-$VERSION-app.bin" SHA256SUMS LICENSE LICENSING.md LICENSES.zip; do
+          # fm1-build already uploaded the attested .fwsc. Never replace it.
+          # SHA256SUMS here uses downloadable basenames and also covers the app.
+          for f in "coralflower-$VERSION-app.bin" SHA256SUMS LICENSE LICENSING.md LICENSES.zip; do
             cp "release/$f" assets/
           done
           ls -l assets
@@ -210,5 +285,10 @@ jobs:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
+          main_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$DEFAULT_BRANCH" --jq .object.sha)
+          if [ "$main_sha" != "$GITHUB_SHA" ]; then
+            echo "::notice::release is not on $DEFAULT_BRANCH yet; its later main push will publish the site"
+            exit 0
+          fi
           gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref "$DEFAULT_BRANCH"
           echo "::notice::pages.yml started (Actions tab); the site follows in a minute or two"

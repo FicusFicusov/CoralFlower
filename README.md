@@ -41,8 +41,9 @@ before you install anything.
 - **A plant that grows from your music.** In the Top key layout a flower grows; in the Side layout, a coral.
   Each note of the chord adds a part: a bloom, a bud, a cluster of berries. The plant's structure follows
   [PlantStudio](https://github.com/pdfernhout/PlantStudio), a program that models real plants.
+- **USB audio.** Record the FM-1’s stereo mix at 44.1 or 48 kHz over the same USB connection you use for MIDI.
 - **MIDI over USB.** The chords, the bass and the sequencer's Layer and Drums go out on four channels you set. The
-  FM-1 follows an external MIDI clock or sends its own.
+  FM-1 follows an external MIDI clock or sends its own. With CLOCK set to In, the FM-1 follows MIDI Start, Stop and Continue.
 
 <table>
   <tr>
