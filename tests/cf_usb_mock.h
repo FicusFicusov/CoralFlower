@@ -28,6 +28,7 @@ static uint8_t cf_usb_mock_dma_capture[1024], cf_usb_mock_control_reply[1024];
 static uint32_t cf_usb_mock_control_size;
 static int cf_usb_mock_control_stalled;
 static int cf_usb_mock_stuck;                          /* injected bounded SIE handshake timeout */
+static void (*cf_usb_mock_access_hook)(int write, uint32_t reg, uint32_t value);
 
 static uint8_t *cf_usb_mock_reg_at(uint32_t r) { return r >= 16u ? &cf_usb_mock_reg_ep[cf_usb_mock_reg_index][r - 16u] : &cf_usb_mock_reg_global[r]; }
 static void cf_usb_mock_reset(void) { cf_usb_mock_hal_on = 0; memset(cf_usb_mock_reg_global, 0, sizeof cf_usb_mock_reg_global); memset(cf_usb_mock_reg_ep, 0, sizeof cf_usb_mock_reg_ep); }
@@ -36,6 +37,7 @@ static void cf_usb_mock_off(void) { cf_usb_mock_hal_on = 0; }
 static uint32_t cf_usb_mock_sie_on(void) { return cf_usb_mock_hal_on; }
 static void cf_usb_mock_wr(uint32_t r, uint32_t v)
 {
+    if (cf_usb_mock_access_hook) cf_usb_mock_access_hook(1, r, v);
     if (cf_usb_mock_stuck) return;
     if (r == 14u) { cf_usb_mock_reg_index = (uint8_t)v; return; }
     if (r == 17u && !cf_usb_mock_reg_index) {
@@ -51,6 +53,7 @@ static void cf_usb_mock_wr(uint32_t r, uint32_t v)
 }
 static void cf_usb_mock_rd(uint32_t r)
 {
+    if (cf_usb_mock_access_hook) cf_usb_mock_access_hook(0, r, 0);
     if (cf_usb_mock_stuck) return;
     cf_usb_mock_reg_result = *cf_usb_mock_reg_at(r);
     if (r >= 2u && r <= 6u) *cf_usb_mock_reg_at(r) = 0; /* interrupt status is read-to-clear */

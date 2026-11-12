@@ -151,14 +151,25 @@ static void ua_hw_stop(void)
  * while DMA owns the current one, keeping PCM packing out of the critical
  * path between noticing completion and arming the next IN transfer.
  * An empty IN response loses a millisecond of the host's audio clock. */
+static int ua_sie_ok(void)
+{
+    if (usb.timeouts || !usb.up) {
+        /* Leave the high-priority service on the first failed transaction.
+         * Main's existing usb_retry will reset/re-attach the controller. */
+        usb.up = 0;
+        return 0;
+    }
+    return 1;
+}
+
 static void ua_tx_fill(void)
 {
     if (ua.cap_alt) {
         uint32_t csr;
         sie_wr(S_INDEX, 2);
+        if (!ua_sie_ok()) return;
         csr = sie_rd(S_TXCSR1);
-        if (usb.timeouts || !usb.up)
-            return;                             /* an unread CSR is not proof that DMA released its buffer */
+        if (!ua_sie_ok()) return;                /* an unread CSR does not prove DMA released its buffer */
         ua_dbg.csr_or |= csr;
         ua_dbg.csr_last = csr;
         if (csr & 1u) {
@@ -224,6 +235,7 @@ static void ua_tx_fill(void)
             ua_dbg.frames_open += ua_tx_bytes / (2u * UA_CAP_CHANNELS);
             fm1_usb_ep_send(2, ua_tx[ua_tx_slot], ua_tx_bytes);
             sie_wr(S_TXCSR1, 1);
+            if (!ua_sie_ok()) return;            /* this slot may belong to DMA; do not prepare into it */
 #if CF_EVENT_DIAG && UA_CAP_CHANNELS == 2u
             cf_diag_pcm(ua_tx[ua_tx_slot], ua_tx_bytes, ua_dbg.frames_open - ua_tx_bytes / 4u);
 #endif
@@ -373,9 +385,32 @@ static __attribute__((noinline)) uint32_t ua_block48(const int16_t *stage, uint3
     return k;
 }
 
+/* A timed-out SIE read returns zero, not a valid frame byte. Successful reads
+ * reset usb.timeouts, so checking it only after the complete snapshot can
+ * turn alternating success/failure into an endless high-byte retry in TIMER5.
+ * One rollover retry is enough for a normal snapshot; otherwise let main's
+ * existing controller recovery run instead of holding the audio/input IRQs. */
+static int ua_frame_read(uint32_t *frame)
+{
+    for (uint32_t attempt = 0; attempt < 2u; attempt++) {
+        uint32_t hi = sie_rd(S_FRAME2) & 7u;
+        if (!ua_sie_ok()) return 0;
+        uint32_t lo = sie_rd(S_FRAME1);
+        if (!ua_sie_ok()) return 0;
+        uint32_t again = sie_rd(S_FRAME2) & 7u;
+        if (!ua_sie_ok()) return 0;
+        if (hi == again) {
+            *frame = lo | hi << 8;
+            return 1;
+        }
+    }
+    usb.up = 0;
+    return 0;
+}
+
 static void ua_hw_poll(void)
 {
-    uint32_t n, f;
+    uint32_t f;
     if (!usb.config)
         return;
     if (usb.suspended) {
@@ -401,12 +436,8 @@ static void ua_hw_poll(void)
         return;
     }
     ua_tx_fill();
-    /* FRAME1 may roll over between reads: retry with a stable high byte. */
-    do {
-        n = sie_rd(S_FRAME2) & 7u;
-        f = sie_rd(S_FRAME1);
-    } while (n != (sie_rd(S_FRAME2) & 7u) && usb.up);
-    f |= n << 8;
+    if (!usb.up || !ua_frame_read(&f))
+        return;
     if (!ua_frame_valid || f != ua_frame) {
         if (ua_frame_valid) {
             uint32_t gap = (f - ua_frame) & 2047u;
@@ -420,5 +451,6 @@ static void ua_hw_poll(void)
         ua_sof();
     }
     ua_tx_fill();
-    ua_tx_prepare();
+    if (usb.up)
+        ua_tx_prepare();
 }

@@ -122,6 +122,9 @@ jobs:
           cc -std=c11 -O1 -g -w -fsanitize=address,undefined -fno-omit-frame-pointer \
              tests/cf_usb_audio_protocol_test.c -o build/host/cf_usb_audio_protocol_test
           build/host/cf_usb_audio_protocol_test
+          cc -std=c11 -O1 -g -w -fsanitize=address,undefined -fno-omit-frame-pointer \
+             tests/cf_usb_disconnect_test.c -o build/host/cf_usb_disconnect_test
+          build/host/cf_usb_disconnect_test
           cc -std=gnu11 -O1 -g -w -fsanitize=address,undefined -DEMU_WEB \
              -Itools/emu/web/compat -Ibuild/gen -Ifirmware/src \
              tests/cf_usb_audio_mix_test.c -o build/host/cf_usb_audio_mix_test -lm
