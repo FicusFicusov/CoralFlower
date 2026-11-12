@@ -164,6 +164,10 @@ static void mix_block(int32_t *out, uint32_t n)
 #include "panel.c"
 #if FELUCCA_FLASH
 #include "fm1_flash.h"
+#define CF_FLASH_COOP 1
+#include "fm1_flash_coop.h"
+static void cf_flash_input(void);
+#define ST_FLASH_PUMP() cf_flash_input()
 #include "storage_hw.c"
 #include "storage.c"
 #endif

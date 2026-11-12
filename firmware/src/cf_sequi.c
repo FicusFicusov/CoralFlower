@@ -263,6 +263,22 @@ static void sq_load(void)                        /* power-on */
         sq_dirty = 1;
     }
 }
+#ifdef CF_FLASH_COOP
+/* Note pumping can edit the current drum pattern or append to the song. It
+ * cannot navigate to another pattern (buttons/encoders are not pumped). Keep
+ * those two mutable pieces stable for this save, without copying all patterns.
+ * chunk is separate from storage.c's readback/scratch buffer. */
+static struct {
+    sq_pat_t pat;
+    sq_song_t song;
+    uint8_t chunk[SQ_CHUNK];
+} sq_save_view __attribute__((section(".pool"), aligned(4)));
+static void sq_save_overlay(uint32_t off, uint32_t len, uint32_t at, const void *src, uint32_t n)
+{
+    uint32_t a = off > at ? off : at, b = off + len < at + n ? off + len : at + n;
+    if (b > a) memcpy(sq_save_view.chunk + a - off, (const uint8_t *)src + a - at, b - a);
+}
+#endif
 static void sq_save_write(void)                  /* the objects that changed, now (cf_backup.c's LIST too) */
 {
     uint32_t k, now = cu.now;
@@ -270,16 +286,35 @@ static void sq_save_write(void)                  /* the objects that changed, no
     sq_st.magic = SQ_MAGIC;
     sq_st.size = sizeof sq_st;
     sq_st.check = cfs_fnv(&sq_st.song, sizeof sq_st - __builtin_offsetof(sq_store_t, song));
+#ifdef CF_FLASH_COOP
+    uint32_t pat = squ.pat < SQ_NPAT ? squ.pat : 0u;
+    sq_save_view.pat = sq_st.pat[pat];
+    sq_save_view.song = sq_st.song;
+#endif
     for (k = 0; k < SQ_NCHUNK && sq_chunk_len(k); k++) {
-        uint32_t h = cfs_fnv((uint8_t *)&sq_st + k * SQ_CHUNK, sq_chunk_len(k));
+        const uint8_t *src = (const uint8_t *)&sq_st + k * SQ_CHUNK;
+#ifdef CF_FLASH_COOP
+        memcpy(sq_save_view.chunk, src, sq_chunk_len(k));
+        sq_save_overlay(k * SQ_CHUNK, sq_chunk_len(k), __builtin_offsetof(sq_store_t, song),
+                        &sq_save_view.song, sizeof sq_save_view.song);
+        sq_save_overlay(k * SQ_CHUNK, sq_chunk_len(k), __builtin_offsetof(sq_store_t, pat) + pat * sizeof(sq_pat_t),
+                        &sq_save_view.pat, sizeof sq_save_view.pat);
+        src = sq_save_view.chunk;
+#endif
+        uint32_t h = cfs_fnv(src, sq_chunk_len(k));
         if (h == sq_saved[k])
             continue;
-        if (st_save(OBJ_CFSEQ0 + k, (uint8_t *)&sq_st + k * SQ_CHUNK, sq_chunk_len(k)))
+        if (st_save(OBJ_CFSEQ0 + k, src, sq_chunk_len(k)))
             err = 1;
         else
             sq_saved[k] = h;
     }
     sq_dirty = (uint8_t)err;
+#ifdef CF_FLASH_COOP
+    /* An edit received while writing remains dirty for the following save. */
+    for (k = 0; k < SQ_NCHUNK && sq_chunk_len(k); k++)
+        if (sq_saved[k] != cfs_fnv((uint8_t *)&sq_st + k * SQ_CHUNK, sq_chunk_len(k))) sq_dirty = 1;
+#endif
     sq_retry_ms = err ? now + 1000u : 0u;        /* (a flash error: once more a second later) */
 }
 static void sq_save_poll(void)                   /* every frame */

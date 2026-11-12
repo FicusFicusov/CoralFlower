@@ -315,6 +315,9 @@ def build_app(stub):
                                ("common/bin/objdump", "-d", "-j", ".ram_text", elf),
                                ("common/bin/objdump", "-h", elf))
     (OUT / f"{UNIT}.dis").write_text(dis)
+    (OUT / f"{UNIT}.ram.dis").write_text(rt)
+    (OUT / f"{UNIT}.symbols").write_text(syms)
+    (OUT / f"{UNIT}.sections").write_text(hdr)
 
     def symv(name):
         return int(re.search(r"^([0-9a-f]+) .*\s" + name + r"$", syms, re.M).group(1), 16)

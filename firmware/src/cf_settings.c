@@ -3,15 +3,15 @@
  *
  * One record keeps what the screens and GLO set (cf_set_t cs, the parts' sounds as places in the sound row with it).
  * It is read at power-on, before the first picture (cf_splash), and written half a second after the last change, even
- * while the unit sounds and never stops: the object keeps a log (storage.c ST_LOG_OBJ), so a change is two page
- * programs of about 1 ms each, made when the audio has room, and no erase (a flash erase stops the audio for about
- * 45 ms). A change switched off a second later is kept (the owner, 2026-10-21: "Бас почему-то выбранный не
+ * while the unit sounds: the object keeps a log (storage.c ST_LOG_OBJ), so small changes need only short writes.
+ * CoralFlower's driver slices program/erase operations with suspend/resume, keeping interrupts and live input
+ * serviced between slices. A change switched off a second later is kept (the owner, 2026-10-21: "Бас почему-то выбранный не
  * сохраняется"; BOOT SND set On, HOME, off: gone, its 5 s preview held the old save back; "Сохранять всё сразу").
  * Each change goes as what changed (0.6, storage.c st_dput): about 200 fit without a pause (29 before). A quiet moment
  * (nothing sounding for a second, no change for 1.5 s) tidies the flash: the newest record whole where 0.4.1 and older
- * read it, the other copy erased for the next ones (storage.c st_tidy). Only when the log is full does a change wait
- * for that quiet moment; it is never forced through, as an erase would stop the audio for about 45 ms (the owner:
- * "Убрать, паузы никогда"). The sounds' edits and the patterns' own sounds are kept the same way. SAFE MODE neither
+ * read it, the other copy erased for the next ones (storage.c st_tidy). A full log can now roll over while playing;
+ * normal autosave does not wait indefinitely for silence in a DAW session. The sounds' edits and the patterns'
+ * own sounds are kept the same way. SAFE MODE neither
  * reads nor writes it.
  *
  * Where: OBJ_PROJECT0 + 3 (0x9D000 / 0x9E000, storage.c's A/B pair), ChoralRoot's CZ-1 tone store, which CoralFlower
@@ -183,8 +183,9 @@ static int cf_settings_load(void)
     return 1;
 }
 
-/* cs to flash (storage.c st_put; how: ST_NOERASE while the audio plays): 1 written, 0 not now (the log full: a
- * quiet moment makes room), -1 a flash error */
+/* cs to flash: 1 written, 0 not now if explicitly requested with ST_NOERASE,
+ * -1 a flash error. Normal autosave can now roll a full log while playing:
+ * storage_hw.c suspends each erase, so recording need not wait for silence. */
 static int cf_settings_write(uint32_t how)
 {
     int rc;
@@ -341,7 +342,7 @@ static void cfps_poll(uint32_t now, int silent)
     if (!quiet && felucca_dbg.last_us * 20u > HALF_FRAMES * 1000000u / FS * 17u)
         return;
     cfps.check = h;
-    rc = st_put(OBJ_CFPSND, &cfps, sizeof cfps, quiet ? 0u : ST_NOERASE);
+    rc = st_put(OBJ_CFPSND, &cfps, sizeof cfps, 0u);
     if (rc == 0) {
         cfps_saved = h;
         cfps_tidy = 0;
@@ -611,8 +612,8 @@ static void cfk_poll(uint32_t now, int silent)
         quiet = silent && now - cfk_changed_ms[part] >= CF_SET_QUIET_MS;
         if (!quiet && felucca_dbg.last_us * 20u > HALF_FRAMES * 1000000u / FS * 17u)
             return;                               /* (over 85 %: the write waits for room) */
-        if (cfk_write((uint32_t)s, &cfk_rec, quiet ? 0u : ST_NOERASE) != 0)
-            cfk_retry_ms = now + 1000u;           /* (the log full while it sounds, or a flash error) */
+        if (cfk_write((uint32_t)s, &cfk_rec, 0u) != 0)
+            cfk_retry_ms = now + 1000u;           /* flash error */
         return;
     }
     for (st = 0; st < CFK_NST; st++) {
@@ -624,7 +625,7 @@ static void cfk_poll(uint32_t now, int silent)
             cfk_rec.part = cfk_st[st].part;
             cfk_rec.np = (uint8_t)P_COUNT;
             cfk_rec.check = cfs_fnv(&cfk_rec, (uint32_t)__builtin_offsetof(cfk_rec_t, check));
-            if (cfk_write(st, &cfk_rec, quiet ? 0u : ST_NOERASE) != 0)
+            if (cfk_write(st, &cfk_rec, 0u) != 0)
                 cfk_retry_ms = now + 1000u;
             return;
         }
@@ -685,7 +686,7 @@ static void settings_poll(void)
         return;
     if (!quiet && felucca_dbg.last_us * 20u > HALF_FRAMES * 1000000u / FS * 17u)
         return;                                   /* (over 85 %: audio.c sheds voices; the write waits for room) */
-    if (cf_settings_write(quiet ? 0u : ST_NOERASE) <= 0)
+    if (cf_settings_write(0u) <= 0)
         cfs_retry_ms = now + 1000u;
 }
 

@@ -131,6 +131,18 @@ jobs:
           path: build/release-${{ env.VERSION }}/
           if-no-files-found: error
 
+      - name: Target RAM evidence for test builds
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coralflower-target-${{ env.VERSION }}
+          path: |
+            build/coralflower.ram.dis
+            build/coralflower.symbols
+            build/coralflower.sections
+            build/ramtext.bin
+          if-no-files-found: error
+
   release:
     needs: build
     if: github.event_name == 'push' && github.ref_type == 'tag'

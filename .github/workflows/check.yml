@@ -69,6 +69,19 @@ jobs:
           mkdir -p build/host
           cc -std=c99 -Wall -Wextra -Werror -Ifirmware/hal -o build/host/fm1_flash_id_test tests/fm1_flash_id_test.c
           build/host/fm1_flash_id_test
+          cc -std=c11 -O1 -g -w -fsanitize=address,undefined -fno-omit-frame-pointer \
+             tests/cf_flash_test.c -o build/host/cf_flash_test
+          build/host/cf_flash_test
+          cc -std=gnu11 -O1 -g -w -fsanitize=address,undefined -fno-omit-frame-pointer -DEMU_WEB \
+             -Itools/emu/web/compat -Ibuild/gen -Ifirmware/src tests/cf_flash_audio_test.c \
+             -o build/host/cf_flash_audio_test -lm
+          for preset in 0 25 30; do
+            for rate in 44100 48000; do
+              for chip in 0 1; do
+                build/host/cf_flash_audio_test "$preset" "$rate" "$chip" "build/host/flash-$preset-$rate-$chip.wav" 4
+              done
+            done
+          done
           # (the emulator's <os/lock.h> is macOS's; tools/emu/web/compat has the single-threaded one, as the headless build)
           cc -std=gnu11 -O1 -w -Itools/emu/web/compat -Ibuild/gen -Ifirmware/src -Itests -o build/host/cf_backup_test \
              tests/cf_backup_test.c -lm

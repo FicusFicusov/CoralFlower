@@ -277,6 +277,9 @@ static void fm1_main(void)
     timer5_start();
     fm1_guard_lock_top();
     fm1_irq_enable_all();
+#ifdef CF_FLASH_COOP
+    st_runtime = 1;
+#endif
     fm1_delay_ms(30);
     CR_STAGE(BS_CALIB);
     if ((fm1_in.buttons & 3u) == 3u) {

@@ -18,6 +18,19 @@ NAMES = (
     "audio_last_us", "audio_max_us", "audio_late", "audio_stale", "second_core_state", "flash_erases",
     "flash_audible_holes", "host_holds",
 )
+FLASH_NAMES = (
+    "flash_jedec", "flash_runtime", "flash_programs", "flash_slices", "flash_suspends",
+    "max_flash_irq_off_us", "flash_over_budget", "flash_errors", "flash_boot_recoveries", "flash_fault",
+)
+
+
+def decode_flash(data):
+    if len(data) < 2 or data[0] != 1 or data[1] != len(FLASH_NAMES) or len(data) != 2 + 5 * data[1]:
+        raise BackupError("unrecognized CoralFlower flash diagnostic schema")
+    values = {name: bk_r32(data, 2 + 5 * i) for i, name in enumerate(FLASH_NAMES)}
+    if values["flash_fault"] & 0x80000000:
+        values["flash_fault"] -= 0x100000000
+    return values
 
 
 def decode(data):
@@ -29,6 +42,7 @@ def decode(data):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", help="MIDI port name filter")
+    parser.add_argument("--flash", action="store_true", help="also read flash timing/fault counters (0.7.2-rc4 or later)")
     args = parser.parse_args()
     link = None
     try:
@@ -36,6 +50,8 @@ def main():
         if info[1] != "coralflower":
             raise BackupError("the connected device is not CoralFlower")
         values = decode(link.request(80, []))
+        if args.flash:
+            values.update(decode_flash(link.request(81, [])))
         print(json.dumps({"firmware": info[0], **values}, indent=2))
         return 0
     except (InstallError, TimeoutError) as error:

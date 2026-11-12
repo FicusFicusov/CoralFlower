@@ -1381,6 +1381,16 @@ static void cf_ui_pump(void)
     cu.keys = cu.pkeys | cu.xkeys;
 }
 
+/* Storage's suspended windows service musical keys and the MIDI note queue.
+ * cf_ui_pump/sq_key only change RAM and post audio events: no preset load,
+ * backup, save, screen navigation, or nested use of storage.c's scratch buffer.
+ * sq_save_write snapshots the pattern/song that these keys can edit. */
+static void cf_flash_input(void)
+{
+    cu.now = fm1_ms;
+    cf_ui_pump();
+}
+
 static void cf_ui_input(void)
 {
     uint32_t rel = 0, pr = fm1_input_edges(&rel), i;

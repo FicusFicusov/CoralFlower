@@ -194,10 +194,14 @@ static void emu_flash_sync(uint32_t off, uint32_t n)
 }
 static int st_read(uint32_t off, void *dst, uint32_t n)
 {
+#ifdef EMU_FLASH_READ
+    return EMU_FLASH_READ(off, dst, n);
+#else
     if (off > EMU_FLASH_SIZE || n > EMU_FLASH_SIZE - off)
         return -8;
     memcpy(dst, emu_flash + off, n);
     return 0;
+#endif
 }
 /* the device's erase (storage_hw.c st_erase): the audio buffer zeroed and every IRQ off for the 4 KiB erase (typ.
  * ~45 ms on the FM-1's NOR, up to 400 ms): no render, the DMA loops silence. The emulator plays the same hole:
@@ -209,18 +213,27 @@ static uint32_t st_holes;                         /* .. erases that cut it (audi
 #define st_erases emu_stalls                      /* (storage_hw.c's count: the console, the GEEK OUT view) */
 static int st_erase(uint32_t off)
 {
+#ifdef EMU_FLASH_ERASE
+    return EMU_FLASH_ERASE(off);
+#else
     off &= ~0xFFFu;
     if (off >= EMU_FLASH_SIZE)
         return -8;
+#ifndef CF_UNIT
     emu_stall_blocks += (EMU_ERASE_MS * 44100u / 1000u + HALF_FRAMES - 1u) / HALF_FRAMES;
-    emu_stalls++;
     st_holes += (uint32_t)audio_loud();
+#endif
+    emu_stalls++;
     memset(emu_flash + off, 0xFF, 0x1000u);
     emu_flash_sync(off, 0x1000u);
     return 0;
+#endif
 }
 static int st_prog(uint32_t off, const void *src, uint32_t n)
 {
+#ifdef EMU_FLASH_PROGRAM
+    return EMU_FLASH_PROGRAM(off, src, n);
+#else
     uint32_t i;
     if (off > EMU_FLASH_SIZE || n > EMU_FLASH_SIZE - off || (off & 0xFFu) + n > 256u)
         return -8;                                /* (a page program must not wrap: the device's rule) */
@@ -228,4 +241,5 @@ static int st_prog(uint32_t off, const void *src, uint32_t n)
         emu_flash[off + i] &= ((const uint8_t *)src)[i];
     emu_flash_sync(off, n);
     return 0;
+#endif
 }

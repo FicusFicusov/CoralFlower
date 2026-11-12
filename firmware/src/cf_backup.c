@@ -35,7 +35,7 @@
 #define CRB_HDR0 0x7Du
 #define CRB_HDR1 0x46u
 #define CRB_HDR2 0x4Cu
-enum { CRB_INFO = 1, CRB_LIST = 65, CRB_GET, CRB_PUT, CRB_RESTART = 72, CRB_USB_AUDIO = 80 };
+enum { CRB_INFO = 1, CRB_LIST = 65, CRB_GET, CRB_PUT, CRB_RESTART = 72, CRB_USB_AUDIO = 80, CRB_FLASH_AUDIO = 81 };
 #define CRB_VA 9u
 #define CRB_FM6S 10u                                 /* 10, 11: the FM6 patch store's halves */
 #define CFB_SET 30u                                  /* CoralFlower's settings record */
@@ -449,6 +449,17 @@ static uint32_t crb_put(const uint8_t *a, uint32_t n)
 }
 
 #if FELUCCA_UAC
+/* Separate command: existing USB diagnostic schema and backup format stay valid. */
+#ifdef CF_FLASH_COOP
+static void st_flash_snapshot(uint32_t *v);
+static void crb_flash_audio(void)
+{
+    uint32_t v[10];
+    st_flash_snapshot(v);                  /* main-loop counters; no write, reset or save */
+    crb_b(1); crb_b(NELEM(v));
+    for (uint32_t i=0;i<NELEM(v);i++) crb_u32(v[i]);
+}
+#endif
 /* Read-only diagnostic snapshot over MIDI, also while EP2 is recording (CDC is absent then).
  * Counter order is the schema in tools/cf_usb_audio_stats.py. No clearing, saving or stream restart. */
 static void crb_usb_audio(void)
@@ -554,6 +565,12 @@ static int crb_handle(const uint8_t *f, uint32_t n)
             return 0;
         crb_usb_audio();
         break;
+#ifdef CF_FLASH_COOP
+    case CRB_FLASH_AUDIO:
+        if (na) return 0;
+        crb_flash_audio();
+        break;
+#endif
 #endif
     default:
         return 0;

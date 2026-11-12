@@ -41,7 +41,18 @@ static void persist_boot(void)
 #if FELUCCA_FLASH && !defined(CF_EMU)
     uint32_t f = irq_save();
     CR_STAGE(BS_FLASH);
-    flash_ok = fm1_flash_supported(FL_FAR(fl_jedec_ram)());
+    uint32_t id = FL_FAR(fl_jedec_ram)();
+    flash_ok = fm1_flash_supported(id);
+#ifdef CF_FLASH_COOP
+    st_flash.jedec = id;
+    if (flash_ok) {
+        uint32_t s = FL_FAR(fl_status_ram)();
+        if (s & (FLS_SUS_MASK | 3u)) {
+            if (FL_FAR(fl_recover_ram)()) flash_ok = 0;
+            else st_flash.recoveries++;
+        }
+    }
+#endif
     irq_restore(f);
     if (!flash_ok)
         return;
