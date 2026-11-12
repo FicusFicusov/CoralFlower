@@ -42,6 +42,7 @@ typedef struct {
     /* locked to the beat (cf_grid on): the next step's place on the grid (1/24 beats), the grid's gen it is on */
     uint32_t next24, gen;
     uint8_t locked;
+    uint8_t resync;                                  /* live Clock In ARP: join the first resumed F8 after local play */
 } cfa_t;
 /* the keys' arpeggiator, and the sequencer's CHORDS and LAYER tracks' (ARP in a track's editor: the owner,
  * 2026-10-19, "ARP у дорожки"; the same settings, the ARP page's). The functions below work on cfa, the one cfa_at
@@ -54,6 +55,9 @@ static void sqp_off(uint32_t part, uint32_t note);   /* (cf_seqp.c: a note of th
 static uint32_t cfa_part(void) { return cfa.part == 0xFFu ? cfp_cp : cfa.part; }
 
 static uint32_t cf_tempo(void);                 /* cf_out.c: external tempo also sets note gate lengths */
+enum { CFA_CLOCK_NORMAL, CFA_CLOCK_FREE, CFA_CLOCK_WAIT, CFA_CLOCK_EXTERNAL };
+static uint32_t cf_live_arp_clock(void);          /* cf_out.c: only the keys may run locally while DAW is stopped */
+static uint32_t cfa_clock(void) { return cfa_at == &cfa_k ? cf_live_arp_clock() : CFA_CLOCK_NORMAL; }
 static uint32_t cfa_bpm(void) { return cf_tempo(); }
 static uint32_t cfa_oct(void) { return cfp_cfg.arp.oct >= 1u && cfp_cfg.arp.oct <= 4u ? cfp_cfg.arp.oct : 1u; }
 
@@ -128,6 +132,7 @@ static void cfa_stop(void)                           /* everything the arpeggiat
     cfa_strum_off();
     cfa.n = 0;
     cfa.latched = 0;
+    cfa.resync = 0;
 }
 
 static void cfa_play(uint32_t note)
@@ -205,6 +210,23 @@ static void cfa_lock_from(uint32_t g)
     cfa.locked = 1;
 }
 
+static void cfa_start_clocked(void)
+{
+    uint32_t clock = cfa_clock();
+    cfa.idx = 0;
+    cfa.acc = 0;
+    cfa.resync = clock == CFA_CLOCK_FREE || clock == CFA_CLOCK_WAIT;
+    if (clock == CFA_CLOCK_WAIT) {
+        cfa.locked = 0;                              /* armed transport has not supplied its first F8 yet */
+    } else if (cf_grid.on && clock != CFA_CLOCK_FREE) {
+        cfa_lock_from(cf_grid.g24);
+        cfa_step_n((uint64_t)(cfa.next24 - cf_grid.g24) * FS * 60u * 100u);
+    } else {
+        cfa.locked = 0;
+        cfa_step();
+    }
+}
+
 /* a new chord for Strum: its notes low to high (or high to low) over OCTAVE octaves, the first at once */
 static void cfa_strum_start(void)
 {
@@ -271,15 +293,7 @@ static int cfa_chord(const cf_chord_out_t *o, int m)
     if (CF_ARP_STRUMMING(cfp_cfg.arp.mode)) {
         cfa_strum_start();                           /* every new chord strummed afresh */
     } else if (fresh) {                              /* from silence: its first note now (locked: then on the beat) */
-        cfa.idx = 0;
-        cfa.acc = 0;
-        if (cf_grid.on) {
-            cfa_lock_from(cf_grid.g24);
-            cfa_step_n((uint64_t)(cfa.next24 - cf_grid.g24) * FS * 60u * 100u);
-        } else {
-            cfa.locked = 0;
-            cfa_step();
-        }
+        cfa_start_clocked();
     }
     cfa.mode = cfp_cfg.arp.mode;
     return 1;
@@ -288,6 +302,7 @@ static int cfa_chord(const cf_chord_out_t *o, int m)
 /* every audio block: the clocked steps and their gates, the strum's next notes */
 static void cfa_tick(uint32_t n)
 {
+    uint32_t clock;
     if (!cfa.on || !cfa.n)
         return;
     if (CF_ARP_STRUMMING(cfp_cfg.arp.mode)) {
@@ -300,14 +315,30 @@ static void cfa_tick(uint32_t n)
         }
         return;
     }
+    clock = cfa_clock();
+    if (clock == CFA_CLOCK_WAIT) {
+        cfa_note_off();
+        cfa.locked = 0;
+        cfa.acc = 0;
+        cfa.resync = 1;
+        return;
+    }
+    if (clock == CFA_CLOCK_NORMAL)
+        cfa.resync = 0;                              /* Off/Out keep their existing grid behavior */
     if (cfa.cur) {
         if (cfa.gate_left <= n)
             cfa_note_off();
         else
             cfa.gate_left -= n;
     }
-    if (cf_grid.on) {                                /* locked to the beat: the steps on the grid's places */
+    if (cf_grid.on && clock != CFA_CLOCK_FREE) {      /* stopped DAW freezes the shared grid, not the live keys */
         uint32_t g = cf_grid.g24;
+        if (cfa.resync) {
+            cfa.resync = 0;
+            cfa_lock_from(g);
+            cfa_step_n((uint64_t)(cfa.next24 - g) * FS * 60u * 100u);
+            return;                                 /* first resumed F8; no duplicate when tick(n) follows tick(0) */
+        }
         if (!cfa.locked || cfa.gen != cf_grid.gen || cfa.next24 > g + 4u * cfa_pair()) {
             cfa_lock_from(g);                        /* (the grid started again, or the lock is new: its next place) */
             return;
@@ -317,6 +348,14 @@ static void cfa_tick(uint32_t n)
             cfa_step_n((uint64_t)(nx - g) * FS * 60u * 100u);
             cfa.next24 = nx;
         }
+        return;
+    }
+    if (clock == CFA_CLOCK_FREE)
+        cfa.resync = 1;
+    if (!cfa.idx) {                                  /* a new chord waited for F8, but Stop cancelled the armed transport */
+        cfa.locked = 0;
+        cfa.acc = 0;
+        cfa_step();
         return;
     }
     if (cfa.locked) {                                /* (the clock stopped: free from here, a step's wait) */
@@ -354,9 +393,11 @@ static void cfa_config(int keys_down)
         if (cfa.n && CF_ARP_STRUMMING(cfa.mode))
             cfa_strum_start();
         else if (cfa.n) {
-            cfa.idx = 0;
-            cfa.acc = 0;
-            cfa_step();
+            if (cfa_clock() == CFA_CLOCK_NORMAL) {   /* preserve the established internal/track mode-change behavior */
+                cfa.idx = 0;
+                cfa.acc = 0;
+                cfa_step();
+            } else cfa_start_clocked();
         }
     }
     if (!cfp_cfg.arp.latch && cfa.latched && !keys_down)

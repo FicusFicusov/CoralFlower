@@ -309,12 +309,20 @@ static uint32_t cf_tempo(void)
     return cfp_cfg.clock_in && cfx_in.bpm ? cfx_in.bpm :
            cfp_cfg.bpm >= 30u && cfp_cfg.bpm <= 300u ? cfp_cfg.bpm : 120u;
 }
+static uint32_t cf_live_arp_clock(void)
+{
+    if (!cfp_cfg.clock_in)
+        return CFA_CLOCK_NORMAL;
+    if (!cfm.running)
+        return CFA_CLOCK_FREE;                      /* keep the last DAW BPM, or the selected local BPM before it */
+    return cfx_in.wait ? CFA_CLOCK_WAIT : CFA_CLOCK_EXTERNAL;
+}
 
 static void cfm_tick(uint32_t n, uint32_t ticks)
 {
     uint32_t k;
     if (cfp_cfg.clock_in && (!cfm.running || cfx_in.wait)) {
-        cf_grid.on = 1;                          /* frozen: an external slave never falls back to its own tempo */
+        cf_grid.on = 1;                          /* stored transport stays frozen; only live ARP may use local time */
         return;
     }
     if (!cfm.on && !cfm.running) {

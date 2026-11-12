@@ -212,7 +212,8 @@ static void cf_clock_tick(uint32_t n)
     if (!cfx_in.active && !cfx_in.lost &&
         (cfx_in.seen || (cfm.running && cfx_in.wait)) &&
         (uint32_t)(fm1_ms - cfx_in.last_ms) >= CF_CLOCK_LOST_MS) {
-        cf_clock_quiet();                        /* a disconnected cable cannot leave a held sequencer note */
+        if (cfm.running)
+            cf_clock_quiet();                    /* a lost running clock releases notes; stopped DAW may have live ARP */
         cfx_in.lost = 1;
     }
     if (cfx_in.fresh) cfx_in.fresh = 0;

@@ -187,7 +187,8 @@ static void arpeggio(void) {
     CHECK(cfa_k.idx>=8 && cfa_k.idx<=10, "live arp also follows external quarter-beats");
     rt(0xfc); drain(); unsigned index=cfa_k.idx;
     for(unsigned p=0;p<24;p++) clock_at(web_ms()+28);
-    CHECK(cfa_k.idx==index && !cfa_k.cur, "live clocked arp holds on external Stop");
+    CHECK(cfa_k.idx>=index+3 && cfa_k.idx<=index+5, "live arp remains playable on external Stop");
+    CHECK(!sqp.on&&!dmp.on&&!cfm.running, "live arp does not restart stored transport");
     web_keys(0); web_step(20);
 }
 static void output_clock(void) {
