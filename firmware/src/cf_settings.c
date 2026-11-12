@@ -55,7 +55,11 @@ static void cfs_background_done(int rc);
 static int cfs_background_put(uint32_t obj, const void *src, uint32_t len)
 {
     int rc = st_async_put(obj, src, len, 0u, cfs_background_done);
-    if (!rc) cfs_background_tidy = 0;
+    if (!rc) {
+        cfs_background_tidy = 0;
+        if (obj == CF_SET_OBJ)
+            CFD_EVENT(CFD_MAIN, CFD_SAVE_BEGIN, 0u, ((const cf_rec_t *)st_async.data)->check, len);
+    }
     return rc;
 }
 static int cfs_background_clean(uint32_t obj)
@@ -452,6 +456,9 @@ static void cfs_background_done(int rc)
 {
     uint32_t obj = st_async.obj, now = fm1_ms, st;
     if (obj == CF_SET_OBJ) {
+        if (!cfs_background_tidy)
+            CFD_EVENT(CFD_MAIN, CFD_SAVE_END, (uint32_t)rc & 65535u,
+                      ((const cf_rec_t *)st_async.data)->check, cfs_saved);
         if (rc < 0) cfs_retry_ms = now + 1000u;
         else if (!cfs_background_tidy) {
             cfs_saved = ((const cf_rec_t *)st_async.data)->check; cfs_tidy = 0;
