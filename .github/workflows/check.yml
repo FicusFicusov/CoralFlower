@@ -142,6 +142,13 @@ jobs:
           build/host/cf_clock_test timing 120 1
           cc -std=gnu11 -O1 -g -w -fsanitize=address,undefined -DEMU_WEB \
              -Itools/emu/web/compat -Ibuild/gen -Ifirmware/src \
+             tests/cf_clock_local_test.c -o build/host/cf_clock_local_test -lm
+          build/host/cf_clock_local_test seed build/host/clock-in.flash
+          for preset in 0 25 30; do
+            build/host/cf_clock_local_test run build/host/clock-in.flash "$preset" "build/host/clock-local-$preset.wav"
+          done
+          cc -std=gnu11 -O1 -g -w -fsanitize=address,undefined -DEMU_WEB \
+             -Itools/emu/web/compat -Ibuild/gen -Ifirmware/src \
              tests/cf_arp_pause_test.c -o build/host/cf_arp_pause_test -lm
           for preset in 0 25 30; do
             build/host/cf_arp_pause_test "$preset" "build/host/arp-pause-$preset.wav"

@@ -130,6 +130,7 @@ static void cf_clock_locate(uint32_t spp)
 static void cf_clock_event(uint32_t st, uint32_t value, uint32_t ms, uint32_t source)
 {
     uint32_t gap = ms - cfx_in.last_ms;
+    int was_local = cfx_in.local;
     if (!cfp_cfg.clock_in || (st != 0xF8u && st != 0xFAu && st != 0xFBu && st != 0xFCu && st != 0xF2u))
         return;
     /* One clock source at a time; two connected masters must not double tempo.
@@ -142,8 +143,20 @@ static void cf_clock_event(uint32_t st, uint32_t value, uint32_t ms, uint32_t so
         cfx_in.seen = 0;
         cfx_in.last_ms = ms;
     }
+    if (was_local && (st != 0xF2u || !cfm.running)) {
+        cfx_in.local = 0;
+        /* Keep the stopped local phase as well: a later Continue must put
+         * drums, metronome and ARP back on the same beat. */
+        cfx_in.metro_sub = (uint8_t)(cfm.acc * 96u / (FS * 60u));
+        cfx_in.sub = cfx_in.metro_sub % 4u;
+        if (cfm.running) {
+            /* Returning F8/Continue adopts the running position, not bar zero.
+             * Start below deliberately restarts; Stop freezes that position. */
+            cfx_in.wait = 2;
+        }
+    }
     if (st == 0xFAu) {
-        if (!cfm.running || cfx_in.lost) cf_clock_play();
+        if (!cfm.running || cfx_in.lost || was_local) cf_clock_play();
     } else if (st == 0xFBu) cf_clock_continue();
     else if (st == 0xFCu) cf_clock_stop();
     else if (st == 0xF2u) {
@@ -183,6 +196,7 @@ static void cf_clock_mode(void)
     if (cfx_in.enabled == cfp_cfg.clock_in)
         return;
     cfx_in.enabled = cfp_cfg.clock_in;
+    cfx_in.local = 0;
     cfx_in.active = cfx_in.source = cfx_in.seen = cfx_in.lost = 0;
     cfx_in.last_ms = fm1_ms;                     /* timeout also covers In selected before any source arrives */
     cfx_in.bpm = 0;
@@ -206,16 +220,33 @@ static void cf_clock_mode(void)
     }
 }
 
+/* Only an explicit local start chooses the local clock. A missing F8 or a DAW
+ * Stop cannot make this decision, and CLOCK In remains selected in settings. */
+static void cf_clock_local_start(void)
+{
+    cf_clock_mode();
+    if (cfm.running)
+        return;
+    cfx_in.local = cfp_cfg.clock_in &&
+        !(cfx_in.seen && (uint32_t)(fm1_ms - cfx_in.last_ms) < CF_CLOCK_LOST_MS);
+    if (cfx_in.local) {
+        cfx_in.wait = cfx_in.resume = cfx_in.located = 0;
+        cfm.bpm = (uint16_t)cf_tempo();
+    }
+}
+
 static void cf_clock_tick(uint32_t n)
 {
     cfx_in.active = cfx_in.seen && (uint32_t)(fm1_ms - cfx_in.last_ms) < CF_CLOCK_LOST_MS;
     if (!cfx_in.active && !cfx_in.lost &&
         (cfx_in.seen || (cfm.running && cfx_in.wait)) &&
         (uint32_t)(fm1_ms - cfx_in.last_ms) >= CF_CLOCK_LOST_MS) {
-        if (cfm.running)
+        if (cfm.running && !cfx_in.local)
             cf_clock_quiet();                    /* a lost running clock releases notes; stopped DAW may have live ARP */
         cfx_in.lost = 1;
     }
+    if (cfx_in.local)
+        return;
     if (cfx_in.fresh) cfx_in.fresh = 0;
     else if (cfx_in.active && cfm.running && !cfx_in.wait) {
         uint32_t next;

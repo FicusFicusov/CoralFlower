@@ -248,7 +248,7 @@ static void dmp_start(uint32_t r, uint32_t kit, uint32_t swing)
     cfm.running = 0;                            /* a new rhythm, including Start after clock loss, arms at zero */
     cfm_restart();
     cfm.running = 1;
-    if (!cfp_cfg.clock_in)
+    if (!cf_clock_external())
         dmp_now();
 }
 /* REC in the SEQUENCER while a rhythm plays: its bar ends first, then pattern pat plays from its top, the take into
@@ -273,7 +273,7 @@ static void dmp_next_bar(void)
         uint32_t pat = dmp.rin - 1u, trk = dmp.rtrk;
         dmp_stop();
         sqp_begin(pat, 0, 0);
-        if (cfp_cfg.clock_in) {                 /* this boundary IS the clock to start on; do not wait another F8 */
+        if (cf_clock_external()) {              /* this boundary IS the clock to start on; do not wait another F8 */
             cfx_in.wait = 0;
             cfm_tick(0, 0);
             sqp_now();
@@ -312,7 +312,7 @@ static void dmp_tick(uint32_t n, uint32_t ticks)   /* every audio block, as sqp_
     uint32_t k;
     if (!dmp.on)
         return;
-    if (cfp_cfg.clock_in) {
+    if (cf_clock_external()) {
         for (k = 0; k < ticks && dmp.on; k++)
             dmp_tick1();
         return;

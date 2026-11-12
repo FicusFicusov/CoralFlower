@@ -51,8 +51,9 @@ static void transport(void) {
 }
 static void acquisition(void) {
     setup();
+    clock_at(web_ms());                         /* a live source, unlike autonomous PLAY with CLOCK In saved */
     tap(EMU_B_PLAY);
-    CHECK(sqp.t==0 && !sqp.n, "local PLAY with Clock In waits without free-running");
+    CHECK(sqp.t==0 && !sqp.n, "local PLAY with a live clock waits without free-running");
     unsigned base=web_ms();
     for (unsigned p=0;p<=240;p++) clock_at(base+(p*500+12)/24);
     unsigned actual=sqp.nbar*sqp_bar_ticks()+sqp.t;

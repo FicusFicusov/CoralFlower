@@ -803,7 +803,7 @@ static void sqp_begin(uint32_t pat, uint32_t slot, int cin)
     cfm.running = 1;
     if (cin)
         sqp.cin = sqp_bar_ticks();
-    else if (!cfp_cfg.clock_in)
+    else if (!cf_clock_external())
         sqp_now();
 }
 static void sqp_start(uint32_t pat, uint32_t slot) { sqp_begin(pat, slot, 0); }
@@ -817,7 +817,7 @@ static void sqp_tick(uint32_t n, uint32_t ticks)
     if (sqp_pre.on && sqp.rec != 0xFFu && sqp.cin < SQ_PPQN / 4u)
         sqp_pre_flush();
     sqp_rec_watch();
-    if (cfp_cfg.clock_in) {
+    if (cf_clock_external()) {
         for (k = 0; k < ticks && sqp.on; k++)
             sqp_tick1();
         return;

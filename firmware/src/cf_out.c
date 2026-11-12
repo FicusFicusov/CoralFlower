@@ -302,16 +302,18 @@ static struct {
     uint8_t wait;                 /* 1 first pulse, 2 Continue, 3 located Continue */
     uint8_t sub, metro_sub;       /* 96 PPQN: 0..3 since F8, 0..95 since beat */
     uint8_t resume, located;      /* stopped target: 1 pattern/song, 2 rhythm, 3 beat */
+    uint8_t local;                /* explicit local PLAY without a live source; never persisted */
     uint16_t bpm;
 } cfx_in;
+static int cf_clock_external(void) { return cfp_cfg.clock_in && !cfx_in.local; }
 static uint32_t cf_tempo(void)
 {
-    return cfp_cfg.clock_in && cfx_in.bpm ? cfx_in.bpm :
+    return cfp_cfg.clock_in && cfx_in.active && cfx_in.bpm ? cfx_in.bpm :
            cfp_cfg.bpm >= 30u && cfp_cfg.bpm <= 300u ? cfp_cfg.bpm : 120u;
 }
 static uint32_t cf_live_arp_clock(void)
 {
-    if (!cfp_cfg.clock_in)
+    if (!cf_clock_external())
         return CFA_CLOCK_NORMAL;
     if (!cfm.running)
         return CFA_CLOCK_FREE;                      /* keep the last DAW BPM, or the selected local BPM before it */
@@ -321,7 +323,7 @@ static uint32_t cf_live_arp_clock(void)
 static void cfm_tick(uint32_t n, uint32_t ticks)
 {
     uint32_t k;
-    if (cfp_cfg.clock_in && (!cfm.running || cfx_in.wait)) {
+    if (cf_clock_external() && (!cfm.running || cfx_in.wait)) {
         cf_grid.on = 1;                          /* stored transport stays frozen; only live ARP may use local time */
         return;
     }
@@ -335,7 +337,7 @@ static void cfm_tick(uint32_t n, uint32_t ticks)
         cfm.beats_done++;
         cfm.beat_ms = cf_now_ms;
     }
-    if (cfp_cfg.clock_in) {
+    if (cf_clock_external()) {
         uint32_t total = cfx_in.metro_sub + ticks;
         cfx_in.metro_sub = (uint8_t)(total % 96u);
         /* Convert the remainder once: FS*60/96 is fractional at 44.1 kHz. */
@@ -403,7 +405,7 @@ static void cfm_restart(void)
     cfm.beat = 0;
     cfm.beats_done = 0;
     cfx_in.metro_sub = 0;
-    if (cfp_cfg.clock_in && !cfm.running) {
+    if (cf_clock_external() && !cfm.running) {
         cfx_in.wait = 1;
         cfx_in.sub = 0;
         cfx_in.resume = cfx_in.located = 0;
@@ -573,6 +575,8 @@ static void cf_apply(const cf_ev_in_t *e)
         cfp_panic();
         break;
     case CFE_SEQ:
+        if (e->a == 1 || e->a == 3)
+            cf_clock_local_start();
         if (e->a == 1)
             sqp_start(e->b, (uint32_t)e->v);
         else if (e->a == 2)
@@ -596,6 +600,8 @@ static void cf_apply(const cf_ev_in_t *e)
         break;
     case CFE_DRUM:
         if (e->a == 1)
+            cf_clock_local_start();
+        if (e->a == 1)
             dmp_queue(e->b, (uint32_t)e->v & 0xFFu, ((uint32_t)e->v >> 8) & 0xFFu);
         else if (e->a == 2 && dmp.on) {
             dmp.kit = (uint8_t)(e->v & 0xFF);
@@ -616,7 +622,7 @@ static void cf_apply(const cf_ev_in_t *e)
         cfm.level = e->b;
         break;
     case CFE_TEMPO:
-        cfm.bpm = cfp_cfg.clock_in && cfx_in.bpm ? cfx_in.bpm :
+        cfm.bpm = cfp_cfg.clock_in && cfx_in.active && cfx_in.bpm ? cfx_in.bpm :
                   (uint16_t)(e->v < 30 ? 30 : e->v > 300 ? 300 : e->v);
         break;
     case CFE_SIG: cfm.beats = (uint8_t)(e->v < 1 ? 1 : e->v > 12 ? 12 : e->v); break;
@@ -625,8 +631,10 @@ static void cf_apply(const cf_ev_in_t *e)
             cf_clock_stop();
             break;
         }
-        if (e->v)
+        if (e->v) {
+            cf_clock_local_start();
             cfm_restart();
+        }
         cfm.running = (uint8_t)(e->v != 0);
         break;
     default: break;
@@ -671,13 +679,15 @@ static void cf_audio_block(uint32_t n)
         cf_ms_rem -= FS;
         cf_now_ms++;
     }
-    if (cfp_cfg.clock_in) {
+    if (cf_clock_external()) {
         sqp_pre_watch();
         cf_clock_tick(n);
         cfa_tick(n);
         sqp_arp_tick(n);
         sqp_tick(n, 0);                          /* recording observes input even between clock subdivisions */
     } else {
+        if (cfp_cfg.clock_in)
+            cf_clock_tick(n);                   /* keep source availability current during local playback */
         cfa_tick(n);
         sqp_arp_tick(n);
         sqp_pre_watch();
