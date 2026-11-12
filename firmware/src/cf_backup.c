@@ -37,7 +37,7 @@
 #define CRB_HDR0 0x7Du
 #define CRB_HDR1 0x46u
 #define CRB_HDR2 0x4Cu
-enum { CRB_INFO = 1, CRB_LIST = 65, CRB_GET, CRB_PUT, CRB_RESTART = 72, CRB_USB_AUDIO = 80, CRB_FLASH_AUDIO = 81, CRB_EVENT_TRACE = 82, CRB_UI_STATS = 83 };
+enum { CRB_INFO = 1, CRB_LIST = 65, CRB_GET, CRB_PUT, CRB_RESTART = 72, CRB_USB_AUDIO = 80, CRB_FLASH_AUDIO = 81, CRB_EVENT_TRACE = 82, CRB_UI_STATS = 83, CRB_RENDER_STATS = 84 };
 #define CRB_VA 9u
 #define CRB_FM6S 10u                                 /* 10, 11: the FM6 patch store's halves */
 #define CFB_SET 30u                                  /* CoralFlower's settings record */
@@ -507,6 +507,27 @@ static void crb_usb_audio(void)
 
 /* ------------------------------------------------------------------ the dispatcher --- */
 #if CF_EVENT_DIAG
+/* Read only: no arming/clearing, flash traffic or control injection. All main
+ * counters are copied between frames; IRQ totals join one bounded snapshot. */
+static void crb_render_stats(void)
+{
+    uint32_t v[13u + CFR_VALUES];
+    fm1_irq_off();
+    v[0] = fm1_ms; v[1] = fm1_ticks(); v[2] = FM1_TICKS_PER_US;
+#ifdef CF_EMU
+    v[3] = 0;
+#else
+    v[3] = 1;
+#endif
+    v[4] = cf_render.audio; v[5] = cf_render.timer;
+    v[6] = cu.scr; v[7] = cu.pop; v[8] = cs.snd[0];
+    v[9] = cs.chord.algo; v[10] = cs.chord.tonic;
+    v[11] = cf_sn.out.n; v[12] = cf_render.last_update;
+    for (uint32_t i = 0; i < CFR_VALUES; i++) v[13u + i] = cf_render.v[i];
+    fm1_irq_on();
+    crb_b(1); crb_b(NELEM(v));
+    for (uint32_t i = 0; i < NELEM(v); i++) crb_u32(v[i]);
+}
 /* Passive UI diagnosis, schema1. A single coherent scalar snapshot; never
  * consumes input edges, clears maxima, changes MODE or reads/writes flash.
  * The host emulator marks physical scan/LCD counters unavailable (bit0=0).
@@ -681,6 +702,10 @@ static int crb_handle(const uint8_t *f, uint32_t n)
         crb.reboot = 1;
         break;
 #if CF_EVENT_DIAG
+    case CRB_RENDER_STATS:
+        if (na) return 0;
+        crb_render_stats();
+        break;
     case CRB_UI_STATS:
         if (na) return 0;
         crb_ui_stats();

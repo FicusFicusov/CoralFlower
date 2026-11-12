@@ -267,6 +267,9 @@ static void audio_diag_peak(uint32_t wall, uint32_t lag, uint32_t nested)
 
 void fm1_alnk0_irq(void)                       /* via isr_alnk0 (hal/fm1_isr.S) */
 {
+#ifdef CFR_AUDIO_BEGIN
+    CFR_AUDIO_BEGIN();
+#endif
     uint8_t p;
     uint32_t t0;
     felucca_dbg.in_audio = 1;                   /* first: TIMER5 nests from here on (main.c) */
@@ -386,6 +389,9 @@ void fm1_alnk0_irq(void)                       /* via isr_alnk0 (hal/fm1_isr.S) 
 #endif
     }
     felucca_dbg.in_audio = 0;
+#ifdef CFR_AUDIO_END
+    CFR_AUDIO_END();
+#endif
 }
 extern void isr_alnk0(void);
 

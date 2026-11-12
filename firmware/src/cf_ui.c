@@ -1915,6 +1915,11 @@ static void cf_ui_init(void)
 
 static void cf_ui_frame(void)                    /* ui_leds: the snapshot, the plant, the lights */
 {
+    /* A popup/scene excursion hidden between host reads must invalidate that
+     * interval too. Notes may change within a scene; hold one chord for cadence. */
+    CFR_FRAME_BEGIN(cu.scr == SCR_HOME && !cu.pop && fm1_ms > 4000u ?
+        1u | (uint32_t)cs.snd[0] << 1 | (uint32_t)cs.chord.algo << 17 |
+        (uint32_t)cs.chord.tonic << 19 | (uint32_t)(cs.chord.octave + 3) << 23 : 0u);
     CFU_MARK(CFU_FRAME);
     uint32_t now = fm1_ms, dt = now - cu.last_ms;
     cu.last_ms = now;

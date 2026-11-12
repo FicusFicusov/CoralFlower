@@ -81,6 +81,15 @@ jobs:
             "build/host/cf_ui_diag_$diagnostic" build/host/ui-diag.bin
           done
           python3 tests/cf_ui_diag_test.py build/host/ui-diag.bin
+          cc -std=gnu11 -O1 -g -w -fsanitize=address,undefined tests/cf_render_timing_test.c -o build/host/cf_render_timing_test
+          build/host/cf_render_timing_test
+          for diagnostic in 0 1; do
+            cc -std=gnu11 -O1 -g -w -fsanitize=address,undefined -DEMU_WEB -DCF_EVENT_DIAG="$diagnostic" \
+               -Itools/emu/web/compat -Ibuild/gen -Ifirmware/src tests/cf_render_diag_test.c \
+               -o "build/host/cf_render_diag_$diagnostic" -lm
+            "build/host/cf_render_diag_$diagnostic" build/host/render-diag.bin
+          done
+          python3 tests/cf_render_diag_test.py build/host/render-diag.bin
           cc -std=gnu11 -O1 -g -w -fsanitize=address,undefined -DEMU_WEB -DCF_EVENT_DIAG=1 \
              -Itools/emu/web/compat -Ibuild/gen -Ifirmware/src tests/cf_shed_policy_test.c -o build/host/cf_shed_policy_test -lm
           build/host/cf_shed_policy_test

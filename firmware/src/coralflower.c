@@ -105,6 +105,8 @@ static void cf_boot_note(void);            /* (cf_fx.c) */
 /* ------------------------------------------------------------- HAL --- */
 #include <stdint.h>
 #include "fm1_time.h"
+#define CFR_CLOCK() fm1_ticks_inlined()
+#include "cf_render_diag.h"
 #include "fm1_sys.h"
 #include "fm1_irq.h"
 #include "fm1_guard.h"

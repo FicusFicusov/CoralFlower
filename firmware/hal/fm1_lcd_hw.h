@@ -58,12 +58,18 @@ FM1_INLINE void fm1_lcd_baud(uint32_t b) { FM1_LCD_SPI_BAUD = b; }
 
 static void fm1_lcd_wait(void)
 {
+#ifdef CFR_WAIT_BEGIN
+    CFR_WAIT_BEGIN();
+#endif
     uint32_t n;
     for (n = 0; n < 4000000u && !(FM1_LCD_SPI_CON & 0x8000u); n++)
         ;
     if (n == 4000000u)
         fm1_lcd_timeouts++;
     FM1_LCD_SPI_CON |= 0x4000u;
+#ifdef CFR_WAIT_END
+    CFR_WAIT_END();
+#endif
 }
 
 FM1_INLINE void fm1_lcd_deselect(void) { FM1_LCD_PC_OUT |= FM1_LCD_CS; }

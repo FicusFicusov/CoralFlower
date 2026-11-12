@@ -30,6 +30,7 @@ static uint8_t fb_full = 1;                       /* resend every tile at the ne
 static uint32_t fb_tiles_sent;                    /* diagnostics: tiles sent since power-on */
 static int16_t fb_cx0, fb_cy0, fb_cx1 = FB_W, fb_cy1 = FB_H;   /* the clip rectangle */
 
+#include "cf_render_diag.h"
 #ifndef CF_PUMP
 #define CF_PUMP() ((void)0)                       /* the keys read between tile rows (cf_ui.c) */
 #endif
@@ -277,10 +278,20 @@ static uint32_t fb_tile_hash(int tx, int ty)
 static void cf_present(void)
 {
     int tx, ty, which = 0;
+    CFR_COMPOSE_END();
     for (ty = 0; ty < FB_TY; ty++) {
         uint16_t dirty = 0;
+#if CF_EVENT_DIAG
+        uint16_t changed = 0;
+#endif
         for (tx = 0; tx < FB_TX; tx++) {
             uint32_t h = fb_tile_hash(tx, ty);
+#if CF_EVENT_DIAG
+            /* Strictly inside HOME's flora: rows16..143. No keycap/popup
+             * refresh counted as animation, and no second pixel-hash pass. */
+            if (ty >= 1 && ty < 9 && h != fb_hash[ty * FB_TX + tx])
+                changed |= (uint16_t)(1u << tx);
+#endif
             if (fb_full || h != fb_hash[ty * FB_TX + tx]) {
                 fb_hash[ty * FB_TX + tx] = h;
                 dirty |= (uint16_t)(1u << tx);
@@ -308,10 +319,14 @@ static void cf_present(void)
                     *d++ = fb_lut[s[i] & (FB_PAL - 1)];
             }
             lcd_blit((uint32_t)x0, (uint32_t)(ty * FB_TS), (uint32_t)w, FB_TS, fb_dma[which ^ 1]);
+#if CF_EVENT_DIAG
+            if (changed & (((1u << (t1 - t0)) - 1u) << t0)) CFR_SUBMITTED();
+#endif
             fb_tiles_sent += (uint32_t)(t1 - t0);
         }
         if (dirty)
             CF_PUMP();
     }
     fb_full = 0;
+    CFR_FRAME_END();
 }

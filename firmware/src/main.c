@@ -109,12 +109,19 @@ void fm1_timer5_irq(void)
 #endif
     if (felucca_dbg.in_audio) {
         felucca_dbg.nested++;
+#ifdef CFR_TIMER_END
+        CFR_TIMER_END(t0);
+#endif
         t5_nested_ticks += fm1_ticks() - t0;
         return;
     }
 #if FELUCCA_UAC
-    if (usb_sie_owner)
+    if (usb_sie_owner) {
+#ifdef CFR_TIMER_END
+        CFR_TIMER_END(t0);
+#endif
         return;                                 /* (owed stays: the next tick) */
+    }
     usb_sie_owner = 1;
 #endif
     if (owed & 1u)
@@ -127,6 +134,9 @@ void fm1_timer5_irq(void)
         uart_midi_poll();
 #endif
     owed = 0;
+#ifdef CFR_TIMER_END
+    CFR_TIMER_END(t0);
+#endif
 }
 extern void isr_timer5(void);
 

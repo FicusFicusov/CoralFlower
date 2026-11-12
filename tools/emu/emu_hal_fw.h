@@ -80,6 +80,7 @@ static void fm1_irq_on(void)
 #define fm1_led_dim (emu_hal.led_dim)
 #define fm1_led_dim2 (emu_hal.led_mid)
 #define fm1_led_faint (emu_hal.led_faint)
+#include "../../firmware/src/cf_render_diag.h"
 static volatile uint32_t host_pressed, host_notes;   /* edges since the last take */
 static volatile int32_t host_enc[7];
 static uint32_t fm1_input_edges(void *released)
