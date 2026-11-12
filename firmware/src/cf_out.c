@@ -315,8 +315,9 @@ static uint32_t cf_live_arp_clock(void)
 {
     if (!cf_clock_external())
         return CFA_CLOCK_NORMAL;
-    if (!cfm.running)
-        return CFA_CLOCK_FREE;                      /* keep the last DAW BPM, or the selected local BPM before it */
+    if (!cfm.running || (cfx_in.lost && !cfx_in.wait))
+        return CFA_CLOCK_FREE;                      /* live keys survive a missing running clock; stored parts stay frozen */
+    /* A new Start/Continue still arms the first F8, including after a loss. */
     return cfx_in.wait ? CFA_CLOCK_WAIT : CFA_CLOCK_EXTERNAL;
 }
 

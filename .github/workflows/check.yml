@@ -156,6 +156,14 @@ jobs:
           for preset in 0 25 30; do
             build/host/cf_arp_pause_test "$preset" "build/host/arp-pause-$preset.wav"
           done
+          cc -std=gnu11 -O1 -g -w -fsanitize=address,undefined -DEMU_WEB \
+             -Itools/emu/web/compat -Ibuild/gen -Ifirmware/src \
+             tests/cf_arp_disconnect_test.c -o build/host/cf_arp_disconnect_test -lm
+          for preset in 0 25 30; do
+            for target in pattern rhythm; do
+              build/host/cf_arp_disconnect_test "$preset" "$target" "build/host/arp-disconnect-$preset-$target.wav"
+            done
+          done
           cc -std=c99 -Wall -Wextra -Ifirmware/src -o build/cf_chord_test tests/cf_chord_test.c firmware/src/cf_chord.c \
              firmware/src/cf_theory.c
           build/cf_chord_test

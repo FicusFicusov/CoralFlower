@@ -84,6 +84,7 @@ static void cancel_before_clock(unsigned status,int mode_change) {
     progress(700,5,6,"cancelled Start/Continue permits held live chord without F8");
     web_keys(0);pump(500);CHECK(!cfa_k.n&&!cfa_k.cur,"release after cancelled transport clears live chord");
 }
+#ifndef CF_ARP_PAUSE_FIXTURE
 int main(int argc,char **argv) {
     if(argc!=3)return 2;
     unsigned preset=atoi(argv[1]);web_boot();pump(1800);
@@ -139,3 +140,4 @@ int main(int argc,char **argv) {
         preset,wav_frames,peak,sqrt(energy/(2.0*wav_frames)),ons,offs,checks,failed);
     return failed?1:0;
 }
+#endif
