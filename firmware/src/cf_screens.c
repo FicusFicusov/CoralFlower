@@ -519,9 +519,12 @@ static int cf_intro_draw(uint32_t dt);
 static void cf_ui_draw(void)
 {
     char top[24];
+    CFU_MARK(CFU_DRAW);
     fb_unclip();
-    if (cf_intro_draw(cu.frame_dt))
+    if (cf_intro_draw(cu.frame_dt)) {
+        CFU_MARK(CFU_IDLE);
         return;
+    }
     if (cu.scr == SCR_HOME) {
         /* the layout's name, and a padlock for the Lock ones */
         const char *an = cs.chord.algo >= CF_ALG_SIDE ? "Side" : "Top";
@@ -599,6 +602,7 @@ static void cf_ui_draw(void)
         fb_text_c(&CF_FONT_UI, 120, 140, cu.upd_stub ? "update mode" : "USB boot", FL_INK, 1);
         fb_text_c(&CF_FONT_UI, 120, 156, "let go to cancel", FL_INK2, 1);
         cf_present();
+        CFU_MARK(CFU_IDLE);
         return;
     }
     fb_rect(0, Y_VIEW + H_VIEW, FB_W, Y_KEYS - Y_VIEW - H_VIEW, FL_BG);   /* the gap over the keys: the intro's plant
@@ -607,4 +611,5 @@ static void cf_ui_draw(void)
     draw_keys();
     draw_knobs();
     cf_present();
+    CFU_MARK(CFU_IDLE);
 }

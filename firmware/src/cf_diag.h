@@ -75,4 +75,5 @@ static inline cf_diag_writer_t cf_diag_writer(void)
 #define CFD_ACTIVE 0
 #define CFD_FLASH_CONTEXT(lane) ((void)0)
 #endif
+#include "cf_ui_diag.h"
 #endif

@@ -74,6 +74,13 @@ jobs:
           cc -std=c11 -O1 -g -w -fsanitize=address,undefined tests/cf_event_deadline_test.c -o build/host/cf_event_deadline_test
           build/host/cf_event_deadline_test
           python3 tests/cf_diag_build_test.py
+          for diagnostic in 0 1; do
+            cc -std=gnu11 -O1 -g -w -fsanitize=address,undefined -DEMU_WEB -DCF_EVENT_DIAG="$diagnostic" \
+               -Itools/emu/web/compat -Ibuild/gen -Ifirmware/src tests/cf_ui_diag_test.c \
+               -o "build/host/cf_ui_diag_$diagnostic" -lm
+            "build/host/cf_ui_diag_$diagnostic" build/host/ui-diag.bin
+          done
+          python3 tests/cf_ui_diag_test.py build/host/ui-diag.bin
           cc -std=gnu11 -O1 -g -w -fsanitize=address,undefined -DEMU_WEB -DCF_EVENT_DIAG=1 \
              -Itools/emu/web/compat -Ibuild/gen -Ifirmware/src tests/cf_shed_policy_test.c -o build/host/cf_shed_policy_test -lm
           build/host/cf_shed_policy_test

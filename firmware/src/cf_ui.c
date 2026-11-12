@@ -395,6 +395,7 @@ static void ui_knob_info(int k, cf_knob_t *o)
 static void cf_xnotes_up_all(void);              /* (below: the outside notes held go up) */
 static void ui_knob_turn(int k, int d)
 {
+    CFU_ENCODER(3u + (uint32_t)k, d);
     cu.knob_ms[k] = cu.now ? cu.now : 1u;
     cu.knob_last = (uint8_t)k;
     switch (cu.scr) {
@@ -668,6 +669,7 @@ static void cv_turned(int d)
 
 static void ui_select(int d)                     /* SELECT: the bass sound, or a screen's page */
 {
+    CFU_ENCODER(0u, d);
     if (cu.scr == SCR_DRUM) {                    /* the drum machine: the rhythm (OCT+ held: the pattern it goes into) */
         if (dmc.down)
             dm_copy_turn(d);
@@ -741,6 +743,7 @@ static void ui_select(int d)                     /* SELECT: the bass sound, or a
 }
 static void ui_presets(int d)                    /* PRESETS: the chord sound (a sequencer's track open: its sound) */
 {
+    CFU_ENCODER(2u, d);
     if (dm_holding()) {                          /* (EDIT held in DRUMS: a rhythm for them, cf_dmui.c) */
         dm_hold_turn(d);
         return;
@@ -757,6 +760,7 @@ static void ui_presets(int d)                    /* PRESETS: the chord sound (a 
 }
 static void ui_algo(int d)                       /* ALGORITHM: the chord algorithm (FX: moves the effect) */
 {
+    CFU_ENCODER(1u, d);
     if (cu.scr == SCR_FX) {
         cfx_move(d);
         return;
@@ -888,6 +892,7 @@ static void cf_rec_down(void)
 }
 static void ui_button(uint32_t b)
 {
+    CFU_BUTTON(b);
     if (cfr.go)                                  /* (erasing: no button any more) */
         return;
     if (cf_reset_page() && b == B_SAVE) {
@@ -1406,11 +1411,15 @@ static void cf_ui_input(void)
 {
     uint32_t rel = 0, pr = fm1_input_edges(&rel), i;
     int32_t d;
+    CFU_INPUT();
+    CFU_MARK(CFU_SOUNDS);
     sq_home_poll();                              /* (a take from HOME ended: its bars, before its undo is kept) */
     sq_snd_poll();                               /* (the current pattern's sounds: 0.5) */
     cf_glide_migrate();                          /* (the old GLIDE into HOME's sound, once) */
     sq_undo_poll();                              /* (before the input: the state an edit starts from) */
+    CFU_MARK(CFU_NOTES);
     cf_ui_pump();
+    CFU_MARK(CFU_SEQUENCE);
     cf_save_poll();
     cf_reset_poll();
     cf_rec_poll();
@@ -1422,6 +1431,7 @@ static void cf_ui_input(void)
     sq_edit_poll();
     sq_save_poll();
     dm_poll();                                   /* (the drum machine: what was chosen last, its settings kept) */
+    CFU_MARK(CFU_CONTROLS);
     for (i = 0; i < 14u; i++)
         if ((pr >> i) & 1u) {
             uint32_t b = panel_btn_of(i);
@@ -1452,6 +1462,7 @@ static void cf_ui_input(void)
         cft_target = sqk.last < SQ_NPAT && sq_has(sqk.last) ? 1u | (uint32_t)sqk.last << 8 : 0u;
     }
 
+    CFU_MARK(CFU_IDLE);
 }
 
 /* ------------------------------------------------------------ key caps --- */
@@ -1902,6 +1913,7 @@ static void cf_ui_init(void)
 
 static void cf_ui_frame(void)                    /* ui_leds: the snapshot, the plant, the lights */
 {
+    CFU_MARK(CFU_FRAME);
     uint32_t now = fm1_ms, dt = now - cu.last_ms;
     cu.last_ms = now;
     cu.frame_dt = dt;
@@ -1913,4 +1925,5 @@ static void cf_ui_frame(void)                    /* ui_leds: the snapshot, the p
     cf_leds();
     if (cu.pop && (int32_t)(cu.now - cu.pop_until) > 0)
         cu.pop = POP_NONE;
+    CFU_MARK(CFU_IDLE);
 }

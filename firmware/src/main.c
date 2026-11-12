@@ -298,6 +298,7 @@ static void fm1_main(void)
 
     for (;;) {
         uint32_t m = fm1_ms;
+        CFU_MARK(CFU_HOUSEKEEPING);
         fm1_wdt_feed();
         usb_retry(fm1_ms);
 #if FELUCCA_UAC
@@ -376,7 +377,9 @@ static void fm1_main(void)
         felucca_dbg.home = ui.home;
         felucca_dbg.stage = BS_LOOP_INPUT;            /* (the first: cr_ui_init, BS_UI_INIT ..) */
         ui_input();
+        CFU_MARK(CFU_SETTINGS);
         settings_poll();                              /* queued settings save: only while stopped */
+        CFU_MARK(CFU_IDLE);
         felucca_dbg.stage = BS_LOOP_DRAW;
         ui_leds();
         ui_draw();

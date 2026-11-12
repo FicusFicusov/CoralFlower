@@ -37,7 +37,7 @@
 #define CRB_HDR0 0x7Du
 #define CRB_HDR1 0x46u
 #define CRB_HDR2 0x4Cu
-enum { CRB_INFO = 1, CRB_LIST = 65, CRB_GET, CRB_PUT, CRB_RESTART = 72, CRB_USB_AUDIO = 80, CRB_FLASH_AUDIO = 81, CRB_EVENT_TRACE = 82 };
+enum { CRB_INFO = 1, CRB_LIST = 65, CRB_GET, CRB_PUT, CRB_RESTART = 72, CRB_USB_AUDIO = 80, CRB_FLASH_AUDIO = 81, CRB_EVENT_TRACE = 82, CRB_UI_STATS = 83 };
 #define CRB_VA 9u
 #define CRB_FM6S 10u                                 /* 10, 11: the FM6 patch store's halves */
 #define CFB_SET 30u                                  /* CoralFlower's settings record */
@@ -505,6 +505,85 @@ static void crb_usb_audio(void)
 
 /* ------------------------------------------------------------------ the dispatcher --- */
 #if CF_EVENT_DIAG
+/* Passive UI diagnosis, schema1. A single coherent scalar snapshot; never
+ * consumes input edges, clears maxima, changes MODE or reads/writes flash.
+ * The host emulator marks physical scan/LCD counters unavailable (bit0=0).
+ * Existing INFO/backup/80/81/82 layouts are unchanged. */
+static void crb_ui_stats(void)
+{
+    uint32_t v[64], n = 0, now;
+#define CFU_VALUE(value) (v[n++] = (uint32_t)(value))
+    fm1_irq_off();
+    now = fm1_ms;
+    CFU_VALUE(now);
+#ifdef CF_EMU
+    CFU_VALUE(0);                               /* physical scan counters unavailable */
+#else
+    CFU_VALUE(1);
+#endif
+    CFU_VALUE(cu.frames);
+    CFU_VALUE(cf_ui_diag.input_calls);
+    CFU_VALUE(cf_ui_diag.input_gap_max_ms);
+    CFU_VALUE(cf_ui_diag.buttons);
+    CFU_VALUE(cf_ui_diag.encoders);
+    CFU_VALUE(cf_ui_diag.last_control);
+    CFU_VALUE(cf_ui_diag.control_delta);
+    CFU_VALUE(cf_ui_diag.control_ms);
+    CFU_VALUE(cf_ui_diag.phase);
+    CFU_VALUE(cf_ui_diag.phase ? now - cf_ui_diag.phase_ms : 0u);
+    for (uint32_t i = 1; i < CFU_PHASES; i++) CFU_VALUE(cf_ui_diag.max_ms[i]);
+    CFU_VALUE(cu.scr);
+    CFU_VALUE(cu.scr < SCR_N ? cu.page[cu.scr] : 0xffffffffu);
+    CFU_VALUE(squ.pat);
+    CFU_VALUE(squ.trk);
+    CFU_VALUE((!!squ.sel_down) | (!!squ.edit_down) << 1 | (!!squ.glo_down) << 2 | (!!squ.cpy) << 3 |
+              (!!cu.save_hold) << 4 | (!!cu.rec_hold) << 5 | (!!cfr.go) << 6 | (!!cfr.fin) << 7 | (!!sqh.busy) << 8);
+    CFU_VALUE((cs.clock_in & 3u) | (!!cfm.running) << 2 | (!!sqp.on) << 3 | (!!dmp.on) << 4 |
+              (!!cfx_in.active) << 5 | (!!cfx_in.lost) << 6 | (uint32_t)cfx_in.wait << 8 | (!!cfx_in.local) << 10);
+    CFU_VALUE(cfx_in.last_ms);
+    CFU_VALUE(cu.pkeys);
+    CFU_VALUE(cu.xkeys);
+    CFU_VALUE(fm1_in.buttons);
+#ifdef CF_EMU
+    CFU_VALUE(host_pressed);
+#else
+    CFU_VALUE(fm1_in.pressed);
+#endif
+    CFU_VALUE(fm1_in.notes);
+#ifdef CF_EMU
+    CFU_VALUE(host_notes);
+    for (uint32_t i = 0; i < 5; i++) CFU_VALUE(0);
+#else
+    CFU_VALUE(fm1_in.notes_pressed);
+    CFU_VALUE(fm1_in.frames);
+    CFU_VALUE(fm1_in_stat.ticks);
+    CFU_VALUE((uint32_t)(fm1_ticks() - fm1_in_stat.last) / FM1_TICKS_PER_US);
+    CFU_VALUE(fm1_in_stat.gap_max / FM1_TICKS_PER_US);
+    CFU_VALUE(fm1_lcd_timeouts);
+#endif
+    CFU_VALUE(fb_tiles_sent);
+    for (uint32_t i = 0; i < 3u; i++) {
+        uint32_t raw = 0;
+#ifndef CF_EMU
+        for (uint32_t j = 0; j < 4u && i * 4u + j < FM1_NCOL; j++)
+            raw |= (uint32_t)fm1_in.raw[i * 4u + j] << (8u * j);
+#endif
+        CFU_VALUE(raw);
+    }
+    for (uint32_t i = 0; i < 7u; i++) {
+#ifdef CF_EMU
+        CFU_VALUE(host_enc[i]);
+#else
+        CFU_VALUE((int32_t)fm1_in.enc_steps[i]);
+#endif
+    }
+    CFU_VALUE(felucca_dbg.halves);
+    fm1_irq_on();
+#undef CFU_VALUE
+    crb_b(1); crb_b(n);
+    for (uint32_t i = 0; i < n; i++) crb_u32(v[i]);
+}
+
 /* Main-loop read, no save/clear/arm. Details can be replaced within a second:
  * no records are returned while active. After ten seconds all writers refuse
  * further events. MODE also runs in main; generation is stable within a page. */
@@ -600,6 +679,10 @@ static int crb_handle(const uint8_t *f, uint32_t n)
         crb.reboot = 1;
         break;
 #if CF_EVENT_DIAG
+    case CRB_UI_STATS:
+        if (na) return 0;
+        crb_ui_stats();
+        break;
     case CRB_EVENT_TRACE:
         if (na != 0u && (na != 6u || a[0] > CFD_SUMMARY_LANE || a[5] > 15u)) return 0;
         crb_event_trace(na ? a[0] : 0u, na ? crb_r32(a + 1) : 0u);

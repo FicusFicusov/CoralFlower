@@ -219,7 +219,9 @@ void emu_fw_frame(void)                           /* main.c's loop body (coralfl
         emu_hal.ui_lock_max_us = d;
     cf_ui_draw();
     cr_update_poll();                             /* main.c: OCT- + OCT+ + HOME held 5 s */
+    CFU_MARK(CFU_SETTINGS);
     settings_poll();                              /* main.c: the settings record, once quiet (cf_settings.c) */
+    CFU_MARK(CFU_IDLE);
     if (fm1_ms > BG_SETTLE_MS && bootguard.pending)
         bootguard_settled(&bootguard);
     felucca_dbg.stage = BS_LOOP_IDLE;
