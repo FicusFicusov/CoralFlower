@@ -56,6 +56,10 @@ static void ua_service_paced(uint32_t t0, int from_isr)
             ua_dbg.svc_t5++;
         if (last_ua && gap > ua.poll_max_ticks)
             ua.poll_max_ticks = gap;
+        if (last_ua && gap > 750u * FM1_TICKS_PER_US && ua.cap_alt && !ua.cap_hold) {
+            CFD_EVENT(CFD_USB, CFD_USB_SERVICE_GAP, from_isr, gap, ua.cw - ua.cr);
+            CFD_FLASH_CONTEXT(CFD_USB);
+        }
         last_ua = t0;
         ua_service();
         gap = fm1_ticks() - t0;

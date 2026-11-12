@@ -518,6 +518,8 @@ static void cfp_key(int key, int down)
 
 static void cfp_config(void)                         /* CFE_CONFIG: the UI's settings */
 {
+    CFD_EVENT(CFD_AUDIO, CFD_CONFIG, cfp_cfg.arp.mode | (uint32_t)cfp_cfg.arp_on << 8,
+              cfa.steps, cf_now_ms);
     uint8_t was = cfa.on, latched = cfa.latched, i, moved = 0;
     if (cfp_cfg.cpart != cfp_cp || cfp_cfg.bass_only != cfp_bo) {   /* the keys move to another part: what they
                                                      * sound there goes */

@@ -7,6 +7,7 @@
  * engine or the SAMPLE engine's PERC set (General MIDI map) on any part.
  * Sections: sizes, parameters, voices and engines, tracks and the song, system. */
 #include <stdint.h>
+#include "cf_diag.h"
 
 /* ------------------------------------------------------------ sizes --- */
 #define NVOICE 16                /* voice slots per part (FM6 plays Dexed's 16; Melodee's voice model) */

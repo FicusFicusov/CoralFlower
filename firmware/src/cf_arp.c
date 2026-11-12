@@ -144,6 +144,7 @@ static void cfa_play(uint32_t note)
         cfp_on(cfa_part(), note, cfp_cfg.vel);       /* (the sequencer's: not over a note the keys hold) */
     cfa.steps++;
     cfa.last_note = (uint8_t)note;
+    CFD_EVENT(CFD_AUDIO, CFD_ARP_NOTE, cfa_part() << 8 | note, cfa.steps, cf_now_ms);
 }
 /* the grid's step places: pairs of 2 RATE units, the second SWING late (s: where it falls in the pair) */
 static uint32_t cfa_pair(void) { return 2u * CF_ARP_UNITS[cfp_cfg.arp.rate < CF_ARP_NRATES ? cfp_cfg.arp.rate : 4u]; }

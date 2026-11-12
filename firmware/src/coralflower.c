@@ -94,6 +94,9 @@ static void cf_boot_note(void);            /* (cf_fx.c) */
 #endif
 
 #define CF_UNIT 1                /* (main.c: CoralFlower's calibration and update hooks) */
+#ifndef CF_EVENT_DIAG
+#define CF_EVENT_DIAG 1          /* rc5: RAM-only diagnosis, not a continuity fix */
+#endif
 
 #if defined(__APPLE__)            /* the host syntax check only: Mach-O has no ELF sections (.noinit, .pool) */
 #define __attribute__(x)
@@ -122,6 +125,8 @@ static void cf_boot_note(void);            /* (cf_fx.c) */
 
 /* ----------------------------------------------------------- sound --- */
 #include "core.h"
+#define CFD_TICKS() FM1_T4_CNT
+#include "cf_diag.c"
 #include "engines.c"
 #include "params.c"
 #include "mod.c"

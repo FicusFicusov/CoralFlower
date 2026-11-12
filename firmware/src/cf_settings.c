@@ -194,7 +194,10 @@ static int cf_settings_write(uint32_t how)
     cf_rec.size = sizeof(cf_set_t);
     cf_rec.s = cs;
     cf_rec.check = cfs_fnv(&cf_rec.s, sizeof cf_rec.s);
-    if ((rc = st_put(CF_SET_OBJ, &cf_rec, sizeof cf_rec, how)) != 0)
+    CFD_EVENT(CFD_MAIN, CFD_SAVE_BEGIN, how, cf_rec.check, sizeof cf_rec);
+    rc = st_put(CF_SET_OBJ, &cf_rec, sizeof cf_rec, how);
+    CFD_EVENT(CFD_MAIN, CFD_SAVE_END, (uint32_t)rc & 65535u, cf_rec.check, cfs_saved);
+    if (rc != 0)
         return rc == 1 ? 0 : -1;
     cfs_saved = cf_rec.check;
     cfs_tidy = 0;

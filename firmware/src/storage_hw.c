@@ -37,19 +37,29 @@ static int st_flash_run(uint32_t off, const uint8_t *src, uint32_t n)
     int rc;
     if (st_flash.fault) return st_flash.fault;
     j.off = off; j.src = src; j.n = n;
+    CFD_EVENT(CFD_MAIN, CFD_FLASH_BEGIN, n, off, st_flash.slices);
     do {
         uint32_t f, t, us;
         st_flash_yield();
         f = irq_save(); t = fm1_ticks();
         rc = FL_FAR(fl_slice_ram)(&j);
         us = (uint32_t)(fm1_ticks() - t) / FM1_TICKS_PER_US;
+#if CF_EVENT_DIAG
+        if (CFD_ACTIVE) {
+            cf_diag.flash_at = t - cf_diag.t0;
+            cf_diag.flash_ticks = fm1_ticks() - t;
+            cf_diag.flash_seq++;
+        }
+#endif
         irq_restore(f);
+        if (us > 450u) CFD_EVENT(CFD_MAIN, CFD_FLASH_SLOW, n, us, off);
         st_flash.slices++;
         if (us > st_flash.max_off_us) st_flash.max_off_us = us;
         if (us > 450u) st_flash.over_budget++;  /* hardware acceptance, not a substituted success metric */
         if (rc == 1) st_flash.suspends++;
     } while (rc == 1);
     if (rc < 0) { st_flash.errors++; st_flash.fault = rc; }
+    CFD_EVENT(CFD_MAIN, CFD_FLASH_END, (uint32_t)rc & 65535u, off, st_flash.slices);
     return rc;
 }
 #endif
@@ -68,6 +78,13 @@ static int st_read(uint32_t off, void *dst, uint32_t n)
         uint32_t k = n > 32u ? 32u : n, f = irq_save(), t = fm1_ticks();
         int rc = FL_FAR(fl_read_slice_ram)(off, d, k);
         uint32_t us = (uint32_t)(fm1_ticks() - t) / FM1_TICKS_PER_US;
+#if CF_EVENT_DIAG
+        if (CFD_ACTIVE) {
+            cf_diag.flash_at = t - cf_diag.t0;
+            cf_diag.flash_ticks = fm1_ticks() - t;
+            cf_diag.flash_seq++;
+        }
+#endif
         if (us > st_flash.max_off_us) st_flash.max_off_us = us;
         if (us > 450u) st_flash.over_budget++;
 #else
@@ -75,6 +92,9 @@ static int st_read(uint32_t off, void *dst, uint32_t n)
         int rc = FL_FAR(fl_read_ram)(off, d, k);
 #endif
         irq_restore(f);
+#ifdef CF_FLASH_COOP
+        if (us > 450u) CFD_EVENT(CFD_MAIN, CFD_FLASH_SLOW, 0xFFFFu, us, off);
+#endif
         if (rc)
             return rc;
         off += k;

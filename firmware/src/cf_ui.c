@@ -511,9 +511,20 @@ static void ui_knob_turn(int k, int d)
         if (cu.page[SCR_ARP] == 0) {
             if (k == 0)
                 cu.arp_on = (uint8_t)(d > 0);
-            else if (k == 1)
+            else if (k == 1) {
+                uint32_t old_mode = cs.arp.mode;
                 cs.arp.mode = (uint8_t)clampi(cs.arp.mode + d, 0, CF_ARP_NMODES - 1);
-            else if (k == 2)
+#if CF_EVENT_DIAG
+                if (old_mode != cs.arp.mode) {
+                    cf_diag_start(old_mode, cs.arp.mode, fm1_ms);
+                    CFD_EVENT(CFD_MAIN, CFD_CONTEXT, 1, cs.snd[0] | (uint32_t)cs.snd[1] << 16,
+                              cs.bpm | (uint32_t)cs.clock_in << 16 | (uint32_t)cu.arp_on << 24);
+                    CFD_EVENT(CFD_MAIN, CFD_CONTEXT, 2,
+                              cs.arp.rate | (uint32_t)cs.arp.gate << 8 | (uint32_t)cs.arp.swing << 16 | (uint32_t)cs.arp.oct << 24,
+                              cs.arp.strum_ms | (uint32_t)cs.arp.latch << 8);
+                }
+#endif
+            } else if (k == 2)
                 cs.arp.oct = (uint8_t)clampi(cs.arp.oct + d, 1, 4);
             else if (CF_ARP_STRUMMING(cs.arp.mode))
                 cs.arp.strum_ms = (uint8_t)clampi(cs.arp.strum_ms + d * (cs.arp.strum_ms < 40 ? 1 : 5), 5, 250);

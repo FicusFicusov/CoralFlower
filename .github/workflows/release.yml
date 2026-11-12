@@ -137,6 +137,7 @@ jobs:
         with:
           name: coralflower-target-${{ env.VERSION }}
           path: |
+            build/coralflower.dis
             build/coralflower.ram.dis
             build/coralflower.symbols
             build/coralflower.sections

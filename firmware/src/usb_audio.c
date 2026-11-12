@@ -195,6 +195,10 @@ static void ua_tx_fill(void)
             {
                 uint32_t now = UA_DBG_NOW(), g = now - ua_dbg.arm_last;
                 if (ua_dbg.arm_last) {
+                    if (g > 1200u * UA_DBG_US) {
+                        CFD_EVENT(CFD_USB, CFD_USB_ARM_GAP, csr, g, ua.tx_packets);
+                        CFD_FLASH_CONTEXT(CFD_USB);
+                    }
                     if (g > ua_dbg.arm_gap_max)
                         ua_dbg.arm_gap_max = g;
                     ua_dbg.arm_gap[g < 1200u * UA_DBG_US ? 0 : g < 2500u * UA_DBG_US ? 1 : 2]++;
@@ -220,6 +224,9 @@ static void ua_tx_fill(void)
             ua_dbg.frames_open += ua_tx_bytes / (2u * UA_CAP_CHANNELS);
             fm1_usb_ep_send(2, ua_tx[ua_tx_slot], ua_tx_bytes);
             sie_wr(S_TXCSR1, 1);
+#if CF_EVENT_DIAG && UA_CAP_CHANNELS == 2u
+            cf_diag_pcm(ua_tx[ua_tx_slot], ua_tx_bytes, ua_dbg.frames_open - ua_tx_bytes / 4u);
+#endif
             ua.tx_packets++;
             ua_tx_slot ^= 1u;
             ua_tx_bytes = 0;
@@ -253,6 +260,7 @@ static int ua_set_interface(uint16_t interface, uint16_t alt)
         ua_dbg.open_close_ms = fm1_ms - ua_dbg.open_at;
     }
     ua.cap_alt = (uint8_t)alt;
+    CFD_EVENT(CFD_USB, CFD_USB_STREAM, alt, ua.r48 ? UA_RATE48 : UA_RATE, ua_dbg.opens);
     ua.cap_hold = (uint8_t)alt;                 /* fed once the host takes its first packet (ua_tx_fill) */
     ua_armed = 0;
     if (alt)

@@ -147,16 +147,32 @@ static uint8_t shed_over;                              /* bit k: the half k halv
 #define SHED_TICKS ((HALF_FRAMES * 1000000u / FS) * 85u / 100u * FM1_TICKS_PER_US)   /* 85 % of a half */
 static uint32_t shed_count;
 
+/* Match the endpoint timestamp with its nested-IRQ total without masking IRQs.
+ * A TIMER5 between the reads invalidates the pair; retry after it returns. */
+static inline uint32_t audio_wall_snapshot(uint32_t t0, uint32_t *nested)
+{
+    uint32_t all, before;
+    do {
+        before = t5_nested_ticks;
+        all = fm1_ticks() - t0;
+    } while (before != t5_nested_ticks);
+    *nested = before;
+    return all;
+}
+
 /* end of a half: all = its ticks, TIMER5 nested in it included -> the render alone in us. The deadline sees
  * both, and how far behind its boundary the half started (lag, ChoralRoot: cr_cpu1.h cr_prof_entry; a half that
  * starts 600 us late and renders 2400 is as late as one of 3000); shed after 2 overloaded halves in a row (out of
  * line: keeps the ISR's render loops as they were) */
-static __attribute__((noinline)) uint32_t shed_check(uint32_t all, uint32_t lag)
+static __attribute__((noinline)) uint32_t shed_check(uint32_t all, uint32_t lag, uint32_t nested)
 {
     shed_over = (uint8_t)(shed_over << 1 | (all + lag > SHED_TICKS));
-    if ((shed_over & 3u) == 3u)
+    if ((shed_over & 3u) == 3u) {
         shed_req = 1;
-    return (all - t5_nested_ticks) / FM1_TICKS_PER_US;
+        CFD_EVENT(CFD_AUDIO, CFD_SHED_REQUEST, 0, all, lag);
+        CFD_FLASH_CONTEXT(CFD_AUDIO);
+    }
+    return (all - nested) / FM1_TICKS_PER_US;
 }
 
 static void shed_voice(void)
@@ -164,8 +180,10 @@ static void shed_voice(void)
     uint32_t p, i;
     voice_t *best = 0;
 #ifdef SHED_FIRST
-    if (SHED_FIRST())                                  /* (a sound of the firmware's own that can go first: cf_fx.c) */
+    if (SHED_FIRST()) {                                /* (a sound of the firmware's own that can go first: cf_fx.c) */
+        CFD_EVENT(CFD_AUDIO, CFD_SHED, 0, voice_kills, shed_count); /* boot sound or outgoing-patch tail */
         return;
+    }
 #endif
     for (p = 0; p < NPART; p++)
         for (i = 0; i < NVOICE; i++) {
@@ -174,6 +192,7 @@ static void shed_voice(void)
                 best = v;
         }
     if (best) {
+        CFD_EVENT(CFD_AUDIO, CFD_SHED, 1, best->note | (uint32_t)best->gate << 8 | (uint32_t)best->stage << 16, best->env);
         voice_kill(best);
         shed_count++;
         return;
@@ -183,6 +202,7 @@ static void shed_voice(void)
         if (trk_vmode(&trk[p]) == V_POLY && (i = vl_fifth(&trk[p], NVOICE, 128u)) < NVOICE)
             best = &trk[p].v[i];
     if (best) {
+        CFD_EVENT(CFD_AUDIO, CFD_SHED, 2, best->note | (uint32_t)best->gate << 8 | (uint32_t)best->stage << 16, best->env);
         voice_kill(best);
         shed_count++;
         return;
@@ -201,6 +221,7 @@ static void shed_voice(void)
         }
     }
     if (best) {
+        CFD_EVENT(CFD_AUDIO, CFD_SHED, 3, best->note | (uint32_t)best->gate << 8 | (uint32_t)best->stage << 16, best->env);
         voice_kill(best);
         shed_count++;
     }
@@ -213,10 +234,16 @@ void fm1_alnk0_irq(void)                       /* via isr_alnk0 (hal/fm1_isr.S) 
     felucca_dbg.in_audio = 1;                   /* first: TIMER5 nests from here on (main.c) */
     p = fm1_audio_pending();
     t0 = fm1_ticks();
+#if CF_EVENT_DIAG
+    cf_diag_poll();
+#endif
     t5_nested_ticks = 0;
     fm1_audio_ack_aux(p);
     if (p & FM1_AUDIO_HALF) {
-        uint32_t half, b, us, lag, wall;
+        uint32_t half, b, us, lag, wall, wall_t5;
+#if CF_EVENT_DIAG
+        uint32_t diag_late = 0, diag_behind = 0, diag_kills = voice_kills, diag_steals = voice_steals;
+#endif
         int32_t *o;
         /* THE PENDING BIT IS CLEARED BEFORE THE RENDER (0.18's third build). Cleared after it, as before, a half
          * that ended after its boundary took the next boundary's interrupt with it: one bit, set again during the
@@ -244,6 +271,19 @@ void fm1_alnk0_irq(void)                       /* via isr_alnk0 (hal/fm1_isr.S) 
             kb_out_tick = t0 + (HALF_FRAMES + b) * DAC_TICKS;   /* when this block plays (seq.c kb_lat) */
 #endif
             audio_block(o + 2u * b, CTL);
+#if CF_EVENT_DIAG
+            if (CFD_ACTIVE) {
+                /* Completion of each actual block, not all/4. The boundary lag
+                 * is still cr_prof_entry's estimate: this is deadline risk,
+                 * not a direct observation of a stale DMA sample. */
+                uint32_t elapsed = fm1_ticks() - t0 + lag;
+                uint32_t deadline = (HALF_FRAMES + b) * DAC_TICKS * FM1_TICKS_PER_US / 24u;
+                if (elapsed > deadline) {
+                    diag_late |= 1u << (b / CTL);
+                    if (elapsed - deadline > diag_behind) diag_behind = elapsed - deadline;
+                }
+            }
+#endif
         }
 #if FM1_AUDIO_ACK_LATE
         fm1_audio_ack_half();
@@ -252,8 +292,8 @@ void fm1_alnk0_irq(void)                       /* via isr_alnk0 (hal/fm1_isr.S) 
                                                          * half's time, so the meter and the shed see it */
         audio_halves++;
         {
-            uint32_t all = fm1_ticks() - t0;
-            us = shed_check(all, lag);
+            uint32_t all = audio_wall_snapshot(t0, &wall_t5);
+            us = shed_check(all, lag, wall_t5);
             wall = all;
             if (aw_reset) {                             /* cpu_window took the last second */
                 aw_max_us = aw_sum_us = aw_n = aw_max_all = 0;
@@ -274,10 +314,12 @@ void fm1_alnk0_irq(void)                       /* via isr_alnk0 (hal/fm1_isr.S) 
             audio_cpu_rem = load % CPU_AVG;
         }
         if (fm1_audio_free_half() != half) {
+            CFD_EVENT(CFD_AUDIO, CFD_AUDIO_LATE, 0, wall, lag);
+            CFD_FLASH_CONTEXT(CFD_AUDIO);
             felucca_dbg.late++;                         /* the DMA moved on while we rendered */
-            cr_prof_whole(us, 1, wall, t5_nested_ticks, HALF_TICKS);   /* (ChoralRoot's worst cases, cr_cpu1.h) */
+            cr_prof_whole(us, 1, wall, wall_t5, HALF_TICKS);   /* (ChoralRoot's worst cases, cr_cpu1.h) */
         } else {
-            cr_prof_whole(us, 0, wall, t5_nested_ticks, HALF_TICKS);
+            cr_prof_whole(us, 0, wall, wall_t5, HALF_TICKS);
         }
         felucca_dbg.halves++;
         felucca_dbg.last_us = us;
@@ -288,6 +330,21 @@ void fm1_alnk0_irq(void)                       /* via isr_alnk0 (hal/fm1_isr.S) 
         if (us > felucca_dbg.max_us)
             felucca_dbg.max_us = us;
         felucca_dbg.cpu_q8 = song.cpu_q8;
+#if CF_EVENT_DIAG
+        if (diag_late) {
+            CFD_EVENT(CFD_AUDIO, CFD_BLOCK_LATE, diag_late, diag_behind, wall_t5);
+            CFD_FLASH_CONTEXT(CFD_AUDIO);
+        }
+        if (CFD_ACTIVE) {
+            uint32_t age = fm1_ticks() - cf_diag.t0;
+            if (voice_kills != diag_kills || voice_steals != diag_steals)
+                CFD_EVENT(CFD_AUDIO, CFD_VOICES, 0, voice_kills - diag_kills, voice_steals - diag_steals);
+            if (age >= cf_diag.health_at) {
+                cf_diag.health_at = age + 500000u * FM1_TICKS_PER_US;
+                CFD_EVENT(CFD_AUDIO, CFD_AUDIO_STATE, song.cpu_q8, felucca_dbg.halves, cr_dbg.stale);
+            }
+        }
+#endif
     }
     felucca_dbg.in_audio = 0;
 }

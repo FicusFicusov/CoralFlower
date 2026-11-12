@@ -3,6 +3,7 @@
  * ChoralRoot changes (six capture channels, the capture ring's size, 16-bit capture, the playback removed; 0.19:
  * 48 kHz for six channels, after SLOOP 2.5's and Felucca 1.1.5's stereo resampler)
  * Copyright (C) 2026 ChoralRoot FM-1 contributors */
+#include "cf_diag.h"
 /* UAC1 PCM16 capture: CoralFlower selects UA_CAP_CHANNELS=2 for its final master
  * L/R after effects, MASTER and metronome. The guarded six-channel default keeps
  * the inherited ChoralRoot layout available. Melodee's usb_audio_stream.c (Melodee 0.11.1) without its playback
@@ -195,6 +196,7 @@ static uint32_t ua_transmit(uint8_t *p)
         if (ua.cw - ua.cr >= n)
             take = 1;
         else {
+            CFD_EVENT(CFD_USB, CFD_USB_RING, 1, ua.cw - ua.cr, n);
             ua.cap_underruns++;
             ua_cap_reset();
         }
@@ -226,6 +228,8 @@ static inline __attribute__((always_inline)) void ua_feed(const int16_t *stage, 
     if (!ua.cap_alt || ua.cap_hold || r48 != ua.r48)
         return;                                 /* (the host closed the stream during the block, or reads not yet) */
     if (ua.cw - ua.cr + n > UA_CAP_RING) {
+        /* ua_feed runs under the audio producer, not the SIE owner. */
+        CFD_EVENT(CFD_AUDIO, CFD_USB_RING, 2, ua.cw - ua.cr, n);
         ua.cap_overruns++;
         ua_cap_reset();
     }

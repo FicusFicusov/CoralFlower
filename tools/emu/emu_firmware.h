@@ -15,6 +15,9 @@
                                                        * the palette as designed (cf_state.h: no panel correction);
                                                        * first, before cf_ui.c brings cf_state.h in */
 #define CF_UNIT 1
+#ifndef CF_EVENT_DIAG
+#define CF_EVENT_DIAG 1
+#endif
 #define UA_CAP_CHANNELS 2u
 #define FX_UA_STAGE 0                                /* as coralflower.c: capture after MASTER and the click */
 #define main hostsim_main
@@ -113,6 +116,7 @@ static void cf_fx_chain(int32_t *l, int32_t *r, uint32_t n);
 
 /* ------------------------------------------------------- the emulator HAL --- */
 #include "emu_hal_fw.h"
+#include "../../firmware/src/cf_diag.c"
 #include "../../firmware/src/cf_fx.c"
 /* ------------------------------------------------- the instrument --- */
 #include "../../firmware/src/cf_theory.c"

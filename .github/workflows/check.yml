@@ -67,6 +67,19 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p build/host
+          python3 -m pip install --disable-pip-version-check numpy==1.26.4
+          cc -std=c11 -O1 -g -w -fsanitize=address,undefined tests/cf_event_deadline_test.c -o build/host/cf_event_deadline_test
+          build/host/cf_event_deadline_test
+          cc -std=gnu11 -O1 -g -w -fsanitize=address,undefined -DEMU_WEB \
+             -Itools/emu/web/compat -Ibuild/gen -Ifirmware/src tests/cf_event_trace_test.c -o build/host/cf_event_trace_test -lm
+          cc -std=gnu11 -O1 -g -w -fsanitize=address,undefined -DEMU_WEB -DCF_EVENT_DIAG=0 \
+             -Itools/emu/web/compat -Ibuild/gen -Ifirmware/src tests/cf_event_trace_test.c -o build/host/cf_event_trace_off -lm
+          for preset in 0 25 30; do
+            build/host/cf_event_trace_test "$preset" "build/host/diag-$preset.wav" "build/host/diag-$preset.pages"
+            build/host/cf_event_trace_off "$preset" "build/host/diag-off-$preset.wav" "build/host/unused.pages"
+            cmp "build/host/diag-$preset.wav" "build/host/diag-off-$preset.wav"
+            python3 tests/cf_event_trace_test.py "build/host/diag-$preset.pages" "build/host/diag-$preset.wav"
+          done
           cc -std=c99 -Wall -Wextra -Werror -Ifirmware/hal -o build/host/fm1_flash_id_test tests/fm1_flash_id_test.c
           build/host/fm1_flash_id_test
           cc -std=c11 -O1 -g -w -fsanitize=address,undefined -fno-omit-frame-pointer \

@@ -11,6 +11,8 @@
  *   67 PUT      0 begin (id, size u32, crc u32) / 1 data (id, offset u32, pack7) / 2 commit (id) / 3 abort (id)
  *   72 RESTART  -> rc; the device restarts once the host has the reply
  *   80 USB AUDIO -> schema 1, count, count x u32 (read-only; tools/cf_usb_audio_stats.py)
+ *   81 FLASH AUDIO -> schema 1, count, count x u32 (read-only)
+ *   82 EVENT TRACE [lane, offset u32] -> schema 1, lane, metadata count, metadata u32[], event count, events
  *
  * Objects. Those CoralFlower shares with ChoralRoot keep ChoralRoot's ids and formats (the sounds: a ChoralRoot backup's
  * sounds restore here, and back): 6, 7 the user sound banks (upreset.c, 2 x 16 records), 8 the FM6 patch bank
@@ -35,7 +37,7 @@
 #define CRB_HDR0 0x7Du
 #define CRB_HDR1 0x46u
 #define CRB_HDR2 0x4Cu
-enum { CRB_INFO = 1, CRB_LIST = 65, CRB_GET, CRB_PUT, CRB_RESTART = 72, CRB_USB_AUDIO = 80, CRB_FLASH_AUDIO = 81 };
+enum { CRB_INFO = 1, CRB_LIST = 65, CRB_GET, CRB_PUT, CRB_RESTART = 72, CRB_USB_AUDIO = 80, CRB_FLASH_AUDIO = 81, CRB_EVENT_TRACE = 82 };
 #define CRB_VA 9u
 #define CRB_FM6S 10u                                 /* 10, 11: the FM6 patch store's halves */
 #define CFB_SET 30u                                  /* CoralFlower's settings record */
@@ -502,6 +504,39 @@ static void crb_usb_audio(void)
 #endif
 
 /* ------------------------------------------------------------------ the dispatcher --- */
+#if CF_EVENT_DIAG
+/* Main-loop read, no save/clear/arm. MODE also runs in main, so generation and
+ * published records cannot change underneath a page; ISR append is harmless.
+ * Each reply includes generation. The reader must reject a mixed capture. */
+static void crb_event_trace(uint32_t lane, uint32_t offset)
+{
+    uint32_t m[19], n, base = cf_diag_base(lane), age = fm1_ticks() - cf_diag.t0;
+    m[0] = cf_diag.generation;
+    m[1] = cf_diag.active && age < CFD_SECONDS * 1000000u * FM1_TICKS_PER_US;
+    m[2] = FM1_TICKS_PER_US;
+    m[3] = cf_diag.ms;
+    m[4] = cf_diag.t0;
+    m[5] = CFD_SECONDS * 1000000u * FM1_TICKS_PER_US;
+    m[6] = offset;
+    for (uint32_t i = 0; i < CFD_LANES; i++) {
+        m[7+i] = cf_diag.n[i];
+        m[10+i] = cf_diag.dropped[i];
+        m[13+i] = cf_diag.max_emit[i];
+    }
+    m[16] = cf_diag.flash_seq;
+    m[17] = cf_diag.flash_at;
+    m[18] = cf_diag.flash_ticks;
+    n = offset < m[7+lane] ? m[7+lane] - offset : 0u;
+    if (n > 8u) n = 8u;
+    crb_b(1); crb_b(lane); crb_b(NELEM(m));
+    for (uint32_t i = 0; i < NELEM(m); i++) crb_u32(m[i]);
+    crb_b(n);
+    for (uint32_t i = 0; i < n; i++) {
+        const volatile cf_diag_event_t *e = &cf_diag.events[base + offset + i];
+        crb_u32(e->ticks); crb_u32(e->tag); crb_u32(e->a); crb_u32(e->b);
+    }
+}
+#endif
 /* f: the bytes between F0 and F7 (7D 46 4C cmd args); 1 = answered */
 static int crb_handle(const uint8_t *f, uint32_t n)
 {
@@ -559,6 +594,12 @@ static int crb_handle(const uint8_t *f, uint32_t n)
             crb.reboot_ms = fm1_ms;
         crb.reboot = 1;
         break;
+#if CF_EVENT_DIAG
+    case CRB_EVENT_TRACE:
+        if (na != 0u && (na != 6u || a[0] >= CFD_LANES || a[5] > 15u)) return 0;
+        crb_event_trace(na ? a[0] : 0u, na ? crb_r32(a + 1) : 0u);
+        break;
+#endif
 #if FELUCCA_UAC
     case CRB_USB_AUDIO:
         if (na)
