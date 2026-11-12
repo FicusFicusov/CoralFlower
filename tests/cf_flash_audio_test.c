@@ -24,6 +24,9 @@ static int test_flash_read(uint32_t off,void *dst,uint32_t n);
 #define FELUCCA_UAC 1
 #define FELUCCA_CDC 1
 #define CF_FLASH_COOP 1
+#define ST_ASYNC_IO 1
+static void test_flash_wait(void);
+#define ST_ASYNC_WAIT() test_flash_wait()
 #include "../tools/emu/web/emu_web.c"
 
 static int sim_on, sim_irq_off, sim_audio, pcm_started, source_invalid;
@@ -36,7 +39,11 @@ static uint64_t seq_edit_at,seq_release_at;
 static unsigned seq_edit_done;
 static unsigned input_on,input_step,input_checks,input_pending,input_notes;
 static uint64_t input_next,input_due;
+#ifndef CF_FLASH_INPUT_HOOK
+#define CF_FLASH_INPUT_HOOK() ((void)0)
+#endif
 static void input_schedule(void) {
+    if (!sim_irq_off) CF_FLASH_INPUT_HOOK();
     if(!sim_irq_off&&seq_edit_at&&fnor.ticks>=seq_edit_at) {
         web_keys(1u);seq_edit_at=0;seq_edit_done++;
     }
@@ -84,7 +91,14 @@ static int fl_read_slice_ram(uint32_t off,void *dst,uint32_t n) {
 #define st_prog hw_st_prog
 #define st_erase hw_st_erase
 #define ST_FLASH_PUMP() cf_flash_input()
+#define st_io_begin hw_st_io_begin
+#define st_io_poll hw_st_io_poll
+#define st_io_result hw_st_io_result
+#undef ST_ASYNC_WAIT
 #include "../firmware/src/storage_hw.c"
+#undef st_io_begin
+#undef st_io_poll
+#undef st_io_result
 #undef st_read
 #undef st_prog
 #undef st_erase
@@ -94,6 +108,15 @@ static int fl_read_slice_ram(uint32_t off,void *dst,uint32_t n) {
 #undef irq_restore
 #undef FM1_TICKS_PER_US
 #define FM1_TICKS_PER_US 1u
+
+static int test_immediate_result;
+static int st_io_begin(uint32_t off, const uint8_t *src, uint32_t n) {
+    if(sim_on)return hw_st_io_begin(off,src,n);
+    test_immediate_result=n?test_flash_program(off,src,n):test_flash_erase(off);
+    return test_immediate_result;
+}
+static int st_io_poll(void) { return sim_on?hw_st_io_poll():test_immediate_result; }
+static void test_flash_wait(void) { if(sim_on)(void)st_io_finish(); }
 
 #ifdef CF_FLASH_LEGACY
 /* Extracted unchanged fl_wait_ready/fl_prog_ram/fl_erase4k_ram from rc3. */
@@ -200,7 +223,7 @@ static void flash_run_ms(unsigned ms,int poll) {
     uint64_t until=fnor.ticks+(uint64_t)ms*24000,last=0;
     while(fnor.ticks<until) {
         advance_us(100);
-        cf_flash_input(); /* ordinary main-loop input outside synchronous storage */
+        cf_flash_input(); st_async_poll(); /* advance autosave between the modeled main-loop iterations */
         if(poll&&fnor.ticks-last>15000u*24u) {
             last=fnor.ticks;cu.now=fm1_ms;settings_poll();
         }
@@ -260,6 +283,7 @@ static void wav_header(unsigned n) {
     u=rate;fwrite(&u,4,1,wave);u=rate*4;fwrite(&u,4,1,wave);s=4;fwrite(&s,2,1,wave);s=16;fwrite(&s,2,1,wave);
     fwrite("data",1,4,wave);u=n*4;fwrite(&u,4,1,wave);
 }
+#ifndef CF_FLASH_AUDIO_HELPERS_ONLY
 int main(int argc,char **argv) {
     if(argc<5||argc>6)return 2;
     unsigned preset=atoi(argv[1]),chip=atoi(argv[3]);rate=atoi(argv[2]);
@@ -291,6 +315,10 @@ int main(int argc,char **argv) {
     CHECK(full_copy>=0&&st_cur_e+1u==st_ln(CF_SET_OBJ)&&cfa_k.n,"full-log fixture holds a live chord");
     sim_on=1;cs.notes_in=CF_NI_ROOTS;cf_send_config();input_on=1;input_next=fnor.ticks+24000;
     unsigned full_erases=fnor.erases;cs.bpm=137;cf_send_config();flash_run_ms(750,1);
+    /* The old synchronous poll overshot the 750ms loop deadline by a whole
+     * save. Await its asynchronous completion explicitly, retaining capture
+     * and the held/updated chord throughout; this is not a latency oracle. */
+    for(unsigned i=0;st_async_busy()&&i<5000;i++)flash_run_ms(1,0);
     CHECK(fnor.erases>full_erases&&cfs_saved==cfs_fnv(&cs,sizeof cs),"full-log autosave erases and commits without waiting for DAW silence");
     unsigned saved_bpm=cs.bpm;
     programs=fnor.programs;
@@ -319,6 +347,12 @@ int main(int argc,char **argv) {
     CHECK(!analog_late,"audio service never falls a complete DMA half behind");
     CHECK(!fnor.bad_progress,"both NOR minimum progress timings observed");
     CHECK(!st_flash.over_budget,"modeled blackout stays below450us");
+    /* Stop the test's producer, then allow the next normal audio ISR to drain
+     * its final packet. Sampling an active producer between ISR boundaries
+     * can legitimately find one just-arrived Clock in the queue. */
+    printf("MIDI final_before_drain queued=%u overflow=%u received=%u\n",mi_w-mi_r,midi_in_overflow,midi_clocks);
+    next_midi=UINT64_MAX;
+    flash_run_ms(4,0);
     CHECK(midi_clocks>200&&mi_r==mi_w&&!midi_in_overflow,"parallel MIDI received and consumed");
     CHECK(!cfm.running&&!sqp.on&&!dmp.on,"clock without transport cannot start stored playback");
     unsigned commands=fnor.commands,packets_before=ua.tx_packets;
@@ -336,3 +370,5 @@ int main(int argc,char **argv) {
     printf("FLASH AUDIO preset=%u rate=%u chip=%s spi_us=%u load_us=%u programs=%u erases=%u suspends=%u packets=%u missing=%u underrun=%u overrun=%u analog_late=%u max_off_us=%u frames=%u checks=%u failures=%u\n",preset,rate,chip?"UCUN":"Puya",fnor.byte_us,render_us,fnor.programs,fnor.erases,fnor.suspends,packets,missing,ua.cap_underruns,ua.cap_overruns,analog_late,st_flash.max_off_us,frames,checks,failed);
     return failed?1:0;
 }
+
+#endif

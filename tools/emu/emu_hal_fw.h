@@ -134,6 +134,9 @@ static void lcd_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint1
         for (i = 0; i < w && x + i < 240u; i++)
             emu_hal.lcd[(y + j) * 240u + x + i] = p[j * w + i];
     emu_hal.lcd_writes++;
+#ifdef EMU_LCD_TRANSFER
+    EMU_LCD_TRANSFER(w, h);                        /* optional command-timing model, no device I/O */
+#endif
 }
 
 /* ------------------------------------------- audio (for audio.c) --- */

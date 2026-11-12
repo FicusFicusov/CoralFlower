@@ -146,11 +146,15 @@ static void mix_block(int32_t *out, uint32_t n)        /* the audio ISR's block:
 #endif
 #include "../../firmware/src/gfx.c"
 #include "../../firmware/src/panel.c"
+#define ST_ASYNC 1
 #include "../../firmware/src/storage.c"
 #include "../../firmware/src/cr_bank.c"               /* upreset.c (the flash file), the pools per engine */
 #include "../../firmware/src/flora/flora_canvas.c"
 #include "../../firmware/src/flora/flora.c"
-#define CF_PUMP() cf_ui_pump()
+/* Keep autosave progressing during long draws too; no full UI reentry. */
+#ifndef CF_PUMP
+#define CF_PUMP() do { cf_ui_pump(); st_async_poll(); } while (0)
+#endif
 static void cf_ui_pump(void);
 #include "../../firmware/src/cf_fb.c"
 #include "../../firmware/src/cf_sound.c"

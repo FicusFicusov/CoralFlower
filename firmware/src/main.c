@@ -337,6 +337,9 @@ static void fm1_main(void)
                     ui.force = 1;
                 }
             } else if (fm1_ms - t0 > 5000u) {
+#ifdef ST_ASYNC
+                st_async_drain();
+#endif
                 fm1_audio_stop();
                 lcd_fill(0, 0, 240, 240, T_BG);
                 draw_text_box(0, 110, 240, &AF_M, "UBOOT", T_THEME, 1);
@@ -353,6 +356,9 @@ static void fm1_main(void)
         if (usb.ota_req) {                              /* M-UPGRADE upgrade command */
             usb.ota_req = 0;
             panic_req = (1u << NTRK) - 1u;               /* every track (bit per track) */
+#ifdef ST_ASYNC
+            st_async_drain();
+#endif
             if (flash_ok)
                 ota_session();                          /* returns only if nothing was committed */
             lcd_fill(0, 0, 240, 240, T_BG);
@@ -360,6 +366,9 @@ static void fm1_main(void)
         }
 #endif
         if (usb.uboot_req) {                            /* SysEx F0 22 24 35 7D F7 from the host */
+#ifdef ST_ASYNC
+            st_async_drain();
+#endif
             fm1_audio_stop();
             lcd_fill(0, 0, 240, 240, T_BG);
             draw_text_box(0, 110, 240, &AF_M, "UBOOT (USB)", T_THEME, 1);
@@ -378,7 +387,7 @@ static void fm1_main(void)
         felucca_dbg.stage = BS_LOOP_INPUT;            /* (the first: cr_ui_init, BS_UI_INIT ..) */
         ui_input();
         CFU_MARK(CFU_SETTINGS);
-        settings_poll();                              /* queued settings save: only while stopped */
+        settings_poll();                              /* queued settings autosave */
         CFU_MARK(CFU_IDLE);
         felucca_dbg.stage = BS_LOOP_DRAW;
         ui_leds();

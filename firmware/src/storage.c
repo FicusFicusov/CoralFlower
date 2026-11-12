@@ -67,6 +67,10 @@ static int st_read(uint32_t off, void *dst, uint32_t n);
 #endif
 static int st_erase(uint32_t off);
 static int st_prog(uint32_t off, const void *src, uint32_t n);
+#ifdef ST_ASYNC
+static void st_async_drain(void);
+static int st_async_cached(uint32_t obj, void *dst, uint32_t max);
+#endif
 
 static uint32_t st_crc32(const void *p, uint32_t n)   /* zlib CRC-32, 4 bits per step */
 {
@@ -326,6 +330,10 @@ static int st_load(uint32_t obj, void *dst, uint32_t max)
 {
     uint32_t i;
     st_hdr_t h;
+#ifdef ST_ASYNC
+    int cached = ST_BLOCKED() ? -1 : st_async_cached(obj, dst, max);
+    if (cached != -2) return cached;
+#endif
     if (ST_BLOCKED() || obj >= OBJ_COUNT || st_current(obj, &h) < 0 || h.len > max)
         return -1;
     for (i = 0; i < h.len; i++)
@@ -364,13 +372,11 @@ static uint32_t st_free(uint32_t obj, uint32_t copy, uint32_t e)
 /* a logged object's save as a change onto the current record (st_current's, in st_buf; *h its header): 0 written (and
  * read back), 1 it does not fit (too big, or no room after the last record: a whole entry then), < 0 a flash error.
  * The runs: the bytes that differ, two closer than a run's head (3 bytes) taken as one */
-static int st_dput(uint32_t obj, int cur, const st_hdr_t *h, const uint8_t *s, uint32_t len, uint32_t how)
+static int st_dprepare(uint32_t obj, int cur, const st_hdr_t *h, const uint8_t *s, uint32_t len,
+                       st_drec_t r[ST_DMAX])
 {
-    st_drec_t r[ST_DMAX];
     uint32_t n = 0, p = 0, i, j, k, m, at = st_dnext, end = st_sector(obj, (uint32_t)cur) + ST_SECTOR;
-    int rc;
-    st_hdr_t chk;
-    for (i = 0; i < sizeof r; i++)
+    for (i = 0; i < sizeof(st_drec_t) * ST_DMAX; i++)
         ((uint8_t *)r)[i] = 0;
     for (i = 0; i < len; i++) {
         if (s[i] == st_buf[i])
@@ -381,7 +387,7 @@ static int st_dput(uint32_t obj, int cur, const st_hdr_t *h, const uint8_t *s, u
         while (i < k) {
             if (p + 4u > ST_DPAY) {                    /* (no room for a byte more: the next record) */
                 if (++n >= ST_DMAX)
-                    return 1;
+                    return -1;
                 p = 0;
             }
             m = k - i < ST_DPAY - p - 3u ? k - i : ST_DPAY - p - 3u;
@@ -399,7 +405,7 @@ static int st_dput(uint32_t obj, int cur, const st_hdr_t *h, const uint8_t *s, u
         return 0;                                      /* (nothing changed) */
     n++;
     if (at < end - ST_SECTOR || at > end || n * 32u > end - at)
-        return 1;
+        return -1;
     for (j = 0; j < n; j++) {
         r[j].tag = (uint8_t)ST_DTAG;
         r[j].idx = (uint8_t)(j | (j + 1u == n ? 128u : 0u));
@@ -407,6 +413,15 @@ static int st_dput(uint32_t obj, int cur, const st_hdr_t *h, const uint8_t *s, u
         r[j].bseq = h->seq;
         r[j].crc = st_crc32(&r[j], sizeof r[j] - 4u);
     }
+    return (int)n;
+}
+static int st_dput(uint32_t obj, int cur, const st_hdr_t *h, const uint8_t *s, uint32_t len, uint32_t how)
+{
+    st_drec_t r[ST_DMAX];
+    uint32_t at = st_dnext, i, j;
+    int rc, n = st_dprepare(obj, cur, h, s, len, r);
+    st_hdr_t chk;
+    if (n <= 0) return n < 0 ? 1 : 0;
     for (j = 0; j < n; j++) {
         if (how & ST_NOERASE)
             ST_PROG_SYNC();
@@ -428,6 +443,9 @@ static int st_put(uint32_t obj, const void *src, uint32_t len, uint32_t how)
     uint32_t seq, copy, e = 0, base, off, n;
     int cur, rc;
     st_hdr_t h;
+#ifdef ST_ASYNC
+    st_async_drain();
+#endif
     if (ST_BLOCKED() || obj >= OBJ_COUNT || len > ST_PAYLOAD_MAX)
         return -1;
     cur = st_current(obj, &h);
@@ -524,6 +542,9 @@ static int st_tidy(uint32_t obj)
     st_hdr_t h;
     uint32_t c;
     int cur;
+#ifdef ST_ASYNC
+    st_async_drain();
+#endif
     if (ST_BLOCKED() || obj >= OBJ_COUNT || (cur = st_current(obj, &h)) < 0)
         return 0;
     if (st_cur_e || st_cur_d)                          /* (st_put takes it from st_buf, where st_current left it) */
@@ -536,3 +557,7 @@ static int st_tidy(uint32_t obj)
     st_set_blank(obj, c, 1);
     return 1;
 }
+
+#ifdef ST_ASYNC
+#include "storage_async.c"
+#endif

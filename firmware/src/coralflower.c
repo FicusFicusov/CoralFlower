@@ -169,6 +169,7 @@ static void mix_block(int32_t *out, uint32_t n)
 #include "panel.c"
 #if FELUCCA_FLASH
 #include "fm1_flash.h"
+#define ST_ASYNC 1
 #define CF_FLASH_COOP 1
 #include "fm1_flash_coop.h"
 static void cf_flash_input(void);
@@ -179,7 +180,8 @@ static void cf_flash_input(void);
 #include "cr_bank.c"             /* upreset.c (32 user sounds, fm6_bank.c), the pools per engine */
 #include "flora/flora_canvas.c"
 #include "flora/flora.c"
-#define CF_PUMP() cf_ui_pump()
+/* Keep autosave progressing during long draws too; no full UI reentry. */
+#define CF_PUMP() do { cf_ui_pump(); st_async_poll(); } while (0)
 static void cf_ui_pump(void);
 #include "cf_fb.c"
 #include "cf_sound.c"

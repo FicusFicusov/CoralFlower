@@ -104,6 +104,13 @@ jobs:
           cc -std=c11 -O1 -g -w -fsanitize=address,undefined -fno-omit-frame-pointer \
              tests/cf_flash_test.c -o build/host/cf_flash_test
           build/host/cf_flash_test
+          cc -std=c11 -O1 -g -w -fsanitize=address,undefined -DST_ASYNC=1 \
+             tests/cf_flash_test.c -o build/host/cf_flash_async_test
+          build/host/cf_flash_async_test
+          cc -std=gnu11 -O1 -g -w -fsanitize=address,undefined -DEMU_WEB -DCF_EVENT_DIAG=1 \
+             -Itools/emu/web/compat -Ibuild/gen -Ifirmware/src tests/cf_settings_async_test.c \
+             -o build/host/cf_settings_async_test -lm
+          for chip in 0 1 restart restart-rom; do build/host/cf_settings_async_test "$chip"; done
           cc -std=gnu11 -O1 -g -w -fsanitize=address,undefined -fno-omit-frame-pointer -DEMU_WEB \
              -Itools/emu/web/compat -Ibuild/gen -Ifirmware/src tests/cf_flash_audio_test.c \
              -o build/host/cf_flash_audio_test -lm

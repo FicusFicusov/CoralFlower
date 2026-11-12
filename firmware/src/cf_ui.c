@@ -1462,6 +1462,8 @@ static void cf_ui_input(void)
         cft_target = sqk.last < SQ_NPAT && sq_has(sqk.last) ? 1u | (uint32_t)sqk.last << 8 : 0u;
     }
 
+    CFU_MARK(CFU_SETTINGS);
+    st_async_poll();                              /* one slice after full input, also in the idle loop */
     CFU_MARK(CFU_IDLE);
 }
 

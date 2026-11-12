@@ -3,6 +3,7 @@
 /* The firmware side of storage.c (FELUCCA_FLASH). CoralFlower suspends writes
  * between bounded IRQ-off windows; legacy users retain their original path. */
 #include "cf_diag.h"
+static uint32_t st_erases;
 static uint8_t flash_ok;                 /* JEDEC id matched at boot (persist_boot) */
 #ifdef CF_FLASH_COOP
 #ifndef ST_FLASH_PUMP
@@ -32,6 +33,30 @@ static void st_flash_yield(void)
     ST_FLASH_PUMP();
     fm1_wdt_feed();
 }
+static int st_flash_step(fls_job_t *j)
+{
+    uint32_t f, t, us;
+    int rc;
+    f = irq_save(); t = fm1_ticks();
+    rc = FL_FAR(fl_slice_ram)(j);
+    us = (uint32_t)(fm1_ticks() - t) / FM1_TICKS_PER_US;
+#if CF_EVENT_DIAG
+    if (CFD_ACTIVE) {
+        cf_diag.flash_at = t - cf_diag.t0;
+        cf_diag.flash_ticks = fm1_ticks() - t;
+        cf_diag.flash_seq++;
+    }
+#endif
+    irq_restore(f);
+    if (us > 450u) CFD_EVENT(CFD_MAIN, CFD_FLASH_SLOW, j->n, us, j->off);
+    st_flash.slices++;
+    if (us > st_flash.max_off_us) st_flash.max_off_us = us;
+    if (us > 450u) st_flash.over_budget++;  /* hardware acceptance, not a substituted success metric */
+    if (rc == 1) st_flash.suspends++;
+    if (rc < 0) { st_flash.errors++; st_flash.fault = rc; }
+    if (rc != 1) CFD_EVENT(CFD_MAIN, CFD_FLASH_END, (uint32_t)rc & 65535u, j->off, st_flash.slices);
+    return rc;
+}
 static int st_flash_run(uint32_t off, const uint8_t *src, uint32_t n)
 {
     fls_job_t j = {0};
@@ -39,30 +64,49 @@ static int st_flash_run(uint32_t off, const uint8_t *src, uint32_t n)
     if (st_flash.fault) return st_flash.fault;
     j.off = off; j.src = src; j.n = n;
     CFD_EVENT(CFD_MAIN, CFD_FLASH_BEGIN, n, off, st_flash.slices);
-    do {
-        uint32_t f, t, us;
-        st_flash_yield();
-        f = irq_save(); t = fm1_ticks();
-        rc = FL_FAR(fl_slice_ram)(&j);
-        us = (uint32_t)(fm1_ticks() - t) / FM1_TICKS_PER_US;
-#if CF_EVENT_DIAG
-        if (CFD_ACTIVE) {
-            cf_diag.flash_at = t - cf_diag.t0;
-            cf_diag.flash_ticks = fm1_ticks() - t;
-            cf_diag.flash_seq++;
-        }
-#endif
-        irq_restore(f);
-        if (us > 450u) CFD_EVENT(CFD_MAIN, CFD_FLASH_SLOW, n, us, off);
-        st_flash.slices++;
-        if (us > st_flash.max_off_us) st_flash.max_off_us = us;
-        if (us > 450u) st_flash.over_budget++;  /* hardware acceptance, not a substituted success metric */
-        if (rc == 1) st_flash.suspends++;
-    } while (rc == 1);
-    if (rc < 0) { st_flash.errors++; st_flash.fault = rc; }
-    CFD_EVENT(CFD_MAIN, CFD_FLASH_END, (uint32_t)rc & 65535u, off, st_flash.slices);
+    do { st_flash_yield(); rc = st_flash_step(&j); } while (rc == 1);
     return rc;
 }
+#ifdef ST_ASYNC
+#define ST_ASYNC_IO 1
+static fls_job_t st_io_job;
+static uint32_t st_io_half;
+static int st_io_active, st_io_result;
+static int st_io_begin(uint32_t off, const uint8_t *src, uint32_t n)
+{
+    if (st_io_active || !flash_ok || !FL_STORE_OK(off, n ? n : 4096u)) return -8;
+    if (st_flash.fault) return st_flash.fault;
+    memset(&st_io_job, 0, sizeof st_io_job);
+    st_io_job.off = off; st_io_job.src = src; st_io_job.n = n;
+    st_io_active = 1; st_io_result = 1; st_io_half = audio_halves;
+    if (n) st_flash.programs++; else st_erases++;
+    CFD_EVENT(CFD_MAIN, CFD_FLASH_BEGIN, n, off, st_flash.slices);
+    return 0;
+}
+static int st_io_poll(void)
+{
+    if (st_io_active && (!st_runtime || audio_halves != st_io_half)) {
+        ST_FLASH_PUMP();
+        st_io_result = st_flash_step(&st_io_job);
+        st_io_half = audio_halves;
+        st_io_active = st_io_result == 1;
+    }
+    return st_io_result;
+}
+/* A normal read needs a ready chip. Finish just this command, not the whole
+ * autosave; its immutable source remains owned by storage_async.c. Never feed
+ * a suspended operation to fls_read_bytes (which treats it as a fault). */
+static int st_io_finish(void)
+{
+    while (st_io_active) {
+        st_flash_yield();
+        st_io_result = st_flash_step(&st_io_job);
+        st_io_active = st_io_result == 1;
+    }
+    return st_io_result;
+}
+#define ST_ASYNC_WAIT() st_io_finish()
+#endif
 #endif
 /* All app object I/O must respect the probe, including callers with no local check. */
 static int st_read(uint32_t off, void *dst, uint32_t n)
@@ -72,6 +116,9 @@ static int st_read(uint32_t off, void *dst, uint32_t n)
         return -8;
 #ifdef CF_FLASH_COOP
     if (!fls_read_range(off, n)) return -1;
+#ifdef ST_ASYNC
+    if (st_io_active && st_io_finish() < 0) return st_io_result;
+#endif
 #endif
     while (n) {
 #ifdef CF_FLASH_COOP
@@ -110,7 +157,7 @@ static void audio_silence(void)                 /* IRQs off: the DMA would loop 
     for (i = 0; i < sizeof abuf / sizeof abuf[0]; i++)
         abuf[i] = 0;
 }
-static uint32_t st_erases;                      /* completed/attempted sector erases (console `cpu`) */
+
 static int st_erase(uint32_t off)
 {
     uint32_t took, f;

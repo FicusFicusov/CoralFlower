@@ -174,6 +174,7 @@ static uint32_t crb_obj(uint32_t id)                 /* storage.c's object of an
 static void cf_factory_erase(void)
 {
     uint32_t i, c;
+    st_async_drain();
     cfs_restore_lock = 1;                            /* (nothing saved from RAM over it any more) */
     sq_dirty = 0;
     for (i = 0; i < CRB_N; i++)
@@ -202,6 +203,7 @@ static void crb_list(void)
 {
     uint32_t i, crc[CRB_N];
     st_hdr_t h;
+    st_async_drain();
     if (!cr_safe && !cfs_restore_lock && cfs_fnv(&cs, sizeof cs) != cfs_saved)
         cf_settings_write(0);                        /* a change not yet saved goes in first .. */
     if (!cr_safe && !cfs_restore_lock && sq_dirty)
@@ -732,6 +734,7 @@ static void crb_leave(void)
     }
     if (age < CRB_LEAVE_MAX && (crb.reboot != 3u || age < CRB_LEAVE_MIN || now - crb.gone_ms < CRB_LEAVE_GRACE))
         return;
+    st_async_drain();
     crb.reboot = 0;
     CRB_REBOOT();
 }

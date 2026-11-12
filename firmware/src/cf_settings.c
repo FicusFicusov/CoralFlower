@@ -5,7 +5,10 @@
  * It is read at power-on, before the first picture (cf_splash), and written half a second after the last change, even
  * while the unit sounds: the object keeps a log (storage.c ST_LOG_OBJ), so small changes need only short writes.
  * CoralFlower's driver slices program/erase operations with suspend/resume, keeping interrupts and live input
- * serviced between slices. A change switched off a second later is kept (the owner, 2026-10-21: "Бас почему-то выбранный не
+ * serviced between slices. Autosaves hold an immutable record and return to
+ * the main loop after bounded work. Drawing also advances the job between tile
+ * rows; full controls run between frames and in the idle loop.
+ * Explicit SAVE/backup still finish their transactions synchronously. A change switched off a second later is kept (the owner, 2026-10-21: "Бас почему-то выбранный не
  * сохраняется"; BOOT SND set On, HOME, off: gone, its 5 s preview held the old save back; "Сохранять всё сразу").
  * Each change goes as what changed (0.6, storage.c st_dput): about 200 fit without a pause (29 before). A quiet moment
  * (nothing sounding for a second, no change for 1.5 s) tidies the flash: the newest record whole where 0.4.1 and older
@@ -46,6 +49,21 @@ static uint32_t cfs_changed_ms, cfs_sound_ms, cfs_retry_ms;
 static uint8_t cfs_loaded;                /* cs came from flash at power-on */
 static uint8_t cfs_restore_lock;          /* a backup restored the record (cf_backup.c): no save until the restart */
 static uint8_t cfs_tidy;                  /* the flash is tidy (storage.c st_tidy): nothing to do in a quiet moment */
+
+static uint8_t cfs_background_tidy;
+static void cfs_background_done(int rc);
+static int cfs_background_put(uint32_t obj, const void *src, uint32_t len)
+{
+    int rc = st_async_put(obj, src, len, 0u, cfs_background_done);
+    if (!rc) cfs_background_tidy = 0;
+    return rc;
+}
+static int cfs_background_clean(uint32_t obj)
+{
+    int rc = st_async_tidy(obj, cfs_background_done);
+    if (!rc) cfs_background_tidy = 1;
+    return rc;
+}
 
 static uint32_t cfs_fnv(const void *p, uint32_t n)
 {
@@ -186,14 +204,19 @@ static int cf_settings_load(void)
 /* cs to flash: 1 written, 0 not now if explicitly requested with ST_NOERASE,
  * -1 a flash error. Normal autosave can now roll a full log while playing:
  * storage_hw.c suspends each erase, so recording need not wait for silence. */
-static int cf_settings_write(uint32_t how)
+static void cf_settings_record(void)
 {
-    int rc;
     cf_rec.magic = CF_SET_MAGIC;
     cf_rec.version = CF_SET_VERSION;
     cf_rec.size = sizeof(cf_set_t);
     cf_rec.s = cs;
     cf_rec.check = cfs_fnv(&cf_rec.s, sizeof cf_rec.s);
+}
+static int cf_settings_write(uint32_t how)
+{
+    int rc;
+    st_async_drain();
+    cf_settings_record();
     CFD_EVENT(CFD_MAIN, CFD_SAVE_BEGIN, how, cf_rec.check, sizeof cf_rec);
     rc = st_put(CF_SET_OBJ, &cf_rec, sizeof cf_rec, how);
     CFD_EVENT(CFD_MAIN, CFD_SAVE_END, (uint32_t)rc & 65535u, cf_rec.check, cfs_saved);
@@ -333,8 +356,8 @@ static void cfps_poll(uint32_t now, int silent)
     quiet = silent && now - cfps_changed_ms >= CF_SET_QUIET_MS;
     if (h == cfps_saved) {
         if (!cfps_tidy && quiet) {
-            rc = st_tidy(OBJ_CFPSND);
-            cfps_tidy = rc == 0;
+            rc = cfs_background_clean(OBJ_CFPSND);
+            cfps_tidy = rc == 1;
             if (rc < 0)
                 cfps_retry_ms = now + 1000u;
         }
@@ -345,17 +368,14 @@ static void cfps_poll(uint32_t now, int silent)
     if (!quiet && felucca_dbg.last_us * 20u > HALF_FRAMES * 1000000u / FS * 17u)
         return;
     cfps.check = h;
-    rc = st_put(OBJ_CFPSND, &cfps, sizeof cfps, 0u);
-    if (rc == 0) {
-        cfps_saved = h;
-        cfps_tidy = 0;
-    } else {
+    if (cfs_background_put(OBJ_CFPSND, &cfps, sizeof cfps) < 0)
         cfps_retry_ms = now + 1000u;
-    }
 }
 static void cfps_flush(void)                       /* a backup's LIST: what is not written yet, now */
 {
-    uint32_t h = cfps_check();
+    uint32_t h;
+    st_async_drain();
+    h = cfps_check();
     cfps.check = h;
     if (h != cfps_saved && st_put(OBJ_CFPSND, &cfps, sizeof cfps, 0u) == 0) {
         cfps_saved = h;
@@ -425,6 +445,47 @@ static void cfk_head(uint32_t st, const cfk_rec_t *r)   /* the store's index fro
     cfk_st[st].fk = r->fk;
     cfk_st[st].slot = r->slot;
     memcpy(cfk_st[st].name, r->name, sizeof cfk_st[st].name);
+}
+/* The snapshot, not the now-current UI state, is what reached flash. A sound
+ * may have been dropped or edited again while this job was in flight. */
+static void cfs_background_done(int rc)
+{
+    uint32_t obj = st_async.obj, now = fm1_ms, st;
+    if (obj == CF_SET_OBJ) {
+        if (rc < 0) cfs_retry_ms = now + 1000u;
+        else if (!cfs_background_tidy) {
+            cfs_saved = ((const cf_rec_t *)st_async.data)->check; cfs_tidy = 0;
+        }
+    } else if (obj == OBJ_CFPSND) {
+        if (rc < 0) cfps_retry_ms = now + 1000u;
+        else if (!cfs_background_tidy) {
+            cfps_saved = ((const cfps_rec_t *)st_async.data)->check; cfps_tidy = 0;
+        }
+    } else for (st = 0; st < CFK_NST; st++) if (cfk_obj(st) == obj) {
+        if (rc < 0) {
+            cfk_retry_ms = now + 1000u;
+            /* Do not apply an older flash body under the queued sound's index. */
+            if (!cfs_background_tidy) {
+                cfk_st[st].edited = 0;
+                if (!((const cfk_rec_t *)st_async.data)->edited) cfk_st[st].drop = 1;
+            }
+        } else if (!cfs_background_tidy) {
+            cfk_st[st].saved = ((const cfk_rec_t *)st_async.data)->check;
+            cfk_st[st].tidy = 0;                  /* preserve any later drop */
+        }
+        break;
+    }
+}
+_Static_assert(sizeof(cf_rec_t) <= ST_ASYNC_MAX && sizeof(cfps_rec_t) <= ST_ASYNC_MAX &&
+               sizeof(cfk_rec_t) <= ST_ASYNC_MAX, "autosave snapshot fits every settings record");
+static int cfk_background_write(uint32_t st, const cfk_rec_t *r)
+{
+    int rc = cfs_background_put(cfk_obj(st), r, sizeof *r);
+    if (!rc) {
+        cfk_head(st, r);                          /* visible via st_load's pending snapshot */
+        cfk_st[st].drop = 0;
+    }
+    return rc;
 }
 /* two sound names, as strings: what lies after a name's end is no part of it (a name buffer keeps the tail of a
  * longer one before it: "POLY KEYS" after "SYNTH BRASS" held an "S" past its end, and the tweak, written so, was not
@@ -615,7 +676,7 @@ static void cfk_poll(uint32_t now, int silent)
         quiet = silent && now - cfk_changed_ms[part] >= CF_SET_QUIET_MS;
         if (!quiet && felucca_dbg.last_us * 20u > HALF_FRAMES * 1000000u / FS * 17u)
             return;                               /* (over 85 %: the write waits for room) */
-        if (cfk_write((uint32_t)s, &cfk_rec, 0u) != 0)
+        if (cfk_background_write((uint32_t)s, &cfk_rec) != 0)
             cfk_retry_ms = now + 1000u;           /* flash error */
         return;
     }
@@ -628,16 +689,16 @@ static void cfk_poll(uint32_t now, int silent)
             cfk_rec.part = cfk_st[st].part;
             cfk_rec.np = (uint8_t)P_COUNT;
             cfk_rec.check = cfs_fnv(&cfk_rec, (uint32_t)__builtin_offsetof(cfk_rec_t, check));
-            if (cfk_write(st, &cfk_rec, 0u) != 0)
+            if (cfk_background_write(st, &cfk_rec) != 0)
                 cfk_retry_ms = now + 1000u;
             return;
         }
         if (!cfk_st[st].tidy && quiet) {
-            rc = st_tidy(cfk_obj(st));
-            cfk_st[st].tidy = rc == 0;
+            rc = cfs_background_clean(cfk_obj(st));
+            cfk_st[st].tidy = rc == 1;
             if (rc < 0)
                 cfk_retry_ms = now + 1000u;
-            if (rc)
+            if (rc != 1)
                 return;
         }
     }
@@ -645,12 +706,19 @@ static void cfk_poll(uint32_t now, int silent)
 /* a backup's LIST: what is not written yet, now */
 static void cfk_flush(void)
 {
-    uint32_t part;
+    uint32_t part, st;
+    st_async_drain();
     for (part = 0; part < 3u; part++) {
         int s;
         cfk_build(part, &cfk_rec);
         if (cfk_rec.edited && (s = cfk_store_for(part)) >= 0 && cfk_rec.check != cfk_st[s].saved)
             (void)cfk_write((uint32_t)s, &cfk_rec, 0u);
+    }
+    for (st = 0; st < CFK_NST; st++) if (cfk_st[st].drop) {
+        memset(&cfk_rec, 0, sizeof cfk_rec);
+        cfk_rec.magic = CFK_MAGIC; cfk_rec.part = cfk_st[st].part; cfk_rec.np = (uint8_t)P_COUNT;
+        cfk_rec.check = cfs_fnv(&cfk_rec, (uint32_t)__builtin_offsetof(cfk_rec_t, check));
+        (void)cfk_write(st, &cfk_rec, 0u);
     }
 }
 
@@ -670,16 +738,19 @@ static void settings_poll(void)
         cfs_seen = h;
         cfs_changed_ms = now;
     }
-    cfk_poll(now, now - cfs_sound_ms >= CF_SET_SILENT_MS);   /* (the sounds' edits) */
-    cfps_poll(now, now - cfs_sound_ms >= CF_SET_SILENT_MS);   /* (the patterns' own sounds) */
+    if (st_async_busy()) { st_async_poll(); return; }
+    cfk_poll(now, h == cfs_saved && cfps_check() == cfps_saved && now - cfs_sound_ms >= CF_SET_SILENT_MS);   /* (the sounds' edits) */
+    if (st_async_busy()) return;
+    cfps_poll(now, h == cfs_saved && now - cfs_sound_ms >= CF_SET_SILENT_MS);   /* (the patterns' own sounds) */
+    if (st_async_busy()) return;
     if (cfs_retry_ms && (int32_t)(now - cfs_retry_ms) < 0)
         return;                                   /* (a flash error, or the log full: once more a second later) */
     cfs_retry_ms = 0;
     quiet = now - cfs_changed_ms >= CF_SET_QUIET_MS && now - cfs_sound_ms >= CF_SET_SILENT_MS;
     if (h == cfs_saved) {
         if (!cfs_tidy && quiet) {
-            rc = st_tidy(CF_SET_OBJ);
-            cfs_tidy = rc == 0;
+            rc = cfs_background_clean(CF_SET_OBJ);
+            cfs_tidy = rc == 1;
             if (rc < 0)
                 cfs_retry_ms = now + 1000u;
         }
@@ -689,7 +760,8 @@ static void settings_poll(void)
         return;
     if (!quiet && felucca_dbg.last_us * 20u > HALF_FRAMES * 1000000u / FS * 17u)
         return;                                   /* (over 85 %: audio.c sheds voices; the write waits for room) */
-    if (cf_settings_write(0u) <= 0)
+    cf_settings_record();
+    if (cfs_background_put(CF_SET_OBJ, &cf_rec, sizeof cf_rec) < 0)
         cfs_retry_ms = now + 1000u;
 }
 

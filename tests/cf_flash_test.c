@@ -26,6 +26,9 @@ static int fl_read_slice_ram(uint32_t off,void *dst,uint32_t n) {
 #define FM1_TICKS_PER_US 24u
 #define FL_FAR(f) (f)
 #define FL_STORE_OK(a,n) (((a)>=0x97000u && (a)<=0xE0000u && (n)<=0xE0000u-(a)) || ((a)>=0xFC000u && (a)<=0xFF000u && (n)<=0xFF000u-(a)))
+#ifdef __APPLE__
+#define __attribute__(x)
+#endif
 #define ST_LOG_OBJ (OBJ_PROJECT0+3u)
 #define CF_LOOP_STORE 1
 #include "../firmware/src/storage_hw.c"
@@ -34,6 +37,10 @@ static int fl_read_slice_ram(uint32_t off,void *dst,uint32_t n) {
 static void start(unsigned chip,unsigned swap) {
     fnor_reset(nor,chip,swap);memset(&st_flash,0,sizeof st_flash);
     memset(st_blank,0,sizeof st_blank);flash_ok=st_runtime=1;irq_off=0;
+#ifdef ST_ASYNC
+    memset(&st_async,0,sizeof st_async);memset(&st_io_job,0,sizeof st_io_job);
+    st_io_active=st_io_result=0;
+#endif
 }
 static void transactions(unsigned chip,unsigned swap) {
     uint8_t data[256];for(unsigned i=0;i<256;i++)data[i]=(uint8_t)(i^0xA5);
@@ -82,8 +89,14 @@ static void faults(unsigned chip,unsigned swap) {
     CHECK(st_prog(0x9D000,&data,1)==0,"TIMER4 wrap keeps bounded progress");
 }
 static void save_case(unsigned kind,const uint8_t *data) {
+#ifdef ST_ASYNC
+    if(kind==2) (void)st_async_tidy(ST_LOG_OBJ,0);
+    else (void)st_async_put(ST_LOG_OBJ,data,200,kind==1?ST_NOERASE:ST_ROLL,0);
+    st_async_drain();
+#else
     if(kind==2) (void)st_tidy(ST_LOG_OBJ);
     else (void)st_put(ST_LOG_OBJ,data,200,kind==1?ST_NOERASE:ST_ROLL);
+#endif
 }
 static void cuts(unsigned chip,unsigned swap,unsigned kind) {
     uint8_t before[200],after[200],got[200];

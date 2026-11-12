@@ -131,6 +131,7 @@ static void cr_update_poll(void)
     crb_upd.left = 0;
     cu.upd_left = 0;
     ui.uboot = 0;
+    st_async_drain();                             /* before stopping audio or handing NOR to the stub */
     CRB_UPDATE_SCREEN(stub ? "UPDATE MODE" : "USB BOOT");
     if (stub)
         CRB_STUB_GO(CRB_STUB_REQ_RESCUE);            /* (never returns on the unit) */
