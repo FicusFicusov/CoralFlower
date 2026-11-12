@@ -158,7 +158,11 @@ jobs:
           set -euo pipefail
           # The Hub accepts @v1, not a caller-owned attestation. Fail if its
           # supposedly immutable reviewed tag has changed before publication.
-          hub_sha=$(gh api repos/zvenson/fm1-build/git/ref/tags/v1 --jq .object.sha)
+          hub_tag=$(gh api repos/zvenson/fm1-build/git/ref/tags/v1 --jq .object.sha)
+          test "$hub_tag" = 5ba8c359b1744cc53c4530b15eff52d0d5c1255b
+          # v1 is an annotated tag: the ref identifies the tag object, which
+          # must then resolve to the reviewed commit, not to another tag.
+          hub_sha=$(gh api "repos/zvenson/fm1-build/git/tags/$hub_tag" --jq 'select(.object.type == "commit") | .object.sha')
           test "$hub_sha" = 85a003ab455b1c074b0bd6d7c282c096a464b973
           python3 - <<'PY'
           import hashlib, json, os
