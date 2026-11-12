@@ -20,6 +20,11 @@ static voice_t *held(unsigned p,unsigned i,unsigned note,unsigned age) {
 }
 int main(void) {
     web_boot();
+    const unsigned priorities[CFD_PART + 1] = {
+        1,1,1,1,1,1,1,3,2,1,2,3,1,1,1,1,2,2,3,2,1,1,1
+    };
+    for(unsigned kind=1;kind<=CFD_PART;kind++)
+        CHECK(cf_diag_priority(kind)==priorities[kind],"RAM-safe scoring retains every event priority");
     for(unsigned p=0;p<3;p++){trk[p].engine=ENGI_FM6;trk[p].p[P_VOICE]=V_POLY;}
     clear_voices();
     voice_t *root=held(0,0,60,1),*fifth=held(0,1,67,2);

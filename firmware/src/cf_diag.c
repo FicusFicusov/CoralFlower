@@ -12,9 +12,13 @@
 #endif
 static inline __attribute__((always_inline)) uint32_t cf_diag_priority(uint32_t kind)
 {
-    return kind == CFD_BLOCK_LATE || kind == CFD_USB_RING || kind == CFD_FLASH_SLOW ? 3u :
-        kind == CFD_SHED || kind == CFD_AUDIO_LATE || kind == CFD_USB_ARM_GAP ||
-        kind == CFD_USB_SERVICE_GAP || kind == CFD_USB_STREAM ? 2u : 1u;
+    /* A conditional chain becomes an XIP lookup table with the JieLi compiler.
+     * Immediate bit masks keep this RAM path independent of flash, including
+     * the full-bucket scan while a NOR operation has suspended XIP. */
+    const uint32_t severe = (1u << CFD_BLOCK_LATE) | (1u << CFD_USB_RING) | (1u << CFD_FLASH_SLOW);
+    const uint32_t notable = severe | (1u << CFD_SHED) | (1u << CFD_AUDIO_LATE) |
+        (1u << CFD_USB_ARM_GAP) | (1u << CFD_USB_SERVICE_GAP) | (1u << CFD_USB_STREAM);
+    return 1u + ((notable >> (kind & 31u)) & 1u) + ((severe >> (kind & 31u)) & 1u);
 }
 static void cf_diag_event(uint32_t lane, uint32_t tag, uint32_t a, uint32_t b)
 {

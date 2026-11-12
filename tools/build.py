@@ -380,6 +380,18 @@ def check(img, syms, dis, rt):
         errors.append(f".ram_text contains calls: {rt_calls[:3]}")
     else:
         notes.append(f".ram_text: {len([ln for ln in rt.splitlines() if LINE.match(ln)])} insns, no calls")
+    # The diagnostic emitter runs while NOR operations suspend XIP. Inlining
+    # alone is not sufficient: the target compiler can lower conditionals to
+    # a flash lookup table. Check the final binary, not the C spelling.
+    emitter = re.search(r"^([0-9a-f]+) .*\.ram_text\s+([0-9a-f]+) cf_diag_event$", syms, re.M)
+    if emitter:
+        start, size = (int(x, 16) for x in emitter.groups())
+        for ln in rt.splitlines():
+            mm = LINE.match(ln)
+            if mm and start <= int(mm.group(1), 16) < start + size:
+                for value in re.findall(r"= (-?\d+) <", mm.group(3)):
+                    if 0x02000000 <= (int(value) & 0xFFFFFFFF) < 0x02100000:
+                        errors.append(f"cf_diag_event references XIP: {ln.strip()}")
     for ln in dis.splitlines():     # nothing may call or load an address in the chip ROM
         mm = LINE.match(ln)
         if not mm:
