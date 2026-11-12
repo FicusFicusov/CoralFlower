@@ -3,7 +3,8 @@
 #   workflow_dispatch (version)  -> build only; the package is a workflow artifact (coralflower-X.Y): a candidate to
 #                                   test on a unit (the web installer's "Choose a .fwsc file")
 #   provenance_preview          -> also rebuild/attest through fm1-build@v1; a branch never publishes
-#   push of a tag vX.Y           -> verify two source builds agree, attest/release, then add notes and licences
+#   push of a stable tag vX.Y    -> verify two source builds agree, attest/release, then add notes and licences
+#   push of a suffixed tag      -> ordinary package, published as a prerelease from the outset
 # On ubuntu (x86-64) tools/build.py runs the JieLi toolchain natively, no Docker.
 name: release
 
@@ -151,7 +152,7 @@ jobs:
           ls -l "$rel"
 
       - name: Check the production manifest and the reviewed Hub workflow
-        if: github.event_name == 'push' || inputs.provenance_preview
+        if: (github.event_name == 'push' && !contains(steps.version.outputs.version, '-')) || inputs.provenance_preview
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -202,7 +203,7 @@ jobs:
 
   attest:
     needs: build
-    if: github.event_name == 'push' || inputs.provenance_preview
+    if: (github.event_name == 'push' && !contains(needs.build.outputs.version, '-')) || inputs.provenance_preview
     # Firmware Hub requires this reviewed tag. The build job checks its SHA.
     uses: zvenson/fm1-build/.github/workflows/build.yml@v1
     permissions:
@@ -228,7 +229,13 @@ jobs:
 
   release:
     needs: [build, attest]
-    if: github.event_name == 'push' && github.ref_type == 'tag'
+    # always() allows the intentionally skipped Hub job for a prerelease, but
+    # neither a failed ordinary build nor a failed stable attestation may pass.
+    if: >-
+      always() && github.event_name == 'push' && github.ref_type == 'tag' &&
+      needs.build.result == 'success' &&
+      ((contains(needs.build.outputs.version, '-') && needs.attest.result == 'skipped') ||
+       (!contains(needs.build.outputs.version, '-') && needs.attest.result == 'success'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -256,6 +263,11 @@ jobs:
           for f in "coralflower-$VERSION-app.bin" SHA256SUMS LICENSE LICENSING.md LICENSES.zip; do
             cp "release/$f" assets/
           done
+          # Shared v1 initially creates full releases, so RC tags use only the
+          # ordinary publisher below, with prerelease=true from the outset.
+          if [[ "$VERSION" = *-* ]]; then
+            cp "release/coralflower-$VERSION.fwsc" assets/
+          fi
           ls -l assets
 
       - name: Release notes (docs/releases/<version>.md, then the install text)
