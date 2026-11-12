@@ -16,7 +16,7 @@
                                                        * first, before cf_ui.c brings cf_state.h in */
 #define CF_UNIT 1
 #ifndef CF_EVENT_DIAG
-#define CF_EVENT_DIAG 1
+#define CF_EVENT_DIAG 0
 #endif
 #define UA_CAP_CHANNELS 2u
 #define FX_UA_STAGE 0                                /* as coralflower.c: capture after MASTER and the click */

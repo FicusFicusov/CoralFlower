@@ -505,12 +505,12 @@ static void crb_usb_audio(void)
 
 /* ------------------------------------------------------------------ the dispatcher --- */
 #if CF_EVENT_DIAG
-/* Main-loop read, no save/clear/arm. MODE also runs in main, so generation and
- * published records cannot change underneath a page; ISR append is harmless.
- * Each reply includes generation. The reader must reject a mixed capture. */
+/* Main-loop read, no save/clear/arm. Details can be replaced within a second:
+ * no records are returned while active. After ten seconds all writers refuse
+ * further events. MODE also runs in main; generation is stable within a page. */
 static void crb_event_trace(uint32_t lane, uint32_t offset)
 {
-    uint32_t m[19], n, base = cf_diag_base(lane), age = fm1_ticks() - cf_diag.t0;
+    uint32_t m[22], n, age = fm1_ticks() - cf_diag.t0;
     m[0] = cf_diag.generation;
     m[1] = cf_diag.active && age < CFD_SECONDS * 1000000u * FM1_TICKS_PER_US;
     m[2] = FM1_TICKS_PER_US;
@@ -526,14 +526,19 @@ static void crb_event_trace(uint32_t lane, uint32_t offset)
     m[16] = cf_diag.flash_seq;
     m[17] = cf_diag.flash_at;
     m[18] = cf_diag.flash_ticks;
-    n = offset < m[7+lane] ? m[7+lane] - offset : 0u;
+    m[19] = cf_diag_summary_count();
+    m[20] = cf_diag.saturated[0] | cf_diag.saturated[1] << 1 | cf_diag.saturated[2] << 2;
+    m[21] = cf_diag.max_audio_hook;
+    uint32_t count = lane == CFD_SUMMARY_LANE ? m[19] : m[7+lane];
+    n = !m[1] && offset < count ? count - offset : 0u;
     if (n > 8u) n = 8u;
-    crb_b(1); crb_b(lane); crb_b(NELEM(m));
+    crb_b(2); crb_b(lane); crb_b(NELEM(m));
     for (uint32_t i = 0; i < NELEM(m); i++) crb_u32(m[i]);
     crb_b(n);
     for (uint32_t i = 0; i < n; i++) {
-        const volatile cf_diag_event_t *e = &cf_diag.events[base + offset + i];
-        crb_u32(e->ticks); crb_u32(e->tag); crb_u32(e->a); crb_u32(e->b);
+        cf_diag_event_t e;
+        (void)cf_diag_read_event(lane, offset + i, &e);
+        crb_u32(e.ticks); crb_u32(e.tag); crb_u32(e.a); crb_u32(e.b);
     }
 }
 #endif
@@ -596,7 +601,7 @@ static int crb_handle(const uint8_t *f, uint32_t n)
         break;
 #if CF_EVENT_DIAG
     case CRB_EVENT_TRACE:
-        if (na != 0u && (na != 6u || a[0] >= CFD_LANES || a[5] > 15u)) return 0;
+        if (na != 0u && (na != 6u || a[0] > CFD_SUMMARY_LANE || a[5] > 15u)) return 0;
         crb_event_trace(na ? a[0] : 0u, na ? crb_r32(a + 1) : 0u);
         break;
 #endif

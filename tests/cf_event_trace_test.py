@@ -13,7 +13,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-from cf_event_trace import META, decode_page, match_wav, read_trace
+from cf_event_trace import META, META_V1, decode_page, match_wav, read_trace
 from fm1_install import BackupError, bk_u32
 
 
@@ -31,7 +31,7 @@ class Pages:
 
 
 def change(page, field, value):
-    at = 3 + 5 * META.index(field)
+    at = 3 + 5 * (META_V1 if page[0] == 1 else META).index(field)
     page[at:at + 5] = bk_u32(value)
 
 
@@ -44,8 +44,8 @@ def must_fail(fn, text):
         raise AssertionError(f"broken input was accepted: {text}")
 
 
-def main():
-    data = Path(sys.argv[1]).read_bytes()
+def load_pages(path):
+    data = Path(path).read_bytes()
     pages, pos = [], 0
     while pos < len(data):
         n = struct.unpack_from("<I", data, pos)[0]
@@ -54,6 +54,11 @@ def main():
         pages.append(list(data[pos:pos + n]))
         pos += n
     assert pages, "C test emitted no protocol pages"
+    return pages
+
+
+def main():
+    pages = load_pages(sys.argv[1])
     link = Pages(pages)
     trace = read_trace(link)
     assert not link.pages and trace["capture_status"] == "complete_window"
@@ -71,7 +76,11 @@ def main():
     change(broken[1], "generation", 42)
     must_fail(lambda: read_trace(Pages(broken)), "capture changed")
     broken = copy.deepcopy(pages)
-    change(broken[0], "active", 1)
+    for page in broken:
+        change(page, "active", 1)
+    # Active v2 replies correctly have zero records; the reader must stop at once.
+    at = 3 + 5 * len(META)
+    broken[0][at:] = [0]
     must_fail(lambda: read_trace(Pages(broken)), "still running")
     broken = copy.deepcopy(pages)
     change(broken[0], "generation", 0)
@@ -79,7 +88,13 @@ def main():
     broken = copy.deepcopy(pages)
     for page in broken:
         change(page, "audio_dropped", 7)
-    assert read_trace(Pages(broken))["capture_status"] == "partial_overflow"
+    must_fail(lambda: read_trace(Pages(broken)), "omissions differ")
+    broken = copy.deepcopy(pages)
+    for page in broken:
+        change(page, "counter_saturation", 2)
+    partial = read_trace(Pages(broken))
+    assert partial["capture_status"] == "partial_counter_saturation"
+    assert not partial["coverage"]["aggregate_counts_complete"]
     broken = pages[0][:-1]
     must_fail(lambda: decode_page(broken), "length")
     broken = copy.deepcopy(pages[0])
@@ -90,6 +105,26 @@ def main():
         if e["kind"] == "pcm":
             e["b"] ^= 0x69BA341D
     assert not match_wav(wrong_pcm, sys.argv[2])["aligned"], "corrupted packet fingerprints falsely align"
+    saturated_pages = load_pages(str(sys.argv[1]) + ".saturated")
+    saturated = read_trace(Pages(saturated_pages))
+    assert saturated["capture_status"] == "summarized_window"
+    assert not saturated["coverage"]["exact_timeline_complete"] and saturated["coverage"]["aggregate_counts_complete"]
+    se = saturated["events"]
+    assert sum(e["a"] for e in se if e["kind"] == "counts" and e["detail"] == (8 | (1 << 8))) == 10000
+    assert len([e for e in se if e["kind"] == "pcm"]) == 40
+    assert {int(e["seconds"]) for e in se if e["lane"] == "audio"} == set(range(10))
+    assert sum(e["a"] for e in se if e["kind"] == "voice_totals") == 10000
+    assert {e["part"] for e in se if e["kind"] == "shed"} <= {0, 1, 2, 3}
+    # Removing the final interval must be a hard failure, never an empty PASS.
+    missing = copy.deepcopy(saturated)
+    missing["events"] = [e for e in missing["events"] if not (e["kind"] == "peak" and e["detail"] == 9)]
+    from cf_event_trace import check_summaries
+    must_fail(lambda: check_summaries(missing["metadata"], missing["events"]), "all ten seconds")
+    inconsistent = copy.deepcopy(saturated)
+    for e in inconsistent["events"]:
+        if e["kind"] == "voice_totals":
+            e["a"] = 0
+    assert not check_summaries(inconsistent["metadata"], inconsistent["events"])["aggregate_counts_complete"], "selected removals without kill totals falsely declared complete"
     # An exact PCM24 copy must match; adding low-bit dither must be rejected.
     import numpy as np
     from cf_event_trace import wav_pcm16

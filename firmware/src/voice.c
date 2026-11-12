@@ -247,6 +247,9 @@ static void voice_kill(voice_t *v)                      /* fade out over the nex
     v->gate = 0;
     v->stage = 4;
     voice_kills++;
+    /* Date the operation itself: an end-of-half delta can cross the capture
+     * cutoff (or a one-second summary boundary) and silently omit this kill. */
+    CFD_EVENT(CFD_AUDIO, CFD_VOICES, 0, 1, 0);
 }
 
 /* the budget is full: free room for a voice of part t. 0 = nothing to take (soft) */
@@ -404,6 +407,48 @@ static uint32_t vl_fifth(const track_t *t, uint32_t np, uint32_t note)
             return i;
     return NVOICE;
 }
+
+/* Overload follows the shared budget's musical priorities: a release, an
+ * extra unison voice, then a one-shot, before a held melodic pitch. The old
+ * guard tried a chord's fifth before either extra unison or drums. A drum's
+ * logical gate can stay high until its own envelope finishes; it is not a
+ * held key, and its generic ADSR is not a measure of its remaining level. */
+static voice_t *voice_shed_victim(uint32_t *part, uint32_t *slot, uint32_t *reason)
+{
+    voice_t *best = 0;
+    uint32_t best_cat = 5u;
+    int32_t best_level = 0;
+    for (uint32_t p = 0; p < NPART; p++) {
+        track_t *t = &trk[p];
+        const engine_t *e = ENGINES[t->engine];
+        uint32_t mode = trk_vmode(t), low = lowest_held(t);
+        uint32_t fifth = mode == V_POLY && !e->oneshot ? vl_fifth(t, NVOICE, 128u) : NVOICE;
+        for (uint32_t i = 0; i < NVOICE; i++) {
+            voice_t *v = &t->v[i];
+            uint32_t cat, why;
+            int32_t level = 0;
+            if (!v->active || v->stage == 4u) continue;
+            if (!v->gate && !e->oneshot) {
+                cat = 0; why = 1;
+                level = e->level ? e->level(t, v) : v->env;
+            } else if (!e->oneshot && mode != V_POLY && i > 0u) {
+                cat = 1; why = 4;
+            } else if (e->oneshot) {
+                cat = 2; why = 5;
+                level = e->level ? e->level(t, v) : 0;
+            } else if (mode == V_POLY && i != low) {
+                cat = i == fifth ? 3u : 4u;
+                why = i == fifth ? 2u : 3u;
+            } else continue;
+            if (!best || cat < best_cat || (cat == best_cat &&
+                (level < best_level || (level == best_level && v->age < best->age)))) {
+                best = v; best_cat = cat; best_level = level;
+                *part = p; *slot = i; *reason = why;
+            }
+        }
+    }
+    return best;
+}
 #endif
 
 static voice_t *voice_alloc(track_t *t, uint32_t note, uint32_t vel)
@@ -456,6 +501,7 @@ static voice_t *voice_alloc(track_t *t, uint32_t note, uint32_t vel)
         uint32_t k = voice_victim(t, 0, &vp);
         if (k < np && vp == t && (!voice_fade_steal || !t->v[k].env_out)) {
             voice_steals++;
+            CFD_EVENT(CFD_AUDIO, CFD_VOICES, 0, 0, 1);
             return &t->v[k];                            /* our own: restart it in place (no click) */
         }
         if (k >= NVOICE)
@@ -505,6 +551,7 @@ steal:
             if (i != low && (!voice_fade_steal || t->v[i].stage != 4u) && (best == np || t->v[i].age < t->v[best].age))
                 best = i;
     voice_steals++;
+    CFD_EVENT(CFD_AUDIO, CFD_VOICES, 0, 0, 1);
     if (voice_fade_steal && !(best < np && !t->v[best].env_out) && vsq_push(t, note, vel)) {   /* fade it, the note
                                                          * next block (vsq); one not rendered yet (silent): in place */
         if (best < np)

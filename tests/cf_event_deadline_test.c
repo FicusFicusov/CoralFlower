@@ -51,7 +51,7 @@ static void cr_prof_whole(uint32_t us,int late,uint32_t all,uint32_t t5,uint32_t
 }
 static unsigned trk_vmode(const track_t *t) { (void)t;return V_POLY; }
 static unsigned lowest_held(const track_t *t) { (void)t;return 0; }
-static void voice_kill(voice_t *v) { v->gate=0;v->stage=4;voice_kills++; }
+static void voice_kill(voice_t *v) { v->gate=0;v->stage=4;voice_kills++;CFD_EVENT(CFD_AUDIO,CFD_VOICES,0,1,0); }
 static void usb_fixed_dac(int32_t *out,uint32_t n) { (void)out;(void)n; }
 static void mix_block(int32_t *out,uint32_t n);
 #include "../firmware/src/audio.c"
@@ -71,7 +71,9 @@ static unsigned checks, failed;
 #define CHECK(c,m) do {checks++;if(!(c)){failed++;fprintf(stderr,"FAIL %s:%d %s\n",__FILE__,__LINE__,m);}}while(0)
 static unsigned count(unsigned kind) {
     unsigned n=0;
-    for(unsigned i=0;i<cf_diag.n[CFD_AUDIO];i++)n+=(cf_diag.events[64+i].tag&65535u)==kind;
+    for(unsigned i=0;i<cf_diag.n[CFD_AUDIO];i++) {
+        cf_diag_event_t e;cf_diag_read_event(CFD_AUDIO,i,&e);n+=(e.tag&65535u)==kind;
+    }
     return n;
 }
 static void render(unsigned a,unsigned b,unsigned c,unsigned d,unsigned entry_lag) {
@@ -89,7 +91,7 @@ int main(void) {
     CHECK(cr_dbg.stale==0,"existing equal-quarter stale estimate misses the injected uneven cost");
     CHECK(count(CFD_BLOCK_LATE)==1&&count(CFD_AUDIO_LATE)==1,"actual first-block completion exposes the injected missed deadline");
     for(unsigned i=0;i<cf_diag.n[CFD_AUDIO];i++) {
-        const volatile cf_diag_event_t *e=&cf_diag.events[64+i];
+        cf_diag_event_t event;cf_diag_read_event(CFD_AUDIO,i,&event);const cf_diag_event_t *e=&event;
         if((e->tag&65535u)==CFD_BLOCK_LATE)CHECK(e->tag>>16==1u&&e->a==3400u*24u-HALF_FRAMES*544u,"first-block mask and lateness match independent DMA deadline");
     }
     cf_diag_start(2,3,0);shed_over=0;shed_req=0;voice_kills=0;

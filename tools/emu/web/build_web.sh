@@ -10,6 +10,7 @@
 # the newest release in web/releases.json (the installer's list, written at every release: the site's emulator said
 # 0.1 after 0.2 was out, from coralflower.c's FELUCCA_VERSION, the last fallback).
 set -e
+case "${CF_EVENT_DIAG:-0}" in 0|1) ;; *) echo 'CF_EVENT_DIAG must be 0 or 1'; exit 1;; esac
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$ROOT"
 if ! command -v emcc >/dev/null 2>&1; then
@@ -45,7 +46,7 @@ mkdir -p "$OUT"
 # the firmware unit as build.sh builds it (warnings off: the firmware's own code), single-threaded, no JS runtime;
 # through tests/hostcc.sh: compiled again only when the command (the version is in it) or a file it was compiled from
 # has changed (hashes, not dates; HOSTCC_FORCE=1: always)
-sh tests/hostcc.sh emcc -O2 -w -std=gnu11 -I$W/compat -Ibuild/gen -Ifirmware/src -DEMU_WEB "-DFELUCCA_VERSION=\"$VER\"" \
+sh tests/hostcc.sh emcc -O2 -w -std=gnu11 -I$W/compat -Ibuild/gen -Ifirmware/src -DEMU_WEB "-DCF_EVENT_DIAG=${CF_EVENT_DIAG:-0}" "-DFELUCCA_VERSION=\"$VER\"" \
     --no-entry -sSTANDALONE_WASM -sFILESYSTEM=0 -sSTACK_SIZE=1048576 -sINITIAL_MEMORY=33554432 \
     -o "$OUT/coralflower.wasm" $W/emu_web.c
 cp $W/index.html $W/emu.js $W/keymap.js $W/worklet.js "$OUT/"

@@ -15,6 +15,10 @@ on:
         description: "Version to build, e.g. 0.1-rc1 (X.Y, X.Y.Z or X.Y-suffix). Builds an artifact; no release."
         required: true
         type: string
+      event_diagnostics:
+        description: "Enable temporary RAM event tracing (explicit -rcN test build only)."
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -34,6 +38,7 @@ env:
   PYTHON_VERSION: "3.11"
   PILLOW_VERSION: "11.1.0"
   FONTTOOLS_VERSION: "4.66.1"
+  CF_EVENT_DIAG: ${{ github.event_name == 'workflow_dispatch' && inputs.event_diagnostics && '1' || '0' }}
 
 jobs:
   build:

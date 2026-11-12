@@ -53,8 +53,10 @@ jobs:
 
       - name: The unit compiles (an ARM target, every include present)
         run: |
-          clang -target armv7m-none-eabi -Os -fno-builtin -w -Ifirmware/hal -Ifirmware/src -Ibuild/gen \
-                -fsyntax-only firmware/src/coralflower.c
+          for diagnostic in 0 1; do
+            clang -target armv7m-none-eabi -Os -fno-builtin -w -Ifirmware/hal -Ifirmware/src -Ibuild/gen \
+                  -DCF_EVENT_DIAG="$diagnostic" -fsyntax-only firmware/src/coralflower.c
+          done
 
       - name: The headless emulator builds and plays
         run: |
@@ -68,9 +70,14 @@ jobs:
           set -euo pipefail
           mkdir -p build/host
           python3 -m pip install --disable-pip-version-check numpy==1.26.4
+          python3 tests/cf_headless_clock_wav_test.py
           cc -std=c11 -O1 -g -w -fsanitize=address,undefined tests/cf_event_deadline_test.c -o build/host/cf_event_deadline_test
           build/host/cf_event_deadline_test
-          cc -std=gnu11 -O1 -g -w -fsanitize=address,undefined -DEMU_WEB \
+          python3 tests/cf_diag_build_test.py
+          cc -std=gnu11 -O1 -g -w -fsanitize=address,undefined -DEMU_WEB -DCF_EVENT_DIAG=1 \
+             -Itools/emu/web/compat -Ibuild/gen -Ifirmware/src tests/cf_shed_policy_test.c -o build/host/cf_shed_policy_test -lm
+          build/host/cf_shed_policy_test
+          cc -std=gnu11 -O1 -g -w -fsanitize=address,undefined -DEMU_WEB -DCF_EVENT_DIAG=1 \
              -Itools/emu/web/compat -Ibuild/gen -Ifirmware/src tests/cf_event_trace_test.c -o build/host/cf_event_trace_test -lm
           cc -std=gnu11 -O1 -g -w -fsanitize=address,undefined -DEMU_WEB -DCF_EVENT_DIAG=0 \
              -Itools/emu/web/compat -Ibuild/gen -Ifirmware/src tests/cf_event_trace_test.c -o build/host/cf_event_trace_off -lm

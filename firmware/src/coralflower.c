@@ -95,7 +95,7 @@ static void cf_boot_note(void);            /* (cf_fx.c) */
 
 #define CF_UNIT 1                /* (main.c: CoralFlower's calibration and update hooks) */
 #ifndef CF_EVENT_DIAG
-#define CF_EVENT_DIAG 1          /* rc5: RAM-only diagnosis, not a continuity fix */
+#define CF_EVENT_DIAG 0          /* opt in for a diagnostic rc; absent from ordinary releases */
 #endif
 
 #if defined(__APPLE__)            /* the host syntax check only: Mach-O has no ELF sections (.noinit, .pool) */

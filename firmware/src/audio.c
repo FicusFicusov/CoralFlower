@@ -169,7 +169,7 @@ static __attribute__((noinline)) uint32_t shed_check(uint32_t all, uint32_t lag,
     shed_over = (uint8_t)(shed_over << 1 | (all + lag > SHED_TICKS));
     if ((shed_over & 3u) == 3u) {
         shed_req = 1;
-        CFD_EVENT(CFD_AUDIO, CFD_SHED_REQUEST, 0, all, lag);
+        CFD_EVENT(CFD_AUDIO, CFD_SHED_REQUEST, nested / FM1_TICKS_PER_US, all, lag);
         CFD_FLASH_CONTEXT(CFD_AUDIO);
     }
     return (all - nested) / FM1_TICKS_PER_US;
@@ -185,6 +185,20 @@ static void shed_voice(void)
         return;
     }
 #endif
+#if CF_VLOAD
+    uint32_t part = 0, slot = 0, reason = 0;
+    best = voice_shed_victim(&part, &slot, &reason);
+    if (best) {
+        const engine_t *e = ENGINES[trk[part].engine];
+        uint32_t detail = reason | part << 4 | slot << 7 | (uint32_t)e->oneshot << 11 |
+            (uint32_t)e->ownenv << 12 | trk_vmode(&trk[part]) << 13 | (e->level ? 1u << 15 : 0u);
+        CFD_EVENT(CFD_AUDIO, CFD_SHED, detail,
+            best->note | (uint32_t)best->gate << 8 | (uint32_t)best->stage << 16 | (uint32_t)trk[part].engine << 24,
+            e->level ? e->level(&trk[part], best) : best->env);
+        voice_kill(best);
+        shed_count++;
+    }
+#else
     for (p = 0; p < NPART; p++)
         for (i = 0; i < NVOICE; i++) {
             voice_t *v = &trk[p].v[i];
@@ -197,17 +211,6 @@ static void shed_voice(void)
         shed_count++;
         return;
     }
-#if CF_VLOAD
-    for (p = 0; p < NPART && !best; p++)                /* (CoralFlower: a chord's fifth first, voice.c vl_fifth) */
-        if (trk_vmode(&trk[p]) == V_POLY && (i = vl_fifth(&trk[p], NVOICE, 128u)) < NVOICE)
-            best = &trk[p].v[i];
-    if (best) {
-        CFD_EVENT(CFD_AUDIO, CFD_SHED, 2, best->note | (uint32_t)best->gate << 8 | (uint32_t)best->stage << 16, best->env);
-        voice_kill(best);
-        shed_count++;
-        return;
-    }
-#endif
     for (p = 0; p < NPART; p++) {
         const track_t *t = &trk[p];
         uint32_t mode = trk_vmode(t), low = mode == V_POLY ? lowest_held(t) : 0u;
@@ -225,7 +228,42 @@ static void shed_voice(void)
         voice_kill(best);
         shed_count++;
     }
+#endif
 }
+
+#if CF_EVENT_DIAG && CF_VLOAD
+/* Peak wall+entry-lag in each second, paired with the measured part costs and
+ * actual voice types. The generic gate/envelope alone cannot classify drums.
+ * The complete hook cost (including its rare voice scan) is measured separately. */
+static void audio_diag_peak(uint32_t wall, uint32_t lag, uint32_t nested)
+{
+    uint32_t start = fm1_ticks(), age = start - cf_diag.t0;
+    if (!CFD_ACTIVE || age >= CFD_SECONDS * 1000000u * FM1_TICKS_PER_US) return;
+    volatile cf_diag_second_t *s = &cf_diag.second[age / (1000000u * FM1_TICKS_PER_US)];
+    uint32_t first = cf_diag.parts_generation != cf_diag.generation;
+    if (first) cf_diag.parts_generation = cf_diag.generation;
+    if (first || wall + lag > s->wall + s->lag) {
+        s->peak_at = age; s->wall = wall; s->lag = lag; s->nested = nested;
+        for (uint32_t p = 0; p < NPART; p++) {
+            track_t *t = &trk[p];
+            const engine_t *e = ENGINES[t->engine];
+            uint32_t active = 0, gated = 0;
+            for (uint32_t i = 0; i < NVOICE; i++) {
+                active += t->v[i].active && t->v[i].stage != 4u;
+                gated += t->v[i].active && t->v[i].gate && t->v[i].stage != 4u;
+            }
+            s->part_us[p] = vl_us[p];
+            s->part_voices[p] = active | gated << 5 | trk_vmode(t) << 10 | (uint32_t)e->oneshot << 12 |
+                (uint32_t)e->ownenv << 13 | (uint32_t)t->engine << 14;
+            if (first) CFD_EVENT(CFD_AUDIO, CFD_PART, p | (uint32_t)t->engine << 4 |
+                trk_vmode(t) << 9 | (uint32_t)e->oneshot << 11 | (uint32_t)e->ownenv << 12,
+                t->preset | (uint32_t)t->user << 8, trk_nvoice(t));
+        }
+    }
+    uint32_t cost = fm1_ticks() - start;
+    if (cost > cf_diag.max_audio_hook) cf_diag.max_audio_hook = cost;
+}
+#endif
 
 void fm1_alnk0_irq(void)                       /* via isr_alnk0 (hal/fm1_isr.S) */
 {
@@ -242,7 +280,7 @@ void fm1_alnk0_irq(void)                       /* via isr_alnk0 (hal/fm1_isr.S) 
     if (p & FM1_AUDIO_HALF) {
         uint32_t half, b, us, lag, wall, wall_t5;
 #if CF_EVENT_DIAG
-        uint32_t diag_late = 0, diag_behind = 0, diag_kills = voice_kills, diag_steals = voice_steals;
+        uint32_t diag_late = 0, diag_behind = 0;
 #endif
         int32_t *o;
         /* THE PENDING BIT IS CLEARED BEFORE THE RENDER (0.18's third build). Cleared after it, as before, a half
@@ -331,14 +369,15 @@ void fm1_alnk0_irq(void)                       /* via isr_alnk0 (hal/fm1_isr.S) 
             felucca_dbg.max_us = us;
         felucca_dbg.cpu_q8 = song.cpu_q8;
 #if CF_EVENT_DIAG
+#if CF_VLOAD
+        audio_diag_peak(wall, lag, wall_t5);
+#endif
         if (diag_late) {
             CFD_EVENT(CFD_AUDIO, CFD_BLOCK_LATE, diag_late, diag_behind, wall_t5);
             CFD_FLASH_CONTEXT(CFD_AUDIO);
         }
         if (CFD_ACTIVE) {
             uint32_t age = fm1_ticks() - cf_diag.t0;
-            if (voice_kills != diag_kills || voice_steals != diag_steals)
-                CFD_EVENT(CFD_AUDIO, CFD_VOICES, 0, voice_kills - diag_kills, voice_steals - diag_steals);
             if (age >= cf_diag.health_at) {
                 cf_diag.health_at = age + 500000u * FM1_TICKS_PER_US;
                 CFD_EVENT(CFD_AUDIO, CFD_AUDIO_STATE, song.cpu_q8, felucca_dbg.halves, cr_dbg.stale);

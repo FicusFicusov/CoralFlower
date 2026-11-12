@@ -14,34 +14,41 @@ from pathlib import Path
 
 from fm1_install import BackupError, InstallError, MidiBackend, Updater, bk_r32, bk_u32, open_backup
 
-META = ("generation", "active", "ticks_per_us", "trigger_ms", "trigger_ticks", "duration_ticks", "offset",
+META_V1 = ("generation", "active", "ticks_per_us", "trigger_ms", "trigger_ticks", "duration_ticks", "offset",
         "main_count", "audio_count", "usb_count", "main_dropped", "audio_dropped", "usb_dropped",
         "main_max_emit_ticks", "audio_max_emit_ticks", "usb_max_emit_ticks",
         "flash_windows", "last_flash_at", "last_flash_ticks")
-LANES = ("main", "audio", "usb")
+META = META_V1 + ("summary_count", "counter_saturation", "max_audio_hook_ticks")
+LANES = ("main", "audio", "usb", "summary")
 KINDS = (None, "mode", "config", "save_begin", "save_end", "flash_begin", "flash_end", "flash_slow",
          "shed", "shed_request", "audio_late", "block_late", "audio_state", "voices", "arp_note", "pcm",
-         "usb_arm_gap", "usb_service_gap", "usb_ring", "usb_stream", "context", "flash_window")
-CAPACITY = (64, 128, 64)
+         "usb_arm_gap", "usb_service_gap", "usb_ring", "usb_stream", "context", "flash_window", "part",
+         "counts", "shed_counts", "voice_totals", "peak", "part_peak", "peak_irq")
+CAPACITY = (44, 115, 80, 350)
 
 
 def decode_page(data):
-    if (len(data) < 4 + 5 * len(META) or data[:1] != [1] or data[1] >= 3 or
-            data[2] != len(META) or any(not 0 <= x < 128 for x in data)):
+    schema = data[0] if data else 0
+    fields = META_V1 if schema == 1 else META
+    lanes = 3 if schema == 1 else 4
+    caps = (64, 128, 64) if schema == 1 else CAPACITY
+    if (schema not in (1, 2) or len(data) < 4 + 5 * len(fields) or data[1] >= lanes or
+            data[2] != len(fields) or any(not 0 <= x < 128 for x in data)):
         raise BackupError("unrecognized event-trace schema")
     lane = data[1]
-    m = dict(zip(META, (bk_r32(data, 3 + 5 * i) for i in range(len(META)))))
-    at = 3 + 5 * len(META)
+    m = dict(zip(fields, (bk_r32(data, 3 + 5 * i) for i in range(len(fields)))))
+    m["schema"] = schema
+    at = 3 + 5 * len(fields)
     count = data[at]
     if count > 8 or len(data) != at + 1 + 20 * count:
         raise BackupError("invalid event-trace page length")
     if (m["ticks_per_us"] not in (1, 24) or m["active"] > 1 or
             m["duration_ticks"] != 10_000_000 * m["ticks_per_us"] or
-            any(m[f"{name}_count"] > cap for name, cap in zip(LANES, CAPACITY)) or
-            m["offset"] + count > m[f"{LANES[lane]}_count"]):
+            any(m[f"{name}_count"] > cap for name, cap in zip(LANES[:lanes], caps)) or
+            m["offset"] + count > m[f"{LANES[lane]}_count"] or
+            (schema == 2 and (m["counter_saturation"] > 7 or (m["active"] and count)))):
         raise BackupError("invalid event-trace metadata")
-    # Each u32 uses five MIDI bytes, but the fifth has only four significant bits.
-    starts = [3 + 5 * i for i in range(len(META))]
+    starts = [3 + 5 * i for i in range(len(fields))]
     starts += [at + 1 + 5 * i for i in range(count * 4)]
     if any(data[i + 4] > 15 for i in starts):
         raise BackupError("noncanonical event-trace u32")
@@ -49,17 +56,78 @@ def decode_page(data):
     for i in range(count):
         ticks, tag, a, b = (bk_r32(data, at + 1 + 20 * i + 5 * j) for j in range(4))
         kind = tag & 65535
-        if not 0 < kind < len(KINDS) or ticks >= m["duration_ticks"]:
+        if (not 0 < kind < (22 if schema == 1 else len(KINDS)) or ticks >= m["duration_ticks"] or
+                (schema == 2 and ((lane == 3) != (kind >= 23)))):
             raise BackupError("invalid event kind or timestamp")
-        events.append(dict(lane=LANES[lane], index=m["offset"] + i, kind=KINDS[kind],
-                           detail=tag >> 16, ticks=ticks, seconds=ticks / m["ticks_per_us"] / 1e6, a=a, b=b))
+        e = dict(lane=LANES[lane], index=m["offset"] + i, kind=KINDS[kind],
+                 detail=tag >> 16, ticks=ticks, seconds=ticks / m["ticks_per_us"] / 1e6, a=a, b=b)
+        if kind == 8 and (tag >> 16 & 15):
+            e.update(logical_gate=(a >> 8) & 255, note=a & 255, stage=(a >> 16) & 255)
+            if schema == 2:
+                detail = tag >> 16
+                one_shot = bool(detail & (1 << 11))
+                e.update(reason=detail & 15, part=(detail >> 4) & 7, slot=(detail >> 7) & 15,
+                         engine=a >> 24, one_shot=one_shot, own_envelope=bool(detail & (1 << 12)),
+                         voice_mode=(detail >> 13) & 3,
+                         voice_class="one_shot" if one_shot else "melodic_gated" if e["logical_gate"] else "released",
+                         level_kind="engine_level" if detail & (1 << 15) else "generic_envelope")
+            else:
+                e.update(voice_class="unclassified", identity_limit="rc5 did not record part or engine; gate=1 does not prove a held melodic note")
+        if kind == 27:
+            e.update(part=e["detail"] & 255, active_voices=b & 31, logical_gated=(b >> 5) & 31,
+                     voice_mode=(b >> 10) & 3, one_shot=bool(b & (1 << 12)),
+                     own_envelope=bool(b & (1 << 13)), engine=b >> 14)
+        events.append(e)
     return lane, m, events
+
+
+def check_summaries(meta, events):
+    """The counts are useful only if every retained detail is accounted for.
+
+    Schema 2 deliberately summarizes saturated intervals. Never relabel the
+    selected examples as an exact timeline or a counter overflow as complete.
+    """
+    counts, retained = {}, {}
+    for e in events:
+        if e["lane"] == "summary":
+            continue
+        key = (int(e["seconds"]), e["lane"], e["kind"])
+        retained[key] = retained.get(key, 0) + 1
+    omissions = dict.fromkeys(LANES[:3], 0)
+    for e in events:
+        if e["kind"] != "counts":
+            continue
+        kind, lane = e["detail"] & 255, e["detail"] >> 8
+        if not 1 <= kind <= 22 or lane >= 3 or not e["a"]:
+            raise BackupError("invalid summary counter")
+        key = (int(e["seconds"]), LANES[lane], KINDS[kind])
+        if key in counts or e["a"] < e["b"] or e["a"] - e["b"] != retained.get(key, 0):
+            raise BackupError("summary counter does not account for retained details")
+        counts[key] = e["a"]
+        omissions[LANES[lane]] += e["b"]
+    if set(retained) - set(counts):
+        raise BackupError("retained event lacks a summary counter")
+    if not meta["counter_saturation"] and any(omissions[n] != meta[f"{n}_dropped"] for n in LANES[:3]):
+        raise BackupError("summary omissions differ from metadata")
+    for kind in ("voice_totals", "peak", "peak_irq"):
+        bins = [int(e["seconds"]) for e in events if e["kind"] == kind]
+        if sorted(bins) != list(range(10)):
+            raise BackupError("summary does not cover all ten seconds")
+    selected = sum((e["a"] & 65535) + (e["a"] >> 16) + (e["b"] & 65535) + (e["b"] >> 16)
+                   for e in events if e["kind"] == "shed_counts")
+    kills = sum(e["a"] for e in events if e["kind"] == "voice_totals")
+    consistent = kills >= selected
+    return dict(exact_timeline_complete=not sum(omissions.values()), action_counts_consistent=consistent,
+                aggregate_counts_complete=not meta["counter_saturation"] and consistent,
+                detailed_events_omitted=omissions, interval_seconds=1)
 
 
 def read_trace(link):
     baseline = None
     events = []
     for lane, name in enumerate(LANES):
+        if lane == 3 and baseline["schema"] == 1:
+            break
         offset = 0
         while True:
             got_lane, meta, page = decode_page(link.request(82, [lane, *bk_u32(offset)]))
@@ -82,11 +150,22 @@ def read_trace(link):
                 raise BackupError("event-trace page omitted published records")
     if not any(e["kind"] == "mode" for e in events) or not any(e["kind"] == "config" for e in events):
         raise BackupError("capture lacks the MODE gesture or its audio-side configuration")
-    omitted = sum(baseline[f"{name}_dropped"] for name in LANES)
-    return dict(schema=1, metadata=baseline, capture_status="partial_overflow" if omitted else "complete_window",
+    omitted = sum(baseline[f"{name}_dropped"] for name in LANES[:3])
+    if baseline["schema"] == 2:
+        coverage = check_summaries(baseline, events)
+        status = ("partial_counter_saturation" if baseline["counter_saturation"] else
+                  "partial_action_counts" if not coverage["action_counts_consistent"] else
+                  "summarized_window" if omitted else "complete_window")
+    else:
+        coverage = dict(exact_timeline_complete=not omitted, aggregate_counts_complete=not omitted)
+        status = "partial_overflow" if omitted else "complete_window"
+    return dict(schema=baseline["schema"], metadata=baseline, capture_status=status, coverage=coverage,
                 events=sorted(events, key=lambda e: (e["ticks"], LANES.index(e["lane"]), e["index"])),
                 limits=["Diagnostic evidence, not a continuity PASS.",
+                        "Summaries count every occurrence until an explicit counter saturation; omitted details have no exact timeline.",
                         "block_late uses measured block completion and an estimated DMA boundary.",
+                        "part_peak describes voices after the measured half; a gate on a one-shot is not a held key.",
+                        "voice_totals follow explicit voice_kill/voice_steals operations; engine-owned allocation and direct stage changes may bypass these existing counters.",
                         "flash_window is the most recent IRQ-off window, not proof that it caused an anomaly.",
                         "PCM anchors identify armed packet data; only a WAV match establishes host receipt."])
 

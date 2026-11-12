@@ -255,8 +255,18 @@ def build_stub():
 
 # ---- app
 
+def diagnostic_define(version):
+    """Detailed RAM tracing is opt-in and must never enter a stable package."""
+    value = os.environ.get("CF_EVENT_DIAG", "0")
+    if value not in ("0", "1"):
+        raise SystemExit("CF_EVENT_DIAG must be 0 or 1")
+    if value == "1" and version and not re.fullmatch(r"CoralFlower \d+\.\d+(?:\.\d+)?-rc\d+", version):
+        raise SystemExit("CF_EVENT_DIAG=1 is only allowed for an explicit -rcN diagnostic build")
+    return f"-DCF_EVENT_DIAG={value}"
+
+
 def build_app(stub):
-    flags = [*CFLAGS, "-Ifirmware/hal", "-Ifirmware/src", "-Ibuild/gen"]
+    flags = [*CFLAGS, "-Ifirmware/hal", "-Ifirmware/src", "-Ibuild/gen", diagnostic_define(VERSION)]
     for flag in ("FELUCCA_FLASH", "FELUCCA_OTA", "FELUCCA_OTA_DRYRUN", "FELUCCA_OTA_RAMONLY", "FELUCCA_CDC",
                  "FELUCCA_UART", "FELUCCA_UAC", "FELUCCA_ICONS", "FELUCCA_KEYCAPS", "FELUCCA_SLICE",
                  "FELUCCA_SLICER", "FELUCCA_FM4", "FELUCCA_SAMPLE", "FELUCCA_GRAIN", "FELUCCA_DRUM", "FELUCCA_SEQ",
@@ -460,6 +470,7 @@ def main():
             raise SystemExit(f"--release {a.release}: use X.Y, X.Y.Z or X.Y-suffix")
         VERSION = "CoralFlower " + a.release.lower()     # e.g. CoralFlower 0.1, CoralFlower 0.1-rc1 (the INFO text)
         name = f"{UNIT}-{a.release}.fwsc"
+    diagnostic_define(VERSION)       # reject accidental stable tracing before SDK/toolchain work
     fm1pkg_make.SDK = a.sdk
     for rel, sha in SDK_SHA256.items():          # fail early without the SDK
         if hashlib.sha256(fm1pkg_make.sdk_file(rel)).hexdigest() != sha:

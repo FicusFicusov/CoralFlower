@@ -109,6 +109,14 @@ static void step(uint32_t ms)
     }
     while (ms--) {   /* 1 ms = 44.1 frames: render in 441-frame chunks every 10 ms */
         static uint32_t acc;
+        /* Recording must not stop the clock source used by the same script. */
+        if (clk_per > 0) {
+            if (clk_t >= clk_next) {
+                web_midi_in(0x0Fu | 0xF8u << 8);
+                clk_next += clk_per;
+            }
+            clk_t += 1.0;
+        }
         web_step(1);
         mo_drain();
         if (++acc >= 10u) {
