@@ -125,6 +125,7 @@ static void cf_boot_note(void);            /* (cf_fx.c) */
 
 /* ----------------------------------------------------------- sound --- */
 #include "core.h"
+#define CFD_TICKS() fm1_ticks_inlined()
 #include "cf_diag.c"
 #include "engines.c"
 #include "params.c"

@@ -31,6 +31,10 @@ static inline void fm1_time_init(void)
 
 static inline uint32_t fm1_ticks(void) { return FM1_T4_CNT; }
 
+/* RAM-only paths cannot call the out-of-line XIP copy that the size optimizer
+ * may retain for fm1_ticks. Guarantee a register read at the call site. */
+static inline __attribute__((always_inline)) uint32_t fm1_ticks_inlined(void) { return FM1_T4_CNT; }
+
 /* Microseconds, wrapping every ~178.9 s. */
 static inline uint32_t fm1_micros(void) { return FM1_T4_CNT / FM1_TICKS_PER_US; }
 
