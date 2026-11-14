@@ -108,3 +108,5 @@ sounds or features you want:
 
 CoralFlower has no ads and no paid version. To support it, press **Support** on
 [the site](https://ficusficusov.github.io/CoralFlower/): it lists crypto wallets.
+
+You can also try CoralFlower in the browser, no flashing needed, in the free community [FM-1 Emulator](https://fm1-emulator.atst.tools/).
