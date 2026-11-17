@@ -82,7 +82,6 @@ static cr_dbg_t cr_dbg;
 /* ChoralRoot's persisted option defaults off. CoralFlower enables its guarded
  * voice worker at boot; SAFE/failed-boot recovery still leaves it off. */
 static uint8_t cr_c1_off = CF_CORE1 ? 0 : 1;
-static volatile uint32_t t5_nested_ticks;       /* core0 audio ISR resets; TIMER5 adds its nested work */
 static const char *const CRP_NAME[CRP_N] = {"tick", "part0", "part1", "fx", "master", "wait"};
 static const char *const CRX_NAME[CRX_N] = {"down", "delay", "reverb", "up"};
 

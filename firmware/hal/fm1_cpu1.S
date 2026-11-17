@@ -24,7 +24,10 @@ fm1_c1_entry:
 	reti = fm1_c1_main
 	rti
 
-	.section .bss.c1stack,"aw",@nobits
+/* Retain both stack sizes in POOL SRAM. The small globals region has <1 KiB
+ * spare; core1's previously unused 3 KiB stack must not crowd it out. POOL is
+ * zeroed at startup and remains accessible during NOR slices. */
+	.section .pool.c1stack,"aw",@nobits
 	.balign 8
 	.globl _c1_ustack
 _c1_ustack:			/* after rti the core runs on this one: the render's (filled with a mark at start) */

@@ -4,6 +4,8 @@
  * No job survives into a main-loop NOR slice. All admission remains shared. */
 #pragma once
 #define CF_UI_RESERVE_PERCENT 18u
+/* Early tentative declaration; audio.c also supports standalone timing tests. */
+static volatile uint32_t t5_nested_ticks;
 
 typedef struct { voice_t *v; vmod_t m; } cf_c1_voice_t;
 static struct {

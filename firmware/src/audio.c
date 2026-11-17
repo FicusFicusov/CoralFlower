@@ -21,7 +21,7 @@ struct felucca_dbg {
 } felucca_dbg __attribute__((section(".noinit")));
 #define CR_STAGE(n) (felucca_dbg.stage = (n))     /* the boot breadcrumb (cr_bootguard.h BS_*) */
 static volatile uint32_t audio_halves, audio_max_us;
-/* t5_nested_ticks is declared in cr_cpu1.h for consistent core0 work accounting. */
+static volatile uint32_t t5_nested_ticks;       /* TIMER5 ticks nested inside the core0 audio ISR */
 static uint32_t audio_cpu_rem;                         /* keep the fractional IIR step: no low-load bias */
 /* the last second's audio ISR (ChoralRoot's console `cpu`, the GEEK OUT view): the ISR adds each half's render time
  * (us, TIMER5 nested in it left out) and its whole time (ticks, nested included: what the DMA deadline sees);
