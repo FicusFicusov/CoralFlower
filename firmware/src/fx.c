@@ -1239,7 +1239,19 @@ static __attribute__((noinline)) void perf_master(int32_t *out, uint32_t n)
 #endif
 
 #if CF_VLOAD                                            /* (voice.c: each part's time, for its voices' cost) */
+#if CF_CORE1
+#define MIX_PART(t, n) do { \
+    uint32_t vl0_ = VL_NOW(), vm_ = cf_c1.main_total, vw_ = cf_c1.wait_total, \
+        vb_ = cf_c1.busy_total, v0_ = cf_c1.voices0, v1_ = cf_c1.voices1; \
+    mix_part(t, n); \
+    uint32_t vt_ = VL_NOW() - vl0_; \
+    vl_part(t, vt_); \
+    vl_parallel_part(t, vt_, cf_c1.main_total - vm_, cf_c1.wait_total - vw_, \
+        cf_c1.busy_total - vb_, cf_c1.voices0 - v0_, cf_c1.voices1 - v1_); \
+} while (0)
+#else
 #define MIX_PART(t, n) do { uint32_t vl0_ = VL_NOW(); mix_part(t, n); vl_part(t, VL_NOW() - vl0_); } while (0)
+#endif
 #else
 #define MIX_PART(t, n) mix_part(t, n)
 #endif

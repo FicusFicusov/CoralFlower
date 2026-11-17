@@ -14,7 +14,7 @@ static struct {
     int32_t mid[CTL], side[CTL];
     uint32_t count, first, frames, side_on, busy_ticks, progress;
     uint32_t saved_ticks, irq_us, last_wall_us, last_serial_us, wall_total, serial_total;
-    uint32_t jobs, voices0, voices1, faults, busy_total, wait_total, wait_max;
+    uint32_t jobs, voices0, voices1, faults, busy_total, wait_total, wait_max, main_total;
     uint8_t inflight;
 } cf_c1 __attribute__((section(".pool")));
 
@@ -83,7 +83,7 @@ static uint32_t cf_c1_partition(void)
 
 static void cf_c1_render(int32_t *mid, int32_t *side, uint8_t *side_on)
 {
-    uint32_t i, wait_start, waited;
+    uint32_t i, main_start, wait_start, waited;
     int posted = 0;
     cf_c1.first = cf_c1_partition();
     if (cf_c1.first && cr_c1_check()) {
@@ -92,8 +92,10 @@ static void cf_c1_render(int32_t *mid, int32_t *side, uint8_t *side_on)
         if (!posted) cf_c1.inflight = 0;
     }
     if (!posted) cf_c1.first = 0;
+    main_start = cf_c1_cpu_ticks();
     for (i = cf_c1.first; i < cf_c1.count; i++)
         *side_on |= (uint8_t)cf_c1_voice(i, 0, mid, side);
+    cf_c1.main_total += cf_c1_cpu_ticks() - main_start;
     cf_c1.voices0 += cf_c1.count - cf_c1.first;
     if (!posted) return;
     wait_start = cf_c1_cpu_ticks();
@@ -121,7 +123,7 @@ static void cf_c1_render(int32_t *mid, int32_t *side, uint8_t *side_on)
     if (waited > cf_c1.wait_max) cf_c1.wait_max = waited;
 #ifdef FM1_HAVE_CPU1
     /* audio CPU time includes join polling. Add only worker work not already
-     * counted there, so the allocator retains its serial-equivalent budget. */
+     * counted there, to retain the serial-equivalent diagnostic alongside actual elapsed time. */
     if (cf_c1.busy_ticks > waited) cf_c1.saved_ticks += cf_c1.busy_ticks - waited;
 #endif
     *side_on |= (uint8_t)cf_c1.side_on;

@@ -53,18 +53,16 @@ static void snd_num(uint32_t idx, char *b)
     b[2] = (char)('0' + (idx + 1u) % 10u);
     b[3] = 0;
 }
-/* the top bar's sound: number, engine, name; the pattern's letter after it when the sound is that pattern's own
+/* the top bar's sound: engine, name; the pattern's letter after it when the sound is that pattern's own
  * (0.5: PRESETS / SELECT then change the pattern's, not HOME's) */
 static void draw_top_sound(uint32_t part, int xmax)   /* xmax: where the chips on the right begin */
 {
-    char num[4], l[2], nm[13];
+    char l[2], nm[13];
     int x = 4, own, room;
     uint32_t cur = sq_cur_pat(), k;
     own = cur < SQ_NPAT && part < 3u && cfps.r[cur][part].own;
     l[0] = (char)('A' + cur % SQ_NPAT);
     l[1] = 0;
-    snd_num(cf_snd_pos(part), num);
-    x += fb_text(&CF_FONT_UI, x, Y_TOP + 1, num, FL_INK3, 1) + 5;
     /* the name as fits before the chips (ARP, SEQ, REC), the pattern's letter always after it; short of room the
      * engine's label goes first, then the name's end */
     str_cpy(nm, cf_snd[part].name, sizeof nm);

@@ -375,7 +375,7 @@ void fm1_alnk0_irq(void)                       /* via isr_alnk0 (hal/fm1_isr.S) 
         cf_c1.last_serial_us = us + cf_c1.saved_ticks / FM1_TICKS_PER_US;
         cf_c1.wall_total += cf_c1.last_wall_us;
         cf_c1.serial_total += cf_c1.last_serial_us;
-        vl_half(cf_c1.last_serial_us, FM1_TICKS_PER_US);
+        vl_half(us, FM1_TICKS_PER_US);
 #else
         vl_half(us, FM1_TICKS_PER_US);
 #endif                  /* (voice.c: the next half's voices count from it) */

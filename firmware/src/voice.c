@@ -97,13 +97,28 @@ static uint16_t vl_cost[NSND];                          /* a voice's time over a
 static uint16_t vl_mark[NSND];                          /* .. for this sound (vl_mark_of; another: not measured yet) */
 static uint16_t vl_us[NSND];                            /* the last half's time per part, us */
 static uint16_t vl_all;                                 /* .. and the whole half's */
+#if CF_CORE1
+/* Only successful split blocks teach the parallel predictor. The components
+ * remain positive: preparation/mix work scales per voice; independent kernels
+ * scale in pairs at the slower measured core's rate. */
+static struct {
+    uint32_t overhead_ticks, main_ticks, worker_ticks;
+    uint16_t main_voices, worker_voices;
+    uint8_t invalid;
+} vl_parallel[NSND];
+static uint16_t vl_prepare_cost[NSND], vl_kernel_cost[NSND];
+#endif
 static uint32_t vl_aside_ticks;                         /* this half's time of a sound that gives way by itself
                                                          * (CoralFlower's power-on sound, cf_fx.c cf_boot_yield) */
 static uint16_t vl_aside;                               /* .. the last half's, us: not counted against the parts */
 
 static uint32_t vl_mark_of(const track_t *t)
 {
-    return (uint32_t)t->engine << 8 | (t->engine == ENGI_VA ? va_cost(t) & 255u : 0u);
+    uint32_t mark = (uint32_t)t->engine << 8 | (t->engine == ENGI_VA ? va_cost(t) & 255u : 0u);
+#if CF_CORE1
+    if (t->engine == ENGI_VA && cr_dualcore_active()) mark |= 0x8000u;
+#endif
+    return mark;
 }
 static uint32_t vl_cost_of(const track_t *t)
 {
@@ -126,9 +141,19 @@ static uint32_t vl_cap(const track_t *t)
 #endif
     other = other > vl_all ? 0u : other;                /* (wrapped: the parts' sum past the half's) */
 #if CF_CORE1
-    /* Admission remains based on serial-equivalent DSP work: faster rendering
-     * is retained for main/UI and deadline margin, not spent on extra voices. */
+    /* Both the whole half and each part use actual elapsed core0 CPU time.
+     * TIMER5 work consumes the same wall-time target, without overlap credit. */
     other += cf_c1.irq_us;
+#endif
+#if CF_CORE1
+    if (cr_dualcore_active() && vl_kernel_cost[p] && vl_mark[p] == vl_mark_of(t)) {
+        /* Three and four voices use two kernel layers, five and six use
+         * three. Per-voice averaging alone can get stuck at three forever. */
+        for (k = VA_POLY; k > VL_MIN; k--)
+            if (other < VL_TARGET && k * vl_prepare_cost[p] +
+                ((k + 1u) / 2u) * vl_kernel_cost[p] <= VL_TARGET - other) break;
+        return k;
+    }
 #endif
     k = other < VL_TARGET ? (VL_TARGET - other) / vl_cost_of(t) : 0u;
     return k < VL_MIN ? VL_MIN : k > VA_POLY ? VA_POLY : k;
@@ -305,21 +330,38 @@ static voice_t *voice_reuse(track_t *t, voice_t *v)
  * starts it on the voice the fade freed, 0.7 to 1.5 ms later. A note-off meanwhile drops it. */
 static uint8_t voice_fade_steal;
 #define VSQ 8u
-static struct { uint8_t note[VSQ], vel[VSQ], armed[VSQ], n; } vsq[NPART];   /* armed: its block rendered */
-static int vsq_push(track_t *t, uint32_t note, uint32_t vel)   /* 0: full (the caller restarts in place) */
+static struct {
+    uint8_t note[VSQ], vel[VSQ], armed[VSQ], n;   /* armed: its fade block rendered */
+#if CF_VLOAD
+    /* A replacement inherits the part's existing allocation through its fade.
+     * A lower next-half cap must not turn a one-for-one chord change into a
+     * smaller chord merely because its old slots became temporarily silent. */
+    uint8_t reserved[VSQ], admission;
+#endif
+} vsq[NPART];
+static int vsq_push(track_t *t, uint32_t note, uint32_t vel, uint32_t reserved)
 {
     uint32_t p = (uint32_t)(t - trk), i;
+#if !CF_VLOAD
+    (void)reserved;
+#endif
     if (p >= NPART)
         return 0;
     for (i = 0; i < vsq[p].n; i++)
         if (vsq[p].note[i] == note) {
             vsq[p].vel[i] = (uint8_t)vel;
+#if CF_VLOAD
+            if (reserved > vsq[p].reserved[i]) vsq[p].reserved[i] = (uint8_t)reserved;
+#endif
             return 1;
         }
     if (vsq[p].n >= VSQ)
         return 0;
     vsq[p].note[vsq[p].n] = (uint8_t)note;
     vsq[p].armed[vsq[p].n] = 0;
+#if CF_VLOAD
+    vsq[p].reserved[vsq[p].n] = (uint8_t)reserved;
+#endif
     vsq[p].vel[vsq[p].n++] = (uint8_t)vel;
     return 1;
 }
@@ -332,6 +374,9 @@ static void vsq_drop(track_t *t, uint32_t note)            /* note 128: all */
         if (note < 128u && vsq[p].note[i] != note) {
             vsq[p].note[k] = vsq[p].note[i];
             vsq[p].armed[k] = vsq[p].armed[i];
+#if CF_VLOAD
+            vsq[p].reserved[k] = vsq[p].reserved[i];
+#endif
             vsq[p].vel[k++] = vsq[p].vel[i];
         }
     vsq[p].n = (uint8_t)k;
@@ -356,6 +401,31 @@ static int voice_tail_yield(void)
 }
 
 #if CF_VLOAD
+#if CF_CORE1
+static void vl_parallel_part(const track_t *t, uint32_t ticks, uint32_t main_ticks, uint32_t wait_ticks,
+                             uint32_t worker_ticks, uint32_t main_voices, uint32_t worker_voices)
+{
+    uint32_t p = (uint32_t)(t - trk);
+    if (t->engine != ENGI_VA) return;
+    if (!cr_dualcore_active() || (main_voices > 1u && !worker_voices) || main_ticks + wait_ticks > ticks) {
+        vl_parallel[p].invalid = 1;
+        return;
+    }
+    /* A single voice has no dispatch cost and no measured worker throughput.
+     * Keep prior split measurements; never learn a cheaper split from it. */
+    if (!main_voices || !worker_voices) return;
+    vl_parallel[p].overhead_ticks += ticks - main_ticks - wait_ticks;
+    vl_parallel[p].main_ticks += main_ticks;
+    vl_parallel[p].worker_ticks += worker_ticks;
+    vl_parallel[p].main_voices += (uint16_t)main_voices;
+    vl_parallel[p].worker_voices += (uint16_t)worker_voices;
+}
+static uint16_t vl_price_update(uint32_t price, uint16_t old, int reset)
+{
+    if (price > 0xffffu) price = 0xffffu;
+    return (uint16_t)(reset || price > old ? price : old - (old - price) / 8u);
+}
+#endif
 /* fx.c, after a part's render: its time and the voices it rendered */
 static void vl_part(const track_t *t, uint32_t ticks)
 {
@@ -377,14 +447,47 @@ static void vl_half(uint32_t us, uint32_t ticks_per_us)
         if (vl_vblk[p] && t_us) {
             uint32_t c = t_us * (HALF_FRAMES / CTL) / vl_vblk[p], m = vl_mark_of(&trk[p]);
             c = c > 0xFFFFu ? 0xFFFFu : c ? c : 1u;
-            if (vl_mark[p] != m || c > vl_cost[p])
+            int discard = 0;
+#if CF_CORE1
+            /* An end-of-half mode change must not label earlier cheap split
+             * samples as serial timing. A refused post after successful split
+             * blocks is mixed too. Learn again from the next coherent half. */
+            discard = (vl_parallel[p].worker_voices && !cr_dualcore_active()) ||
+                (vl_cost[p] && ((vl_mark[p] ^ m) & 0x8000u)) ||
+                (vl_parallel[p].invalid && vl_parallel[p].worker_voices);
+#endif
+            if (discard)
+                vl_cost[p] = 0;
+            else if (vl_mark[p] != m || c > vl_cost[p])
                 vl_cost[p] = (uint16_t)c;
             else
                 vl_cost[p] = (uint16_t)(vl_cost[p] - (vl_cost[p] - c) / 8u);
+#if CF_CORE1
+            if (discard || vl_mark[p] != m || vl_parallel[p].invalid || !cr_dualcore_active()) {
+                vl_prepare_cost[p] = vl_kernel_cost[p] = 0;
+            }
+            if (!discard && !vl_parallel[p].invalid && vl_parallel[p].main_voices && vl_parallel[p].worker_voices) {
+                uint32_t mv = vl_parallel[p].main_voices, wv = vl_parallel[p].worker_voices;
+                uint32_t blocks = HALF_FRAMES / CTL;
+                uint32_t denom = (mv + wv) * ticks_per_us;
+                uint32_t prep = (vl_parallel[p].overhead_ticks * blocks + denom - 1u) / denom;
+                denom = mv * ticks_per_us;
+                uint32_t main = (vl_parallel[p].main_ticks * blocks + denom - 1u) / denom;
+                denom = wv * ticks_per_us;
+                uint32_t worker = (vl_parallel[p].worker_ticks * blocks + denom - 1u) / denom;
+                int reset = !vl_kernel_cost[p];
+                vl_prepare_cost[p] = vl_price_update(prep, vl_prepare_cost[p], reset);
+                vl_kernel_cost[p] = vl_price_update(main > worker ? main : worker, vl_kernel_cost[p], reset);
+            }
+#endif
             vl_mark[p] = (uint16_t)m;
         }
         vl_ticks[p] = 0;
         vl_vblk[p] = 0;
+#if CF_CORE1
+        vl_parallel[p].overhead_ticks = vl_parallel[p].main_ticks = vl_parallel[p].worker_ticks = 0;
+        vl_parallel[p].main_voices = vl_parallel[p].worker_voices = vl_parallel[p].invalid = 0;
+#endif
     }
     vl_all = (uint16_t)(us > 0xFFFFu ? 0xFFFFu : us);
     vl_aside = (uint16_t)(vl_aside_ticks / ticks_per_us > 0xFFFFu ? 0xFFFFu : vl_aside_ticks / ticks_per_us);
@@ -471,7 +574,20 @@ static voice_t *voice_shed_victim(uint32_t *part, uint32_t *slot, uint32_t *reas
 static voice_t *voice_alloc(track_t *t, uint32_t note, uint32_t vel)
 {
     const engine_t *e = ENGINES[t->engine];
-    uint32_t i, np = trk_nvoice(t), best = np, low = np, nfree = 0;
+    uint32_t i, limit = trk_nvoice(t), np = limit;
+#if CF_VLOAD
+    /* A measured admission limit is a count, not a prefix of physical slots.
+     * The limit can fall after round-robin put held notes in higher slots. Always
+     * find/retrigger those notes; otherwise one chord acquires duplicate tails
+     * and a new note can exceed the limit without stealing an existing voice. */
+    if (t->engine == ENGI_VA) {
+        uint32_t part = (uint32_t)(t - trk);
+        np = VA_POLY;
+        if (part < NPART && vsq[part].admission > limit)
+            limit = vsq[part].admission < np ? vsq[part].admission : np;
+    }
+#endif
+    uint32_t best = np, low = np, nfree = 0, used = 0;
     int32_t bd = 0x7FFFFFFF;
     if (voice_tight)
         voice_tail_yield();                             /* (a new note on a tight core: the tail's oldest goes) */
@@ -505,14 +621,16 @@ static voice_t *voice_alloc(track_t *t, uint32_t note, uint32_t vel)
             /* ChoralRoot: a sampled engine restarts its sample on a retrigger (a step at the voice's level): the
              * sounding voice fades over a block, the note starts fresh after it (vsq) */
             if (voice_fade_steal && ENGINES[t->engine]->sampled && t->v[i].env_out && t->v[i].stage != 4u &&
-                vsq_push(t, note, vel)) {
+                vsq_push(t, note, vel, 0)) {
                 voice_kill(&t->v[i]);
                 return 0;
             }
             return voice_reuse(t, &t->v[i]);
         }
         nfree += !t->v[i].active;
+        used += t->v[i].active;
     }
+    if (used >= limit) nfree = 0;
     while (nfree && voices_busy_of(t) + voice_units(t) > VBUDGET) {
         track_t *vp = 0;
         uint32_t k = voice_victim(t, 0, &vp);
@@ -529,7 +647,7 @@ static voice_t *voice_alloc(track_t *t, uint32_t note, uint32_t vel)
         for (i = 0; i < np && best == np; i++)
             if (t->v[i].active && !t->v[i].gate && t->v[i].stage != 4u)
                 goto steal;
-    if (t->p[P_ALLOC] || TRK_GLIDE(t)) {
+    if (nfree && (t->p[P_ALLOC] || TRK_GLIDE(t))) {
         for (i = 0; i < np; i++) {
             int32_t d = t->v[i].pitch_cur - (int32_t)note * 16;
             if (t->v[i].active)
@@ -542,7 +660,7 @@ static voice_t *voice_alloc(track_t *t, uint32_t note, uint32_t vel)
                 best = i;
             }
         }
-    } else {
+    } else if (nfree) {
         for (i = 0; i < np && best == np; i++) {
             uint32_t k = (t->rr + i) % np;
             if (!t->v[k].active)
@@ -557,7 +675,7 @@ steal:
         if (t->v[i].gate && (low == np || t->v[i].note < t->v[low].note))
             low = i;
     for (i = 0; i < np; i++)                             /* oldest released (not one fading out for another part) */
-        if (!t->v[i].gate && t->v[i].stage != 4u && (best == np || t->v[i].age < t->v[best].age))
+        if (t->v[i].active && !t->v[i].gate && t->v[i].stage != 4u && (best == np || t->v[i].age < t->v[best].age))
             best = i;
 #if CF_VLOAD
     if (best == np && (i = vl_fifth(t, np, note)) < np)   /* (CoralFlower: a chord gives up its fifth first) */
@@ -565,11 +683,12 @@ steal:
 #endif
     if (best == np)
         for (i = 0; i < np; i++)                         /* oldest held, not the bass */
-            if (i != low && (!voice_fade_steal || t->v[i].stage != 4u) && (best == np || t->v[i].age < t->v[best].age))
+            if (t->v[i].active && t->v[i].gate && i != low && t->v[i].stage != 4u &&
+                (best == np || t->v[i].age < t->v[best].age))
                 best = i;
     voice_steals++;
     CFD_EVENT(CFD_AUDIO, CFD_VOICES, 0, 0, 1);
-    if (voice_fade_steal && !(best < np && !t->v[best].env_out) && vsq_push(t, note, vel)) {   /* fade it, the note
+    if (voice_fade_steal && !(best < np && !t->v[best].env_out) && vsq_push(t, note, vel, used)) {   /* fade it, the note
                                                          * next block (vsq); one not rendered yet (silent): in place */
         if (best < np)
             voice_kill(&t->v[best]);
@@ -903,20 +1022,36 @@ static void engine_block(track_t *t)
         uint32_t p = (uint32_t)(t - trk);
         if (p < NPART && vsq[p].n) {
             uint8_t nn[VSQ], vv[VSQ];
+#if CF_VLOAD
+            uint8_t reservation[VSQ];
+#endif
             uint32_t n = 0, k = 0;
             for (i = 0; i < vsq[p].n; i++) {
                 if (vsq[p].armed[i]) {
                     nn[n] = vsq[p].note[i];
+#if CF_VLOAD
+                    reservation[n] = vsq[p].reserved[i];
+#endif
                     vv[n++] = vsq[p].vel[i];
                 } else {
                     vsq[p].note[k] = vsq[p].note[i];
                     vsq[p].vel[k] = vsq[p].vel[i];
+#if CF_VLOAD
+                    vsq[p].reserved[k] = vsq[p].reserved[i];
+#endif
                     vsq[p].armed[k++] = 1;
                 }
             }
             vsq[p].n = (uint8_t)k;
-            for (i = 0; i < n; i++)
+            for (i = 0; i < n; i++) {
+#if CF_VLOAD
+                vsq[p].admission = reservation[i];
+#endif
                 trk_note_on(t, nn[i], vv[i]);
+#if CF_VLOAD
+                vsq[p].admission = 0;
+#endif
+            }
         }
     }
 }
