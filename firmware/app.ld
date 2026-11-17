@@ -30,6 +30,9 @@ SECTIONS
     .c1_text : { _c1_start = .; KEEP(*(.c1_text*)) . = ALIGN(4); _c1_end = .; } > RAMTEXT AT > XIP
     _c1_load = LOADADDR(.c1_text);
     _rt_end = _c1_end;
+    /* Stack data is not copied from XIP and is not in the executable RAM
+     * window (_rt_end). The HAL initializes it before starting core1. */
+    .c1_stack (NOLOAD) : { . = ALIGN(8); _c1_stack_start = .; *(.c1_stack*) . = ALIGN(8); _c1_stack_end = .; } > RAMTEXT
     .data : { . = ALIGN(4); _data_start = .; *(.data*) *(.sdata*) . = ALIGN(4); _data_end = .; } > RAM AT > XIP
     _data_load = LOADADDR(.data);
     .bss (NOLOAD) : { _bss_start = .; *(.bss*) *(.sbss*) *(COMMON) . = ALIGN(4); _bss_end = .; } > RAM

@@ -24,10 +24,10 @@ fm1_c1_entry:
 	reti = fm1_c1_main
 	rti
 
-/* Retain both stack sizes in POOL SRAM. The small globals region has <1 KiB
- * spare; core1's previously unused 3 KiB stack must not crowd it out. POOL is
- * zeroed at startup and remains accessible during NOR slices. */
-	.section .pool.c1stack,"aw",@nobits
+/* Dedicated SRAM after the RAM code, outside its executable window. Retain
+ * both stack sizes without consuming the globals or POOL reserve. The HAL
+ * fills the user stack and clears the supervisor stack before releasing C1. */
+	.section .c1_stack,"aw",@nobits
 	.balign 8
 	.globl _c1_ustack
 _c1_ustack:			/* after rti the core runs on this one: the render's (filled with a mark at start) */

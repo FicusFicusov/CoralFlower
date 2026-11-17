@@ -358,8 +358,10 @@ def size_line(hdr):
         if len(p) > 3 and p[0].isdigit() and p[1].startswith("."):
             sz[p[1]] = int(p[2], 16)
     t, rt, c1, d, b = (sz.get(k, 0) for k in (".text", ".ram_text", ".c1_text", ".data", ".bss"))
+    c1_stack = sz.get(".c1_stack", 0)
     xip, ram = t + rt + c1 + d, d + b
-    s = (f"size: .text {t} B, .ram_text {rt} B, .c1_text {c1} B (RAMTEXT {rt + c1} of {0x6000}), .data {d} B, .bss {b} B; "
+    s = (f"size: .text {t} B, .ram_text {rt} B, .c1_text {c1} B, .c1_stack {c1_stack} B "
+         f"(RAMTEXT {rt + c1 + c1_stack} of {0x6000}), .data {d} B, .bss {b} B; "
          f"XIP {xip} B of {XIP_LEN} ({100 * xip / XIP_LEN:.1f}%), RAM {ram} B of {RAM_LEN} ({100 * ram / RAM_LEN:.1f}%)")
     if ".pool" in sz:
         s += f", POOL {sz['.pool']} B of {POOL_LEN} ({100 * sz['.pool'] / POOL_LEN:.1f}%)"
@@ -414,6 +416,13 @@ def check(img, syms, dis, rt):
         errors.append("RAM region overflow")
     if 0x54000 - pool < 8192:                     # keep >= 8 KiB of the pool spare
         errors.append(f"pool headroom {0x54000 - pool} B < 8192 B")
+    stack_start, stack_end = sym("_c1_stack_start"), sym("_c1_stack_end")
+    if stack_end > stack_start:
+        if not (sym("_rt_end") <= stack_start < stack_end <= 0x01C06000 and stack_start % 8 == 0):
+            errors.append("core1 stacks overlap RAM code or exceed the RAMTEXT region")
+        if stack_end - stack_start != 3072 or sym("_c1_ustack") != stack_start:
+            errors.append("core1 user/supervisor stack allocation differs from 2816 + 256 bytes")
+        notes.append(f"core1 stacks {stack_start:#x}..{stack_end:#x}, outside executable RAM")
     return errors, notes
 
 

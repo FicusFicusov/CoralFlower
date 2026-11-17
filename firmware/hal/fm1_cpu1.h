@@ -126,6 +126,7 @@ static inline __attribute__((always_inline)) int fm1_c1_poll(uint32_t *done)
 extern void fm1_c1_entry(void);
 extern uint32_t _c1_ustack[];
 #define FM1_C1_STACK_WORDS (2816u / 4u)
+#define FM1_C1_SSTACK_WORDS (256u / 4u)
 #define FM1_C1_MARK 0x43314D4Bu                  /* "C1MK": how deep core 1's stack has gone */
 volatile uint32_t fm1_c1_trace;                 /* breadcrumbs (fm1_cpu1.S, fm1_c1_main) */
 static uint8_t fm1_c1_on;                       /* started and answering: core 0 may hand it work */
@@ -163,6 +164,8 @@ static int fm1_cpu1_start(void)
     fm1_cpu1_hold();
     for (i = 0; i < FM1_C1_STACK_WORDS; i++)
         _c1_ustack[i] = FM1_C1_MARK;
+    for (; i < FM1_C1_STACK_WORDS + FM1_C1_SSTACK_WORDS; i++)
+        _c1_ustack[i] = 0;                  /* contiguous supervisor stack; NOLOAD has no startup image */
     fm1_c1_alive = 0;
     fm1_c1_trace = 0;
     fm1_c1_fn = fm1_c1_idle;
