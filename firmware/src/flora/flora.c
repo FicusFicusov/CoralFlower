@@ -984,6 +984,22 @@ static uint8_t fl_grad(const uint8_t *st, int n, int32_t t, int x, int y)
     return (int32_t)((t & 255) >> 4) > fl_bayer[(y & 3) * 4 + (x & 3)] ? st[i + 1] : st[i];
 }
 
+/* A horizontal gradient row repeats the same four Bayer columns. Resolve
+ * those colours once, then copy the exact pattern at the original resolution. */
+static void fl_grad_row(flc_t *c, const uint8_t *st, int32_t t, int y)
+{
+    uint8_t col0 = fl_grad(st, 5, t, 0, y), col1 = fl_grad(st, 5, t, 1, y);
+    uint8_t col2 = fl_grad(st, 5, t, 2, y), col3 = fl_grad(st, 5, t, 3, y);
+    uint8_t *p = c->px + y * c->w;
+    int x = 0;
+    for (; x + 3 < c->w; x += 4) {
+        p[x] = col0; p[x + 1] = col1; p[x + 2] = col2; p[x + 3] = col3;
+    }
+    if (x < c->w) p[x++] = col0;
+    if (x < c->w) p[x++] = col1;
+    if (x < c->w) p[x] = col2;
+}
+
 static void fl_put(flc_t *c, int x, int y, uint8_t col)
 {
     if ((unsigned)x < (unsigned)c->w && (unsigned)y < (unsigned)c->h)
@@ -1001,8 +1017,7 @@ static void fl_bd_dusk(flora_t *f, flc_t *c, int scene)
     int W = c->w, H = c->h, x, y, i, hz = scene ? 60 : H + 6; /* (the hills hide the horizon) */
     uint8_t *px = c->px;
     for (y = 0; y < H; y++)
-        for (x = 0; x < W; x++)
-            px[y * W + x] = fl_grad(FL_DUSK, 5, fl_sky_t(y, hz), x, y);
+        fl_grad_row(c, FL_DUSK, fl_sky_t(y, hz), y);
     if (!scene)
         return;
     for (i = 0; i < 18; i++) { /* (kept off the chord's name, the key and the moon) */
@@ -1041,20 +1056,18 @@ static void fl_bd_dusk(flora_t *f, flc_t *c, int scene)
 /* water lit from the surface, dark below */
 static void fl_bd_water(flc_t *c)
 {
-    int W = c->w, H = c->h, x, y;
+    int H = c->h, y;
     for (y = 0; y < H; y++)
-        for (x = 0; x < W; x++)
-            c->px[y * W + x] = fl_grad(FL_WATER, 5, (H - y) * (H - y) * 1024 / (H * H), x, y);
+        fl_grad_row(c, FL_WATER, (H - y) * (H - y) * 1024 / (H * H), y);
 }
 
 /* the coral's scene: deep water with soft lights out of focus drifting by (half-dithered discs, the nearer ones
  * bigger and fainter) */
 static void fl_bd_bokeh(flora_t *f, flc_t *c)
 {
-    int W = c->w, H = c->h, x, y, i;
+    int W = c->w, H = c->h, y, i;
     for (y = 0; y < H; y++)
-        for (x = 0; x < W; x++)
-            c->px[y * W + x] = fl_grad(FL_WATER, 5, (H - y) * 300 / H, x, y);
+        fl_grad_row(c, FL_WATER, (H - y) * 300 / H, y);
     for (i = 0; i < 6; i++) {
         uint32_t h = fl_hash32((uint32_t)i * 2654435761u + 99u);
         int r = 4 + (int)(h % 9u), span = W + 2 * r, sp = 1 + (int)((h >> 20) % 3u), lo = r < 8 ? 2 : 1;

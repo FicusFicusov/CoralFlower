@@ -969,6 +969,37 @@ static inline int32_t va_svf(const tsvf_t *c, int32_t x, int32_t *ic1, int32_t *
     return soft_knee(clamp(y, -200000, 200000), 16000);
 }
 
+/* LP has weights (0, 0, 1024): its output is exactly v2. Keep both integrators
+ * and the same knee, without the four output multiplies of the general mix. */
+static inline int32_t va_svf_lp(const tsvf_t *c, int32_t x, int32_t *ic1, int32_t *ic2)
+{
+    return soft_knee(clamp(tsvf_lp(c, x, ic1, ic2), -200000, 200000), 16000);
+}
+
+/* LP is a compile-time choice: select it once per voice block, outside this
+ * loop. The stereo state, amplitude ramp and mid/side rounding stay identical. */
+#define VA_FILTER_LOOP(LP)                                                \
+    for (i = 0; i < n; i++) {                                             \
+        int32_t x = acc[i] >> 1, y, o;                                    \
+        if (drv)                                                          \
+            x = softclip((x * (g >> 4)) >> 8);                             \
+        y = (LP) ? va_svf_lp(&c, x, &ic1, &ic2)                            \
+                 : va_svf(&c, x, &ic1, &ic2, kd, fw);                     \
+        a += dA;                                                          \
+        if (spr) {                                                        \
+            int32_t yr = (LP) ? va_svf_lp(&cr, x, &jc1, &jc2)              \
+                              : va_svf(&cr, x, &jc1, &jc2, kd, fw);       \
+            o = (mulq15((y + yr) >> 1, a) * (VOICE_FS / 4)) >> 11;         \
+            if (side)                                                     \
+                side[i] += ((mulq15((yr - y) >> 1, a) * (VOICE_FS / 4)) >> 11) + ((o * up) >> 11); \
+        } else {                                                          \
+            o = (mulq15(y, a) * (VOICE_FS / 4)) >> 11;                     \
+            if (up)                                                       \
+                side[i] += (o * up) >> 11;                                \
+        }                                                                 \
+        out[i] += o;                                                      \
+    }
+
 /* the oscillator loop for one wave: x(ph, inc, sh) the sample; adds level-ramped into acc */
 #define VA_OSC_LOOP_FULL(X)                                                \
     for (i = 0; i < n; i++) {                                              \
@@ -1298,23 +1329,10 @@ static int va_render(track_t *t, voice_t *v, int32_t *out, int32_t *side, uint32
             } else {
                 s->spr = 0;
             }
-            for (i = 0; i < n; i++) {
-                int32_t x = acc[i] >> 1, y, o;
-                if (drv)
-                    x = softclip((x * (g >> 4)) >> 8);
-                y = va_svf(&c, x, &ic1, &ic2, kd, fw);
-                a += dA;
-                if (spr) {
-                    int32_t yr = va_svf(&cr, x, &jc1, &jc2, kd, fw);
-                    o = (mulq15((y + yr) >> 1, a) * (VOICE_FS / 4)) >> 11;
-                    if (side)
-                        side[i] += ((mulq15((yr - y) >> 1, a) * (VOICE_FS / 4)) >> 11) + ((o * up) >> 11);
-                } else {
-                    o = (mulq15(y, a) * (VOICE_FS / 4)) >> 11;
-                    if (up)
-                        side[i] += (o * up) >> 11;
-                }
-                out[i] += o;
+            if (!fpos) {                         /* discrete LP, with SPREAD or USPREAD */
+                VA_FILTER_LOOP(1)
+            } else {
+                VA_FILTER_LOOP(0)
             }
             if (spr) {
                 s->fr[0] = jc1;
