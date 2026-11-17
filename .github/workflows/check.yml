@@ -71,6 +71,7 @@ jobs:
           mkdir -p build/host
           python3 -m pip install --disable-pip-version-check numpy==1.26.4
           python3 tests/cf_headless_clock_wav_test.py
+          python3 tests/cf_core1_test.py --mutants
           cc -std=c11 -O1 -g -w -fsanitize=address,undefined tests/cf_event_deadline_test.c -o build/host/cf_event_deadline_test
           build/host/cf_event_deadline_test
           python3 tests/cf_diag_build_test.py

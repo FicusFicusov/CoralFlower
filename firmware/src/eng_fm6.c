@@ -993,18 +993,24 @@ static void fm6_ghost(track_t *t, voice_t *v, fm6_voice_t *s)
 
 static uint32_t fm6_units(const track_t *t) { (void)t; return 1u; }   /* a voice: one budget unit, whatever the cap */
 
-static void fm6_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const vmod_t *m)
+/* Part-wide modulation caches are prepared by core0 before any parallel samples. */
+static void fm6_prepare_render(track_t *t, voice_t *v, const vmod_t *m)
+{
+    if (FM6P(t)) {
+        fm6_voice_t *s = fm6_state(t, v);
+        if (!s->sub) fm6_control(t, v, s, m);
+        s->sub ^= 1u;
+    }
+}
+static void fm6_render_prepared(track_t *t, voice_t *v, int32_t *out, uint32_t n, const vmod_t *m, uint32_t core)
 {
     fm6_voice_t *s;
-    fm6_scr_t *S = &fm6_scr[CR_C1_IDX(t)];              /* (core 1's own while it renders part 1: cr_cpu1.h) */
+    fm6_scr_t *S = &fm6_scr[core];              /* (core 1's own while it renders part 1: cr_cpu1.h) */
     uint32_t i;
     int32_t k = t->p[P_VOICE] == V_UNISON ? VOICE_FS * 2 / 5 : VOICE_FS;   /* UNISON's voices: about one */
     if (!FM6P(t))
         return;
     s = fm6_state(t, v);
-    if (!s->sub)
-        fm6_control(t, v, s, m);
-    s->sub ^= 1u;
     fm6_run(s, n, S);
 #ifdef FM6_TAP
     FM6_TAP(S->sum, n);                                 /* tests/fm6_parity.c: the voice before the output */
@@ -1013,6 +1019,12 @@ static void fm6_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const v
         int32_t x = clamp(S->sum[i], -(1 << 28), (1 << 28) - 1);
         out[i] += (int32_t)(((int64_t)x * (amp_at(m, i) * k)) >> 41);   /* a carrier at OUTPUT 99: VOICE_FS / 2 */
     }
+}
+
+static void fm6_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const vmod_t *m)
+{
+    fm6_prepare_render(t, v, m);
+    fm6_render_prepared(t, v, out, n, m, CR_C1_IDX(t));
 }
 
 /* the part's patch against what the voices play: a new voice (fm6_lgen) or another TRANSPOSE: the notes stop,

@@ -59,10 +59,23 @@
     ((uint32_t)(uintptr_t)(fn) ^ (uint32_t)(arg) ^ (uint32_t)(seq) * 0x9E3779B1u ^ 0xC15A11EDu)
 
 static void FM1_C1_TEXT fm1_c1_idle(uint32_t unused) { (void)unused; }   /* the mailbox at rest: never null */
-static volatile uint32_t fm1_c1_alive, fm1_c1_job, fm1_c1_done, fm1_c1_arg, fm1_c1_chk;
-static volatile uint32_t fm1_c1_rejected;       /* requests core 1 read wrong and refused (written by core 1 only) */
-static volatile uint32_t fm1_c1_misread;        /* the last refused sequence, as core 1 read it */
-static void (*volatile fm1_c1_fn)(uint32_t) = fm1_c1_idle;
+/* Each core writes its own cache line; job/argument payload is published last
+ * through the sequence with csync, completion publishes the worker's outputs. */
+static struct {
+    void (*volatile fn)(uint32_t);
+    volatile uint32_t job, arg, chk;
+    uint32_t pad0[(64u - sizeof(void (*)(uint32_t)) - 12u) / 4u];
+    volatile uint32_t alive, done, rejected, misread;
+    uint32_t pad1[12];
+} fm1_c1_mb __attribute__((aligned(64))) = {.fn = fm1_c1_idle};
+#define fm1_c1_fn       fm1_c1_mb.fn
+#define fm1_c1_job      fm1_c1_mb.job
+#define fm1_c1_arg      fm1_c1_mb.arg
+#define fm1_c1_chk      fm1_c1_mb.chk
+#define fm1_c1_alive    fm1_c1_mb.alive
+#define fm1_c1_done     fm1_c1_mb.done
+#define fm1_c1_rejected fm1_c1_mb.rejected
+#define fm1_c1_misread  fm1_c1_mb.misread
 
 /* core 0: hand over a request (the next sequence number, published last) */
 static inline void fm1_c1_post(void (*fn)(uint32_t), uint32_t arg)
@@ -184,20 +197,23 @@ static inline int fm1_cpu1_run(void (*fn)(uint32_t), uint32_t arg)
     return 1;
 }
 
-/* 0 = done; -1 = it did not finish in 8 ms, -2 = core 1 faulted: core 1 is held from now on (the caller does the
+#ifndef FM1_C1_WAIT_US
+#define FM1_C1_WAIT_US 8000u
+#endif
+/* 0 = done; -1 = it did not finish within FM1_C1_WAIT_US, -2 = core 1 faulted: core 1 is held from now on (the caller does the
  * work: a job partly done is never rerun on its state, the caller renders the block from what core 0 owns) */
 static inline int fm1_cpu1_wait(void)
 {
     uint32_t t0 = FM1_C1_T4;
     for (;;) {
         FM1_C1_SYNC();
-        if (fm1_c1_done == fm1_c1_job)
-            return 0;
         if (fm1_c1_fault.count) {
             fm1_cpu1_hold();
             return -2;
         }
-        if (FM1_C1_T4 - t0 > 24000u * 8u) {     /* 8 ms: far past any stretch */
+        if (fm1_c1_done == fm1_c1_job)
+            return 0;
+        if (FM1_C1_T4 - t0 > 24u * FM1_C1_WAIT_US) {     /* recovery bound, not an audio performance target */
             fm1_cpu1_hold();
             fm1_c1_stalls++;
             return -1;

@@ -1264,7 +1264,7 @@ static void mix_block(int32_t *out, uint32_t n)
     CR_PROF(CRP_TICK);                                  /* (the engine tick before it: the mix_block shim) */
     i = 0;
 #if CR_CPU1
-    if (cr_dualcore_active() && c1_split_ok()) {
+    if (!CF_CORE1 && cr_dualcore_active() && c1_split_ok()) {
         mix_parts_split(n);
         i = 2;
     }

@@ -67,7 +67,7 @@ int main(int argc,char **argv) {
     CHECK(sq_st.pat[0].nev==1,"panel entered a chord");
     cs.clock_in=1;cf_send_config();web_step(20);
     sq_st.pat[0].bars=1;for(unsigned k=0;k<SQ_NTRK;k++)sq_st.pat[0].tb[k]=1;
-    CHECK(cr_c1_off==1 && cr_dbg.c1==C1_OFF,"existing single-core runtime is preserved");
+    CHECK(CF_CORE1 ? cr_dbg.c1==C1_OK : cr_dbg.c1==C1_OFF,"configured voice worker starts before USB capture");
     cf_usb_mock_attach(ep0buf);usb.up=usb.config=1;usb_cdc_on=0;
     levels();ua_reset();ua_cfg_build();ua_rate_set(rate);ua_set_interface(UA_IF_CAP,1);host_take(0);
     CHECK(ua.cap_alt && !ua.cap_hold,"host has opened stereo capture");

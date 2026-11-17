@@ -37,7 +37,7 @@
 #define CRB_HDR0 0x7Du
 #define CRB_HDR1 0x46u
 #define CRB_HDR2 0x4Cu
-enum { CRB_INFO = 1, CRB_LIST = 65, CRB_GET, CRB_PUT, CRB_RESTART = 72, CRB_USB_AUDIO = 80, CRB_FLASH_AUDIO = 81, CRB_EVENT_TRACE = 82, CRB_UI_STATS = 83, CRB_RENDER_STATS = 84 };
+enum { CRB_INFO = 1, CRB_LIST = 65, CRB_GET, CRB_PUT, CRB_RESTART = 72, CRB_USB_AUDIO = 80, CRB_FLASH_AUDIO = 81, CRB_EVENT_TRACE = 82, CRB_UI_STATS = 83, CRB_RENDER_STATS = 84, CRB_VOICE_WORK = 85 };
 #define CRB_VA 9u
 #define CRB_FM6S 10u                                 /* 10, 11: the FM6 patch store's halves */
 #define CFB_SET 30u                                  /* CoralFlower's settings record */
@@ -507,6 +507,40 @@ static void crb_usb_audio(void)
 
 /* ------------------------------------------------------------------ the dispatcher --- */
 #if CF_EVENT_DIAG
+#if CF_CORE1
+/* Passive schema1: cumulative work and voice coverage for a hardware A/B run.
+ * All jobs join inside the audio ISR, so the worker is idle during this read. */
+static void crb_voice_work(void)
+{
+    uint32_t v[37], n = 0, stack = cr_c1_stack_used();
+#define CFW(value) (v[n++] = (uint32_t)(value))
+    fm1_irq_off();
+    CFW(fm1_ms); CFW(FM1_TICKS_PER_US);
+#ifdef CF_EMU
+    CFW(0);
+#else
+    CFW(1);
+#endif
+    CFW(cr_dbg.c1); CFW(cr_dbg.c1_fallback); CFW(cf_c1.inflight);
+    CFW(cf_c1.jobs); CFW(cf_c1.voices0); CFW(cf_c1.voices1); CFW(cf_c1.faults);
+    CFW(cf_c1.busy_total); CFW(cf_c1.wait_total); CFW(cf_c1.wait_max);
+    CFW(cf_c1.wall_total); CFW(cf_c1.serial_total); CFW(audio_halves);
+    CFW(cf_c1.last_wall_us); CFW(cf_c1.last_serial_us); CFW(cf_c1.irq_us);
+    CFW(VL_TARGET); CFW(CF_UI_RESERVE_PERCENT); CFW(felucca_dbg.late);
+    CFW(stack); CFW(cr_c1_rejected()); CFW(cr_c1_faults());
+    CFW(cr_dbg.rail_boot[0]); CFW(cr_dbg.rail_boot[1]);
+    CFW(cr_dbg.rail_now[0]); CFW(cr_dbg.rail_now[1]);
+    for (uint32_t t = 0; t < NTRK; t++) {
+        uint32_t held = 0;
+        for (uint32_t i = 0; i < NVOICE; i++) held += trk[t].v[i].active && trk[t].v[i].gate;
+        CFW(held); CFW(trk_nvoice(&trk[t]));
+    }
+    fm1_irq_on();
+    crb_b(1); crb_b(n);
+    for (uint32_t i = 0; i < n; i++) crb_u32(v[i]);
+#undef CFW
+}
+#endif
 /* Read only: no arming/clearing, flash traffic or control injection. All main
  * counters are copied between frames; IRQ totals join one bounded snapshot. */
 static void crb_render_stats(void)
@@ -702,6 +736,12 @@ static int crb_handle(const uint8_t *f, uint32_t n)
         crb.reboot = 1;
         break;
 #if CF_EVENT_DIAG
+#if CF_CORE1
+    case CRB_VOICE_WORK:
+        if (na) return 0;
+        crb_voice_work();
+        break;
+#endif
     case CRB_RENDER_STATS:
         if (na) return 0;
         crb_render_stats();

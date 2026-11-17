@@ -7,6 +7,9 @@
  * engine or the SAMPLE engine's PERC set (General MIDI map) on any part.
  * Sections: sizes, parameters, voices and engines, tracks and the song, system. */
 #include <stdint.h>
+#ifndef CF_CORE1
+#define CF_CORE1 0
+#endif
 #include "cf_diag.h"
 
 /* ------------------------------------------------------------ sizes --- */

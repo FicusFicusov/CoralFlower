@@ -132,6 +132,9 @@ void emu_fw_init(int demo)
     song.master_q12 = 2048;
     cf_splash();                                  /* main.c's: the first picture (the UI's first frames grow it) */
     cf_ui_init();
+#if CF_CORE1
+    if (!cr_safe && !bootguard.counted) cr_c1_boot();
+#endif
     atexit(emu_fw_exit);
     usb.up = 1;                                   /* a host is there: MIDI out flows (usb.c midi_out_event) */
     usb.config = 1;

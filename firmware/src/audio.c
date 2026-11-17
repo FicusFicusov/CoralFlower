@@ -21,7 +21,7 @@ struct felucca_dbg {
 } felucca_dbg __attribute__((section(".noinit")));
 #define CR_STAGE(n) (felucca_dbg.stage = (n))     /* the boot breadcrumb (cr_bootguard.h BS_*) */
 static volatile uint32_t audio_halves, audio_max_us;
-static volatile uint32_t t5_nested_ticks;              /* TIMER4 ticks TIMER5 spent nested in this ISR (main.c) */
+/* t5_nested_ticks is declared in cr_cpu1.h for consistent core0 work accounting. */
 static uint32_t audio_cpu_rem;                         /* keep the fractional IIR step: no low-load bias */
 /* the last second's audio ISR (ChoralRoot's console `cpu`, the GEEK OUT view): the ISR adds each half's render time
  * (us, TIMER5 nested in it left out) and its whole time (ticks, nested included: what the DMA deadline sees);
@@ -279,6 +279,9 @@ void fm1_alnk0_irq(void)                       /* via isr_alnk0 (hal/fm1_isr.S) 
     cf_diag_poll();
 #endif
     t5_nested_ticks = 0;
+#if CF_CORE1
+    cf_c1.saved_ticks = 0;
+#endif
     fm1_audio_ack_aux(p);
     if (p & FM1_AUDIO_HALF) {
         uint32_t half, b, us, lag, wall, wall_t5;
@@ -366,7 +369,16 @@ void fm1_alnk0_irq(void)                       /* via isr_alnk0 (hal/fm1_isr.S) 
         felucca_dbg.last_us = us;
         voice_tight = (uint8_t)(us * 10u > (HALF_FRAMES * 1000000u / FS) * 7u);   /* (over 70 %: voice.c) */
 #if CF_VLOAD
-        vl_half(us, FM1_TICKS_PER_US);                  /* (voice.c: the next half's voices count from it) */
+#if CF_CORE1
+        cf_c1.irq_us = wall_t5 / FM1_TICKS_PER_US;
+        cf_c1.last_wall_us = wall / FM1_TICKS_PER_US;
+        cf_c1.last_serial_us = us + cf_c1.saved_ticks / FM1_TICKS_PER_US;
+        cf_c1.wall_total += cf_c1.last_wall_us;
+        cf_c1.serial_total += cf_c1.last_serial_us;
+        vl_half(cf_c1.last_serial_us, FM1_TICKS_PER_US);
+#else
+        vl_half(us, FM1_TICKS_PER_US);
+#endif                  /* (voice.c: the next half's voices count from it) */
 #endif
         if (us > felucca_dbg.max_us)
             felucca_dbg.max_us = us;

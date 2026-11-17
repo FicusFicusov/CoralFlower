@@ -62,6 +62,10 @@ static void track_lfo_tick(track_t *t)
     }
 }
 
+#if CF_CORE1
+#include "cf_core1.h"
+#endif
+
 #ifndef CF_VLOAD
 #define CF_VLOAD 0
 #endif
@@ -79,7 +83,11 @@ static void track_lfo_tick(track_t *t)
  * short of rc2's six, 85 went over the line more often in a pattern) */
 #define VL_HALF_US (HALF_FRAMES * 1000000u / FS)
 #ifndef VL_TARGET
+#if CF_CORE1
+#define VL_TARGET (VL_HALF_US * (100u - CF_UI_RESERVE_PERCENT) / 100u)
+#else
 #define VL_TARGET (VL_HALF_US * 82u / 100u)
+#endif
 #endif
 #define VL_MIN 3u                                       /* (a triad always: the guard sees to the rest) */
 #define VL_COST_DEF 200u                                /* us a half: a voice of an engine with no estimate */
@@ -117,6 +125,11 @@ static uint32_t vl_cap(const track_t *t)
     other -= vl_us[NTRK];
 #endif
     other = other > vl_all ? 0u : other;                /* (wrapped: the parts' sum past the half's) */
+#if CF_CORE1
+    /* Admission remains based on serial-equivalent DSP work: faster rendering
+     * is retained for main/UI and deadline margin, not spent on extra voices. */
+    other += cf_c1.irq_us;
+#endif
     k = other < VL_TARGET ? (VL_TARGET - other) / vl_cost_of(t) : 0u;
     return k < VL_MIN ? VL_MIN : k > VA_POLY ? VA_POLY : k;
 }
@@ -151,7 +164,11 @@ static uint32_t voice_units(const track_t *t)
 /* the budget a part shares: all parts' one (Felucca, one core), or with the second core alive (cr_cpu1.h) part 1's own
  * and part 0's (with parts 2..3, which ChoralRoot leaves silent): each VBUDGET units */
 #if CR_CPU1
+#if CF_CORE1
+#define VB_SAME(a, b) 1                         /* preserve the existing total voice admission budget */
+#else
 #define VB_SAME(a, b) (!cr_dualcore_active() || ((a) == 1u) == ((b) == 1u))
+#endif
 #else
 #define VB_SAME(a, b) 1
 #endif
@@ -970,6 +987,10 @@ static uint32_t track_render_x(track_t *t, int32_t *out, int32_t *side, uint8_t 
     }
     bend = midi_bend_q8[ti];
     uint32_t nr = 0, fade = t->xf_on && t->xf;
+#if CF_CORE1
+    int parallel = cr_dualcore_active() && (e == &ENG_FM6 || e == &ENG_VA);
+    if (parallel) { cf_c1.t = t; cf_c1.count = 0; cf_c1.frames = n; }
+#endif
     int16_t pe_new[8];
     for (i = 0; i < n; i++)
         out[i] = 0;
@@ -1062,12 +1083,22 @@ static uint32_t track_render_x(track_t *t, int32_t *out, int32_t *side, uint8_t 
             mod_voice(t, v, &m, v->fine + tune_fine + bend_fine);
         /* 1/16 st and 1/4096 -> Q24 octaves: the voice's own offset (the matrix's pitch too), without TUNE and bend */
         m.plog = (m.pitch16 - tune - bend16 - v->pitch16) * 87381 + (m.fine - tune_fine - bend_fine) * 5909;
+#if CF_CORE1
+        if (parallel) {
+            if (e == &ENG_FM6) fm6_prepare_render(t, v, &m);
+            cf_c1.item[cf_c1.count].v = v;
+            cf_c1.item[cf_c1.count++].m = m;
+        } else
+#endif
         if (e->render2)                                 /* (VA: SPREAD / USPREAD, a stereo side) */
             *side_on |= (uint8_t)e->render2(t, v, out, side, n, &m);
         else
             e->render(t, v, out, n, &m);
         nr++;
     }
+#if CF_CORE1
+    if (parallel) cf_c1_render(out, side, side_on);
+#endif
     if (e->post)
         e->post(t, out, n, nr);
     if (fade) {

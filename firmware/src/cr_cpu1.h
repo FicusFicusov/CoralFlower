@@ -79,10 +79,10 @@ typedef struct {
                                       * the interrupts) and where it came back to after it (main.c) */
 } cr_dbg_t;
 static cr_dbg_t cr_dbg;
-/* Options > Dual Core Off (settings v12, the default; read by cr_settings_boot before cr_c1_boot): core 1 is never
- * started this power-on, cr_dbg.c1 stays C1_OFF ("c1 off"), the shared budget. A change in Options waits for the next
- * power-on. 1 until the record says On: a build without the settings (or a boot that never reads them) is one core */
-static uint8_t cr_c1_off = 1;
+/* ChoralRoot's persisted option defaults off. CoralFlower enables its guarded
+ * voice worker at boot; SAFE/failed-boot recovery still leaves it off. */
+static uint8_t cr_c1_off = CF_CORE1 ? 0 : 1;
+static volatile uint32_t t5_nested_ticks;       /* core0 audio ISR resets; TIMER5 adds its nested work */
 static const char *const CRP_NAME[CRP_N] = {"tick", "part0", "part1", "fx", "master", "wait"};
 static const char *const CRX_NAME[CRX_N] = {"down", "delay", "reverb", "up"};
 
@@ -99,8 +99,8 @@ static inline uint32_t cr_c1_faults(void) { return fm1_c1_fault.count; }
 static void cr_rails_record(void)                   /* the boot loader's levels (P33 reads only) */
 {
     fm1_power_record();
-    cr_dbg.rail_boot[0] = fm1_power.boot[FM1_RAIL_SYSVDD];
-    cr_dbg.rail_boot[1] = fm1_power.boot[FM1_RAIL_VDC14];
+    cr_dbg.rail_boot[0] = cr_dbg.rail_now[0] = fm1_power.boot[FM1_RAIL_SYSVDD];
+    cr_dbg.rail_boot[1] = cr_dbg.rail_now[1] = fm1_power.boot[FM1_RAIL_VDC14];
 }
 static void cr_rails_now(void)
 {
@@ -139,6 +139,10 @@ static inline uint32_t cr_prof_now(void)
 }
 static int cr_c1_run(void (*fn)(uint32_t), uint32_t arg)
 {
+
+#ifdef CR_C1_HOST_RUN
+    return CR_C1_HOST_RUN(fn, arg);
+#endif
     cr_c1_fn = fn;
     cr_c1_arg = arg;
     if (!cr_c1_test_hang && !cr_c1_test_late)
@@ -147,6 +151,9 @@ static int cr_c1_run(void (*fn)(uint32_t), uint32_t arg)
 }
 static int cr_c1_wait_core(void)
 {
+#ifdef CR_C1_HOST_WAIT
+    return CR_C1_HOST_WAIT();
+#endif
     if (cr_c1_test_faults)
         return -2;
     if (cr_c1_test_hang)
@@ -155,7 +162,11 @@ static int cr_c1_wait_core(void)
         cr_c1_fn(cr_c1_arg);
     return 0;
 }
-static void cr_c1_hold(void) {}
+static void cr_c1_hold(void) {
+#ifdef CR_C1_HOST_HOLD
+    CR_C1_HOST_HOLD();
+#endif
+}
 static inline uint32_t cr_c1_rejected(void) { return cr_c1_test_rejected; }
 static inline uint32_t cr_c1_faults(void) { return cr_c1_test_faults; }
 static uint32_t cr_c1_stack_used(void) { return 0; }
@@ -187,8 +198,8 @@ static inline int cr_dualcore_active(void) { return cr_dbg.c1 == C1_OK; }
 
 /* ------------------------------------------------ the escalation (after Melodee PR 21, no boost) --- */
 static uint32_t cr_c1_seen;          /* core 1's misread count at the last look */
-/* core 0 (the audio ISR): what core 1's counters say. 0 = keep core 1, -1 = give it up. New misreads in a first block:
- * counted, core 1 kept (one block's burst is one event); new misreads in a later block, or any fault or stall: give up */
+/* Core0: any fault/stall disables the worker. CoralFlower also stops on the
+ * first misread; the inherited ChoralRoot policy tolerates one such event. */
 static int cr_c1_assess(uint32_t rejected, uint32_t faults, int stalled)
 {
     if (faults || stalled)
@@ -196,7 +207,7 @@ static int cr_c1_assess(uint32_t rejected, uint32_t faults, int stalled)
     if (rejected == cr_c1_seen)
         return 0;
     cr_c1_seen = rejected;
-    return ++cr_dbg.c1_misreads > 1u ? -1 : 0;
+    return ++cr_dbg.c1_misreads > (CF_CORE1 ? 0u : 1u) ? -1 : 0;
 }
 static void cr_c1_give_up(void)
 {
@@ -239,6 +250,34 @@ static volatile uint8_t cr_c1_split;
                                                cr_dbg.xmark = t_; cr_dbg.mark += cr_prof_cost; } } while (0)   /* (the
                                                 * host's mark costs 6.6 k instructions: not the outer stage's) */
 
+#if CF_CORE1
+/* Startup proves a bounded handoff and RAM reads at the existing rails. It is
+ * not a voltage-margin test; any failure leaves this boot on one core. */
+static struct { uint32_t in[32], out[32]; } cr_c1_probe __attribute__((section(".pool")));
+static uint32_t cr_c1_probe_word(uint32_t x, uint32_t i)
+{
+    return (x ^ (0x9e3779b9u * (i + 1u))) * 1664525u + 1013904223u;
+}
+static void cr_c1_probe_job(uint32_t unused)
+{
+    uint32_t i;
+    (void)unused;
+    for (i = 0; i < 32u; i++) cr_c1_probe.out[i] = cr_c1_probe_word(cr_c1_probe.in[i], i);
+}
+static int cr_c1_probe_run(void)
+{
+    uint32_t i;
+    for (i = 0; i < 32u; i++) {
+        cr_c1_probe.in[i] = 0x6d2b79f5u + i * 0x1020304u;
+        cr_c1_probe.out[i] = 0;
+    }
+    if (!cr_c1_run(cr_c1_probe_job, 0) || cr_c1_wait()) return 0;
+    for (i = 0; i < 32u; i++)
+        if (cr_c1_probe.out[i] != cr_c1_probe_word(cr_c1_probe.in[i], i)) return 0;
+    return cr_c1_check();
+}
+#endif
+
 /* power-on (main.c fm1_main, before audio_init and the timers; not in SAFE MODE): start core 1. It boots through the
  * chip's ROM, which the PC limits refuse, and its entry word is in the top of RAM: both open while it starts.
  * Not answering in 20 ms: held for the session (C1_FAILED), single core, the shared budget */
@@ -251,7 +290,9 @@ static void cr_c1_boot(void)
         cr_dbg.c1 = C1_OFF;
         return;
     }
-    cr_rails_init();                                    /* the core rails up before core 1 starts (IRQs off) */
+#if !CF_CORE1
+    cr_rails_init();                                    /* historical ChoralRoot policy only */
+#endif                                                 /* CoralFlower preserves boot supply/clock settings */
 #ifdef FM1_HAVE_CPU1
     {
     uint32_t t0 = fm1_ticks();
@@ -265,6 +306,12 @@ static void cr_c1_boot(void)
     rc = cr_c1_test_nostart ? -1 : 0;
 #endif
     cr_dbg.c1 = rc ? C1_FAILED : C1_OK;
+#if CF_CORE1
+    if (!rc && !cr_c1_probe_run()) {
+        cr_c1_hold();
+        cr_dbg.c1 = C1_FAILED;
+    }
+#endif
 }
 
 /* end of a half buffer (audio.c): the stages into the window and the totals */
