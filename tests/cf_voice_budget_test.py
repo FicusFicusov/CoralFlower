@@ -61,15 +61,30 @@ def main():
         mutations = (
             ('linear-average-trap', 'if (cr_dualcore_active() && vl_kernel_cost[p]',
              'if (0 && vl_kernel_cost[p]'),
-            ('ignore-slower-core', 'main > worker ? main : worker', 'worker'),
-            ('retain-refused-discount', '(main_voices > 1u && !worker_voices)', '0'),
+            ('ignore-slower-core',
+             'vl_price_update(main > worker ? main : worker, vl_kernel_cost[p], reset)',
+             'vl_price_update(worker, vl_kernel_cost[p], reset)'),
+            ('retain-refused-discount', '(main_voices > 1u && !worker_voices && !bundles)', '0'),
             ('learn-mixed-half',
-             'discard = (vl_parallel[p].worker_voices && !cr_dualcore_active()) ||\n'
+             'discard = ((vl_parallel[p].worker_voices || vl_parallel[p].bundle_blocks) && !cr_dualcore_active()) ||\n'
              '                (vl_cost[p] && ((vl_mark[p] ^ m) & 0x8000u)) ||\n'
-             '                (vl_parallel[p].invalid && vl_parallel[p].worker_voices);',
+             '                (vl_parallel[p].invalid && (vl_parallel[p].worker_voices || vl_parallel[p].bundle_blocks));',
              'discard = 0;'),
             ('learn-first-fallback',
-             '(vl_parallel[p].worker_voices && !cr_dualcore_active())', '0'),
+             '((vl_parallel[p].worker_voices || vl_parallel[p].bundle_blocks) && !cr_dualcore_active())', '0'),
+            ('omit-bundled-drums',
+             'vl_split_cost(k, vl_kernel_cost[p], vl_drum_cost[p],',
+             'vl_split_cost(k, vl_kernel_cost[p], 0,'),
+            ('price-drums-as-voices',
+             'vl_parallel[p].worker_ticks += worker_ticks;',
+             'vl_parallel[p].worker_ticks += worker_ticks + drum_ticks;'),
+            ('assume-unrealized-split',
+             'uint32_t main = voices - k, worker = k + extra;',
+             'uint32_t main = (voices - k) * kernel, worker = k * kernel + drums;'),
+            ('mix-drum-attribution',
+             'if (vl_parallel[p].bundle_blocks && vl_parallel[p].plain_blocks)', 'if (0)'),
+            ('forget-prospective-bundle', 'uint32_t extra = !bundle ? 0u',
+             'uint32_t extra = !drums ? 0u'),
         )
         for name, original, broken in mutations:
             assert sources['voice.c'].count(original) == 1, f'mutation target changed: {name}'

@@ -24,7 +24,7 @@ static pthread_t worker;
 static void (*pending_fn)(uint32_t);
 static uint32_t pending_arg;
 static int pending, permit, finished, quitting, gated, refuse, partial, fault_result;
-static unsigned posts, joins, holds;
+static unsigned posts, joins, holds, drum_jobs;
 #if CF_CORE1
 static fm6_voice_t partial_state;
 static va_voice_t partial_va;
@@ -32,6 +32,7 @@ static int32_t partial_filter[8];
 static int partial_fm;
 static voice_t *partial_voice;
 static track_t *partial_track;
+static uint8_t partial_drums[sizeof drum_kit];
 static void partial_job(void)
 {
     CHECK(cf_c1.first > 0,"partial failure exercises an actual voice");
@@ -55,9 +56,15 @@ static void *thread_main(void *unused)
         int inject = partial;
         pthread_mutex_unlock(&mu);
 #if CF_CORE1
-        if (inject && fn == cf_c1_voice_job) partial_job(); else
+        if (inject == 1 && fn == cf_c1_voice_job) partial_job(); else
 #endif
         fn(arg);
+#if CF_CORE1 && !defined(CF_CORE1_LEGACY_BASELINE)
+        if (inject == 2 && fn == cf_c1_voice_job) {
+            CHECK(cf_c1.drum_job,"fault is injected after actual bundled drum work");
+            memcpy(partial_drums,drum_kit,sizeof partial_drums);
+        }
+#endif
         pthread_mutex_lock(&mu);
         fault_result = inject ? -2 : 0;
         pending = 0; finished = 1;
@@ -70,6 +77,9 @@ static int host_run(void (*fn)(uint32_t), uint32_t arg)
     if (refuse) return 0;
     pthread_mutex_lock(&mu);
     CHECK(!pending && !finished,"a completed job was joined before the next post");
+#if CF_CORE1 && !defined(CF_CORE1_LEGACY_BASELINE)
+    if (fn == cf_c1_voice_job && cf_c1.drum_job) drum_jobs++;
+#endif
     pending_fn = fn; pending_arg = arg; pending = 1; permit = !gated; posts++;
     pthread_cond_broadcast(&worker_cv); pthread_mutex_unlock(&mu); return 1;
 }
@@ -117,6 +127,27 @@ static void pump(unsigned ms)
         while (web_midi_out_take()) {}
     }
 }
+#if CF_CORE1 && !defined(CF_CORE1_LEGACY_BASELINE)
+static void check_drum_partition(void)
+{
+    __typeof__(cf_c1) saved=cf_c1;
+    cf_c1.t=&trk[0];cf_c1.drum_job=1;cf_c1.unit_ticks=24;
+    for (unsigned n=2;n<=8;n++) for (unsigned drums=0;drums<=12;drums++) {
+        cf_c1.count=n;cf_c1.drum_estimate=drums*24;
+        unsigned first=cf_c1_partition(),expected=0,best=~0u;
+        for (unsigned k=0;k<n;k++) {
+            unsigned main=n-k,worker=k+drums,cost=main>worker?main:worker;
+            if(cost<best){best=cost;expected=k;}
+        }
+        CHECK(first==expected,"actual partition minimizes critical-path work including drums");
+        for (unsigned averaged=100;averaged<=900;averaged+=200) {
+            unsigned main=(n-first)*300,worker=first*300+averaged;
+            CHECK(vl_split_cost(n,300,averaged,1)==(main>worker?main:worker),"admission prices the chosen split even when the averaged drum price differs");
+        }
+    }
+    cf_c1=saved;
+}
+#endif
 int main(int argc, char **argv)
 {
     if (argc != 4) return 2;
@@ -132,6 +163,11 @@ int main(int argc, char **argv)
 #endif
     web_enc(EMU_E_PRESETS, atoi(argv[2]) - (int)cf_snd_pos(0)); pump(300);
     CHECK(cf_snd_pos(0) == (unsigned)atoi(argv[2]),"actual requested preset selected");
+#if CF_CORE1 && !defined(CF_CORE1_LEGACY_BASELINE)
+    if (atoi(argv[2])==25) check_drum_partition();
+#endif
+    dm_play(0); pump(600);
+    CHECK(dmp.on && cf_sn.dm_on,"real drums run beside the chord and layer");
     refuse = !strcmp(argv[1],"refuse");
     pcm = fopen(argv[3],"wb"); CHECK(pcm != NULL,"PCM artifact opened"); if (!pcm) return 3;
     CHECK(cf_key_role(cs.chord.algo,5,NULL)==CF_ROLE_BUTTON && cf_key_role(cs.chord.algo,16,NULL)==CF_ROLE_ROOT,"scenario uses a chord button and root key");
@@ -140,6 +176,9 @@ int main(int argc, char **argv)
 #if CF_CORE1
     if (!strcmp(argv[1],"partial")) {
         partial = 1;
+#ifndef CF_CORE1_LEGACY_BASELINE
+        cf_c1.drum_armed = 0; /* This case faults a synth voice; drum-fault covers the bundled part. */
+#endif
         int32_t mid[CTL], side[CTL]; uint8_t side_on;
         unsigned before = cf_c1.faults;
         track_render_x(&trk[0],mid,side,&side_on,CTL,NULL);
@@ -155,8 +194,27 @@ int main(int argc, char **argv)
         CHECK(partial_voice->gate && partial_voice->active && !cf_c1.inflight,"held note survives the fallback");
         partial = 0; pump(300);
     }
+#ifndef CF_CORE1_LEGACY_BASELINE
+    if (!strcmp(argv[1],"drum-fault")) {
+        partial = 2;
+        int32_t audio[2*CTL];
+        unsigned before=cf_c1.faults;
+        mix_block(audio,CTL);
+        CHECK(cf_c1.faults==before+1 && holds && cr_dbg.c1==C1_GAVE_UP,"bundled failure holds worker before consuming state");
+        CHECK(!memcmp(partial_drums,drum_kit,sizeof partial_drums),"advanced drums are never rendered twice after a failed job");
+        CHECK(!cf_c1.inflight&&!cf_c1.drum_ready&&!MODP(&trk[DRUM_PART0]).on,"drum output consumed and modulation restored after failure");
+        for (unsigned i=0;i<CTL;i++) CHECK(!cf_c1.drum_mid[i],"untrusted drum output is discarded");
+        partial=0;pump(300);
+    }
+#endif
 #endif
     web_keys((1u<<9)|(1u<<16)); pump(800);
+    /* Default Pop uses the second drum synth. Also exercise the original
+     * drum_voice engine under shared-part modulation and a wrapped S&H LFO. */
+    cf_post(CFE_DRUM,2,0,DMK_STD);
+    trk[DRUM_PART0].p[P_LWAVE]=4;trk[DRUM_PART0].p[P_LRATE]=127;
+    trk[DRUM_PART0].lfo_ph=0xfffffff0u;
+    trk[DRUM_PART0].p[P_M1SRC]=MS_LFO;trk[DRUM_PART0].p[P_M1DST]=MD_CUT;trk[DRUM_PART0].p[P_M1AMT]=17;
     web_keys((1u<<13)|(1u<<21)); pump(800);
     /* Preserve the actual sequential six-effect chain, including reordered FX. */
     cs.fx.on = (1u<<CFX_N)-1; cf_fx_apply(&cs.fx); pump(800);
@@ -174,7 +232,7 @@ int main(int argc, char **argv)
         trk_note_off(&trk[CF_PART_LAYER], note);
     pump(200);
     web_enc(EMU_E_PRESETS,1); pump(300); /* outgoing voice tail during preset/engine change */
-    web_keys(0); pump(5000);
+    web_keys(0); dm_stop_all(); pump(5000);
     for (unsigned t = 0; t < NSND; t++) for (unsigned v = 0; v < NVOICE; v++)
         CHECK(!trk[t].v[v].gate,"no held notes after release");
     fclose(pcm); pcm = NULL;
@@ -183,6 +241,9 @@ int main(int argc, char **argv)
     if (!serial && !startup_fail && !refuse) {
         CHECK(cf_c1.jobs > 100 && cf_c1.voices0 && cf_c1.voices1,"both cores render actual voices");
         CHECK(posts == joins,"all submitted jobs joined including startup");
+#ifndef CF_CORE1_LEGACY_BASELINE
+        CHECK(drum_jobs > 100 && cf_c1.bundle_total > 100,"drums share actual chord jobs on the worker");
+#endif
     }
     CHECK(cf_c1.saved_ticks == 0,"host never invents hardware time savings");
 #if CF_EVENT_DIAG

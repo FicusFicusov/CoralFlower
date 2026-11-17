@@ -102,11 +102,30 @@ static uint16_t vl_all;                                 /* .. and the whole half
  * remain positive: preparation/mix work scales per voice; independent kernels
  * scale in pairs at the slower measured core's rate. */
 static struct {
-    uint32_t overhead_ticks, main_ticks, worker_ticks;
+    uint32_t overhead_ticks, main_ticks, worker_ticks, drum_ticks;
     uint16_t main_voices, worker_voices;
-    uint8_t invalid;
+    uint8_t invalid, bundle_blocks, plain_blocks;
 } vl_parallel[NSND];
-static uint16_t vl_prepare_cost[NSND], vl_kernel_cost[NSND];
+static uint16_t vl_prepare_cost[NSND], vl_kernel_cost[NSND], vl_drum_cost[NSND];
+
+/* The drum render is already inside the chord part's elapsed time. It must
+ * remain in the prediction when that part is subtracted from vl_all. Choose
+ * the same split as the dispatcher, then price it at the slower measured core
+ * rate. Effects and other parts stay in `other`. Never assume a better split
+ * than the one the dispatcher will actually choose. */
+static uint32_t vl_split_cost(uint32_t voices, uint32_t kernel, uint32_t drums, int bundle)
+{
+    uint32_t k, first = 0, best = ~0u;
+    uint32_t extra = !bundle ? 0u : cf_c1.unit_ticks ?
+        (cf_c1.drum_estimate + cf_c1.unit_ticks - 1u) / cf_c1.unit_ticks : 2u;
+    for (k = 0; k < voices; k++) {
+        uint32_t main = voices - k, worker = k + extra;
+        uint32_t d = main > worker ? main - worker : worker - main;
+        if (d < best) { best = d; first = k; }
+    }
+    uint32_t main = (voices - first) * kernel, worker = first * kernel + drums;
+    return main > worker ? main : worker;
+}
 #endif
 static uint32_t vl_aside_ticks;                         /* this half's time of a sound that gives way by itself
                                                          * (CoralFlower's power-on sound, cf_fx.c cf_boot_yield) */
@@ -151,7 +170,7 @@ static uint32_t vl_cap(const track_t *t)
          * three. Per-voice averaging alone can get stuck at three forever. */
         for (k = VA_POLY; k > VL_MIN; k--)
             if (other < VL_TARGET && k * vl_prepare_cost[p] +
-                ((k + 1u) / 2u) * vl_kernel_cost[p] <= VL_TARGET - other) break;
+                vl_split_cost(k, vl_kernel_cost[p], vl_drum_cost[p], p == 0u && cf_c1_drum_allowed(CTL)) <= VL_TARGET - other) break;
         return k;
     }
 #endif
@@ -403,20 +422,24 @@ static int voice_tail_yield(void)
 #if CF_VLOAD
 #if CF_CORE1
 static void vl_parallel_part(const track_t *t, uint32_t ticks, uint32_t main_ticks, uint32_t wait_ticks,
-                             uint32_t worker_ticks, uint32_t main_voices, uint32_t worker_voices)
+                             uint32_t worker_ticks, uint32_t main_voices, uint32_t worker_voices,
+                             uint32_t drum_ticks, uint32_t bundles)
 {
     uint32_t p = (uint32_t)(t - trk);
     if (t->engine != ENGI_VA) return;
-    if (!cr_dualcore_active() || (main_voices > 1u && !worker_voices) || main_ticks + wait_ticks > ticks) {
+    if (bundles) vl_parallel[p].bundle_blocks++;
+    else vl_parallel[p].plain_blocks++;
+    if (!cr_dualcore_active() || (main_voices > 1u && !worker_voices && !bundles) || main_ticks + wait_ticks > ticks) {
         vl_parallel[p].invalid = 1;
         return;
     }
     /* A single voice has no dispatch cost and no measured worker throughput.
      * Keep prior split measurements; never learn a cheaper split from it. */
-    if (!main_voices || !worker_voices) return;
+    if (!main_voices || (!worker_voices && !bundles)) return;
     vl_parallel[p].overhead_ticks += ticks - main_ticks - wait_ticks;
     vl_parallel[p].main_ticks += main_ticks;
     vl_parallel[p].worker_ticks += worker_ticks;
+    vl_parallel[p].drum_ticks += drum_ticks;
     vl_parallel[p].main_voices += (uint16_t)main_voices;
     vl_parallel[p].worker_voices += (uint16_t)worker_voices;
 }
@@ -444,17 +467,24 @@ static void vl_half(uint32_t us, uint32_t ticks_per_us)
     for (p = 0; p < NSND; p++) {
         uint32_t t_us = vl_ticks[p] / ticks_per_us;
         vl_us[p] = (uint16_t)(t_us > 0xFFFFu ? 0xFFFFu : t_us);
+#if CF_CORE1
+        if (!vl_parallel[p].bundle_blocks) vl_drum_cost[p] = 0;
+#endif
         if (vl_vblk[p] && t_us) {
             uint32_t c = t_us * (HALF_FRAMES / CTL) / vl_vblk[p], m = vl_mark_of(&trk[p]);
             c = c > 0xFFFFu ? 0xFFFFu : c ? c : 1u;
             int discard = 0;
 #if CF_CORE1
+            /* A half containing both bundled and serial drums has no single
+             * attribution of their work. Learn from the next coherent half. */
+            if (vl_parallel[p].bundle_blocks && vl_parallel[p].plain_blocks)
+                vl_parallel[p].invalid = 1;
             /* An end-of-half mode change must not label earlier cheap split
              * samples as serial timing. A refused post after successful split
              * blocks is mixed too. Learn again from the next coherent half. */
-            discard = (vl_parallel[p].worker_voices && !cr_dualcore_active()) ||
+            discard = ((vl_parallel[p].worker_voices || vl_parallel[p].bundle_blocks) && !cr_dualcore_active()) ||
                 (vl_cost[p] && ((vl_mark[p] ^ m) & 0x8000u)) ||
-                (vl_parallel[p].invalid && vl_parallel[p].worker_voices);
+                (vl_parallel[p].invalid && (vl_parallel[p].worker_voices || vl_parallel[p].bundle_blocks));
 #endif
             if (discard)
                 vl_cost[p] = 0;
@@ -464,9 +494,10 @@ static void vl_half(uint32_t us, uint32_t ticks_per_us)
                 vl_cost[p] = (uint16_t)(vl_cost[p] - (vl_cost[p] - c) / 8u);
 #if CF_CORE1
             if (discard || vl_mark[p] != m || vl_parallel[p].invalid || !cr_dualcore_active()) {
-                vl_prepare_cost[p] = vl_kernel_cost[p] = 0;
+                vl_prepare_cost[p] = vl_kernel_cost[p] = vl_drum_cost[p] = 0;
             }
-            if (!discard && !vl_parallel[p].invalid && vl_parallel[p].main_voices && vl_parallel[p].worker_voices) {
+            if (!discard && !vl_parallel[p].invalid && vl_parallel[p].main_voices &&
+                (vl_parallel[p].worker_voices || vl_parallel[p].bundle_blocks)) {
                 uint32_t mv = vl_parallel[p].main_voices, wv = vl_parallel[p].worker_voices;
                 uint32_t blocks = HALF_FRAMES / CTL;
                 uint32_t denom = (mv + wv) * ticks_per_us;
@@ -474,10 +505,12 @@ static void vl_half(uint32_t us, uint32_t ticks_per_us)
                 denom = mv * ticks_per_us;
                 uint32_t main = (vl_parallel[p].main_ticks * blocks + denom - 1u) / denom;
                 denom = wv * ticks_per_us;
-                uint32_t worker = (vl_parallel[p].worker_ticks * blocks + denom - 1u) / denom;
+                uint32_t worker = wv ? (vl_parallel[p].worker_ticks * blocks + denom - 1u) / denom : 0;
                 int reset = !vl_kernel_cost[p];
                 vl_prepare_cost[p] = vl_price_update(prep, vl_prepare_cost[p], reset);
                 vl_kernel_cost[p] = vl_price_update(main > worker ? main : worker, vl_kernel_cost[p], reset);
+                uint32_t drums = (vl_parallel[p].drum_ticks + ticks_per_us - 1u) / ticks_per_us;
+                vl_drum_cost[p] = vl_price_update(drums, vl_drum_cost[p], reset);
             }
 #endif
             vl_mark[p] = (uint16_t)m;
@@ -485,8 +518,9 @@ static void vl_half(uint32_t us, uint32_t ticks_per_us)
         vl_ticks[p] = 0;
         vl_vblk[p] = 0;
 #if CF_CORE1
-        vl_parallel[p].overhead_ticks = vl_parallel[p].main_ticks = vl_parallel[p].worker_ticks = 0;
+        vl_parallel[p].overhead_ticks = vl_parallel[p].main_ticks = vl_parallel[p].worker_ticks = vl_parallel[p].drum_ticks = 0;
         vl_parallel[p].main_voices = vl_parallel[p].worker_voices = vl_parallel[p].invalid = 0;
+        vl_parallel[p].bundle_blocks = vl_parallel[p].plain_blocks = 0;
 #endif
     }
     vl_all = (uint16_t)(us > 0xFFFFu ? 0xFFFFu : us);
@@ -1247,3 +1281,11 @@ static uint32_t track_render(track_t *t, int32_t *out, uint32_t n)
 {
     return track_render_x(t, out, part_side, &part_side_on, n, 0);
 }
+
+#if CF_CORE1
+static void cf_c1_drum_render(void)
+{
+    uint8_t side_on;
+    cf_c1.drum_nr = track_render_x(&trk[DRUM_PART0], cf_c1.drum_mid, 0, &side_on, cf_c1.frames, 0);
+}
+#endif

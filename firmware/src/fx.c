@@ -1136,6 +1136,13 @@ static void mix_part_out(track_t *t, int32_t *b, int32_t *side, uint8_t side_on,
 
 static void mix_part(track_t *t, uint32_t n)
 {
+#if CF_CORE1
+    if (t == &trk[DRUM_PART0] && cf_c1.drum_ready) {
+        cf_c1.drum_ready = 0;
+        mix_part_out(t, cf_c1.drum_mid, 0, 0, cf_c1.drum_nr, n);
+        return;
+    }
+#endif
     uint32_t nr;
     CR_PROF(CRP_FX);
     mod_begin(t);                                       /* the matrix's per-block values into t->p (mod.c) */
@@ -1242,12 +1249,14 @@ static __attribute__((noinline)) void perf_master(int32_t *out, uint32_t n)
 #if CF_CORE1
 #define MIX_PART(t, n) do { \
     uint32_t vl0_ = VL_NOW(), vm_ = cf_c1.main_total, vw_ = cf_c1.wait_total, \
-        vb_ = cf_c1.busy_total, v0_ = cf_c1.voices0, v1_ = cf_c1.voices1; \
+        vb_ = cf_c1.busy_total, vd_ = cf_c1.drum_total, vj_ = cf_c1.bundle_total, \
+        v0_ = cf_c1.voices0, v1_ = cf_c1.voices1; \
     mix_part(t, n); \
     uint32_t vt_ = VL_NOW() - vl0_; \
     vl_part(t, vt_); \
     vl_parallel_part(t, vt_, cf_c1.main_total - vm_, cf_c1.wait_total - vw_, \
-        cf_c1.busy_total - vb_, cf_c1.voices0 - v0_, cf_c1.voices1 - v1_); \
+        cf_c1.busy_total - vb_ - (cf_c1.drum_total - vd_), cf_c1.voices0 - v0_, cf_c1.voices1 - v1_, \
+        cf_c1.drum_total - vd_, cf_c1.bundle_total - vj_); \
 } while (0)
 #else
 #define MIX_PART(t, n) do { uint32_t vl0_ = VL_NOW(); mix_part(t, n); vl_part(t, VL_NOW() - vl0_); } while (0)
@@ -1270,6 +1279,12 @@ static void mix_block(int32_t *out, uint32_t n)
     for (i = 0; i < n; i++)
         send_c[i] = send_d[i] = send_r[i] = mix_l[i] = mix_r[i] = 0;
     events_block(n);
+#if CF_CORE1
+    /* Only this dedicated kit has independent LFO/noise state. A crossfade
+     * temporarily changes part parameters, so it keeps the serial path. */
+    cf_c1.drum_ready = 0;
+    cf_c1.drum_armed = (uint8_t)cf_c1_drum_allowed(n);
+#endif
 #if FELUCCA_PERFORM
     perf = perf_begin(n);                               /* the FX hold layer at work (perform.c) */
 #endif

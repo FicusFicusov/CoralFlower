@@ -34,10 +34,13 @@ static const engine_t *ENGINES[]={&engine,&engine};
 static track_t trk[NPART];
 static struct { uint32_t cpu_q8; } song;
 static struct { uint32_t stale; } cr_dbg;
-static struct { uint32_t saved_ticks,irq_us,last_wall_us,last_serial_us,wall_total,serial_total,main_total,wait_total,busy_total,voices0,voices1; } cf_c1;
+static struct { uint32_t saved_ticks,irq_us,last_wall_us,last_serial_us,wall_total,serial_total,main_total,wait_total,busy_total,voices0,voices1,drum_total,bundle_total,unit_ticks,drum_estimate; } cf_c1;
 static volatile uint32_t t5_nested_ticks;
 static uint32_t now,block,irq_per_block=25,voice_kills,requested=3;
 static uint32_t main_kernel=75,worker_kernel=75;
+static uint32_t drum_work, worker_count, serial_drum_work;
+static int bundle, bundle_flip, bundle_allowed;
+static int cf_c1_drum_allowed(uint32_t n) { return bundle_allowed && n<=CTL; }
 static int refuse, mode_flip, refused_flip, after_part_flip;
 static int dual=1;
 static int cr_dualcore_active(void) { return dual; }
@@ -68,14 +71,19 @@ static void mix_part(track_t *t,uint32_t n) {
     (void)t;(void)n;
     if (mode_flip && block==2) dual=0;
     if (refused_flip && block==2) refuse=1;
+    if (bundle_flip && block==2) bundle=0;
     uint32_t wv = !dual || refuse || requested==1 ? 0 : (requested+1)/2, mv=requested-wv;
+    int bundled=dual&&!refuse&&bundle&&requested>=2;
+    if (bundled) { wv=worker_count;mv=requested-wv; }
     uint32_t main=mv*main_kernel*24u,worker=wv*worker_kernel*24u;
-    uint32_t wait=worker>main?worker-main:0;
+    uint32_t drums=bundled?drum_work*24u:0,work=worker+drums;
+    uint32_t wait=work>main?work-main:0;
     now+=requested*20u*24u+main+wait;
     if (dual) {
-        cf_c1.main_total+=main;cf_c1.wait_total+=wait;cf_c1.busy_total+=worker;
+        cf_c1.main_total+=main;cf_c1.wait_total+=wait;cf_c1.busy_total+=work;
         cf_c1.voices0+=mv;cf_c1.voices1+=wv;
-        cf_c1.saved_ticks+=worker-wait;
+        cf_c1.saved_ticks+=work-wait;
+        if (bundled) { cf_c1.drum_total+=drums;cf_c1.bundle_total++; }
     }
 }
 #include "mix_macro.inc"
@@ -85,6 +93,7 @@ static void mix_block(int32_t *out,uint32_t n) {
     /* Another part can lose C1 after this part's final measured render. */
     if(after_part_flip&&block==3)dual=0;
     now+=(300u+irq_per_block)*24u;
+    if(!bundle||requested<2)now+=serial_drum_work*24u;
     t5_nested_ticks+=irq_per_block*24u;block++;
 }
 #include "audio.c"
@@ -137,5 +146,52 @@ int main(void) {
     CHECK(dual&&!vl_cost[0]&&vl_cost_of(&trk[0])==275,"mixed successful/refused jobs invalidate a cheap sample even while C1 reports OK");
     refused_flip=0;render();
     CHECK(vl_cost_of(&trk[0])==380,"the following entirely refused half learns serial cost");
+    /* Real MIX_PART snapshots must separate drum work from voice throughput.
+     * 4 voices: core0=225us, core1=75+150us. Preparation=80us per block.
+     * Across the half:1220us + other1200us + IRQ100us. Four cannot fit2379us. */
+    refuse=0;dual=1;voices(4);bundle=bundle_allowed=1;worker_count=1;drum_work=150;
+    cf_c1.unit_ticks=75u*24u;cf_c1.drum_estimate=150u*24u;
+    memset(vl_cost,0,sizeof vl_cost);memset(vl_kernel_cost,0,sizeof vl_kernel_cost);
+    render();
+    CHECK(vl_kernel_cost[0]==300&&vl_prepare_cost[0]==80&&vl_drum_cost[0]==600,"separate measured voice, preparation and drum prices");
+    CHECK(vl_us[0]==1220&&vl_all==2420,"combined job charged once to actual elapsed time");
+    CHECK(vl_cap(&trk[0])==3,"drums cannot disappear when chord time is subtracted from whole-half time");
+    main_kernel=worker_kernel=50;drum_work=100;cf_c1.unit_ticks=50u*24u;cf_c1.drum_estimate=100u*24u;
+    memset(vl_kernel_cost,0,sizeof vl_kernel_cost);render();
+    CHECK(vl_cap(&trk[0])==4,"measured drum overlap still admits the complete quartet when it fits");
+    /* If the live dispatcher reserves more worker capacity than the averaged
+     * drum price needs, admission must price that actual unbalanced split. */
+    cf_c1.drum_estimate=1000u*24u;
+    CHECK(vl_cap(&trk[0])==3,"admission does not assume an unrealized optimal split");
+    cf_c1.drum_estimate=100u*24u;
+    worker_count=0;voices(3);drum_work=150;cf_c1.drum_estimate=150u*24u;
+    memset(vl_kernel_cost,0,sizeof vl_kernel_cost);render();
+    CHECK(vl_kernel_cost[0]==200&&vl_drum_cost[0]==600,"drums-only worker is a valid measurement without dividing by zero voices");
+    bundle_flip=1;render();
+    CHECK(!vl_kernel_cost[0]&&!vl_cost[0],"mixed bundled and serial drum halves invalidate their attribution");
+    bundle_flip=0;bundle=0;render();
+    CHECK(!vl_drum_cost[0],"serial drums do not retain a stale bundled surcharge");
+    /* Review regression: after one voice, drums are charged to other and the
+     * cached bundled price is zero, but the next chord still uses the live
+     * drum estimate. That must not invent a balanced 2+2 split for four notes. */
+    irq_per_block=0;main_kernel=worker_kernel=75;bundle=bundle_allowed=1;
+    worker_count=0;drum_work=225;cf_c1.unit_ticks=75u*24u;cf_c1.drum_estimate=225u*24u;
+    memset(vl_kernel_cost,0,sizeof vl_kernel_cost);voices(3);render();
+    CHECK(vl_kernel_cost[0]==300&&vl_prepare_cost[0]==80&&vl_drum_cost[0]==900,"coherent heavy-drum prices prepared for transition");
+    serial_drum_work=2;voices(1);render();
+    CHECK(!vl_drum_cost[0]&&vl_kernel_cost[0]==300&&vl_prepare_cost[0]==80,"single voice retains kernel prices but drums move to other");
+    CHECK(vl_cap(&trk[0])==3,"single voice to chord prices the prospective bundled split despite zero cached drum price");
+    cf_c1.unit_ticks=0;
+    CHECK(vl_cap(&trk[0])==3,"unmeasured prospective bundle prices the dispatcher's default two-voice reservation");
+    bundle_allowed=0;
+    CHECK(vl_cap(&trk[0])==4,"when bundling is unavailable the actual balanced split admits four");
+    /* Drum work can dominate even when all synth voices stay on core0.
+     * Three fit:1200 other+900 drums+240 preparation=2340; four do not:2420.
+     * Omitting drums would instead price four at1200+800+320=2320. */
+    bundle_allowed=1;serial_drum_work=0;main_kernel=worker_kernel=50;
+    cf_c1.unit_ticks=50u*24u;cf_c1.drum_estimate=225u*24u;drum_work=225;
+    memset(vl_kernel_cost,0,sizeof vl_kernel_cost);voices(3);render();
+    CHECK(vl_kernel_cost[0]==200&&vl_drum_cost[0]==900,"drum-dominated worker measured independently of synth work");
+    CHECK(vl_cap(&trk[0])==3,"a drum-dominated critical path cannot be priced as synth-only work");
     printf("BUDGET checks=%u failures=%u\n",checks,failed);return !!failed;
 }

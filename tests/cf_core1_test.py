@@ -18,9 +18,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def build(root, output, diagnostic=1):
+def build(root, output, diagnostic=1, legacy=False):
     subprocess.run(["cc", "-std=gnu11", "-O2", "-g", "-w", "-pthread", "-DEMU_WEB",
                     f"-DCF_EVENT_DIAG={diagnostic}", "-Itools/emu/web/compat", "-Ibuild/gen", "-Ifirmware/src",
+                    *(['-DCF_CORE1_LEGACY_BASELINE'] if legacy else []),
                     "tests/cf_core1_test.c", "-lm", "-o", str(output)], cwd=root, check=True)
 
 
@@ -49,7 +50,7 @@ def main():
     if args.baseline:
         root = args.baseline.resolve()
         shutil.copy2(ROOT/'tests/cf_core1_test.c', root/'tests/cf_core1_test.c')
-        baseline = out/'baseline-test'; build(root, baseline)
+        baseline = out/'baseline-test'; build(root, baseline, legacy=True)
     result = []
     for preset in (0, 25, 30):
         serial = run(exe, 'serial', preset, out); result.append(serial)
@@ -64,6 +65,7 @@ def main():
         print(f'PASS preset {preset}: exact PCM, frames, voices; parallel / delayed / refused / failed startup', flush=True)
     for preset in (0, 25, 30):
         result.append(run(exe, 'partial', preset, out))
+        result.append(run(exe, 'drum-fault', preset, out))
     print('PASS partially advanced FM/VA voices: held worker, no duplicate render, gain ramp and serial continuation', flush=True)
     if args.mutants:
         with tempfile.TemporaryDirectory(prefix='cf-core1-') as td:
@@ -74,6 +76,10 @@ def main():
             for name, file, before, after, mode in (
                 ('missing-join', 'firmware/src/cf_core1.h', 'if (cr_c1_wait()) {', 'if (0) {', 'gated'),
                 ('shared-scratch', 'firmware/src/eng_fm6.c', '&fm6_scr[core]', '&fm6_scr[0]', 'parallel'),
+                ('dropped-drums', 'firmware/src/cf_core1.h', 'if (cf_c1.drum_job) cf_c1_drum_render();',
+                 'if (0) cf_c1_drum_render();', 'parallel'),
+                ('duplicate-drums', 'firmware/src/fx.c', 'if (t == &trk[DRUM_PART0] && cf_c1.drum_ready)',
+                 'if (0 && t == &trk[DRUM_PART0] && cf_c1.drum_ready)', 'parallel'),
             ):
                 p = root/file; healthy = p.read_text(); assert before in healthy
                 p.write_text(healthy.replace(before, after, 1))
