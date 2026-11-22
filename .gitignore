@@ -5,3 +5,7 @@
 .DS_Store
 __pycache__/
 *.pyc
+
+# sampled drum kits: your own recordings and the header made from them (assets/drum-kits/README.md)
+assets/drum-kits/*/*.wav
+firmware/src/drum_smp_data.h

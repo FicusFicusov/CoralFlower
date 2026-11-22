@@ -131,12 +131,25 @@ static const sq_kit_t SQ_KITS[] = {
     {"X Live", {0, 64, 64, 64, 64, 100, 0, 0}, 4},
     {"X Tech", {0, 64, 64, 64, 64, 100, 0, 0}, 5},
     {"X Break", {0, 64, 64, 64, 64, 100, 0, 0}, 6},
+#if DSM_HAVE                                     /* (built with recordings: assets/drum-kits/README.md) */
+    {"S 808", {0, 64, 64, 64, 64, 100, 0, 0}, 7},    /* sampled kits (drum_smp.c): recorded drum machines, after the X
+                                                  * kits' numbers (ds above drum_synth.c's DS_NKIT) */
+    {"S 909", {0, 64, 64, 64, 64, 100, 0, 0}, 8},
+    {"S Linn", {0, 64, 64, 64, 64, 100, 0, 0}, 9},
+#endif
 };
+#if DSM_HAVE
+typedef char sq_kits_smp[DSM_NKIT == 3u ? 1 : -1];   /* (the three named above: tools/gen_drum_samples.py KITS) */
+#endif
 #define SQ_NKIT ((uint32_t)(sizeof SQ_KITS / sizeof SQ_KITS[0]))
 /* the order the kits are picked in, on every knob that picks one (the owner, 2026-10-29: "сначала с x идут киты
  * новые, потом старые. Первым должен идти x lofi. Везде и в секвенсоре тоже"): the X kits, X Lo-Fi first, then the
  * eight before them. Only the order the knob walks: a pattern keeps its kit's number, as stored since 0.3 */
+#if DSM_HAVE                                     /* (the sampled kits first, then as before) */
+static const uint8_t SQ_KIT_ORDER[] = {15, 14, 16, 10, 8, 9, 11, 12, 13, 0, 1, 2, 3, 4, 5, 6, 7};
+#else
 static const uint8_t SQ_KIT_ORDER[] = {10, 8, 9, 11, 12, 13, 0, 1, 2, 3, 4, 5, 6, 7};
+#endif
 typedef char sq_kit_order_all[sizeof SQ_KIT_ORDER == sizeof SQ_KITS / sizeof SQ_KITS[0] ? 1 : -1];
 static uint32_t sq_kit_step(uint32_t k, int d)  /* kit k, d places on in that order (at an end: it stays) */
 {

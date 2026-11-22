@@ -76,6 +76,9 @@ jobs:
           build/cf_chord_test
           cc -std=gnu11 -O2 -Wall -Wno-unused-function -Ifirmware/src -o build/host/st_log_test tests/st_log_test.c
           build/host/st_log_test
+          # (the three drum engines and the drum edit; the S kits' checks are skipped: no recordings in the repository)
+          cc -std=gnu11 -O1 -w -Ibuild/gen -Ifirmware/src -o build/host/drum_edit_test tests/drum_edit_test.c -lm
+          build/host/drum_edit_test
 
       - name: The tracked tree is as it was
         run: |
