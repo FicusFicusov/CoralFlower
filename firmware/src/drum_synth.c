@@ -95,6 +95,8 @@ typedef struct {
     uint32_t kbr;                                /* .. its decay a block (Q16) */
 } ds_voice_t;
 
+#include "de.c"                                   /* each drum's own LEVEL, PITCH, DECAY (the user's edits) */
+
 static int32_t ds_rng = 0x2F6B1D3;               /* VARY's dice (one for every lane: the hits' order picks) */
 
 /* 0..127 -> a time (us): 0.3 ms x 2^(v / 10), 0.3 ms .. 2 s */
@@ -140,6 +142,7 @@ static void ds_strike(ds_voice_t *v, const ds_kit_t *K, uint32_t sn, int32_t st,
         for (i = 0; i < 4u; i++)
             r[i] = (int32_t)noise32(&ds_rng) >> 16;     /* -32768 .. 32767 */
     ds_morph(&s, A, B, clamp(m + ((r[0] * (int32_t)vary) >> 16), 0, 127));
+    de_apply(&s, sn);
     for (i = 0; i < sizeof *v / 4u; i++)
         ((uint32_t *)v)[i] = 0;
     v->wave = s.wave, v->src = s.src, v->flt = s.flt, v->route = s.route;

@@ -31,6 +31,7 @@
 #include "drum_voice.c"
 #ifdef DRUM_LANE_KNOBS
 #include "drum_synth.c"                  /* CoralFlower's second engine: its kits' lanes play it */
+#include "drum_smp.c"                    /* the third: sampled kits (a lane's eng above DS_NKIT) */
 #endif
 
 enum { DK_STD, DK_HAND, DK_CYM, DK_HCYM };
@@ -48,6 +49,7 @@ typedef struct {
             dv_metal_t mb;
         };
         ds_voice_t n;            /* .. or the second engine's voice (drum_synth.c), while eng */
+        dsm_voice_t m;           /* .. or a sampled kit's (drum_smp.c), while eng > DS_NKIT */
     };
 #else
     dv_coef_t c;
@@ -57,9 +59,12 @@ typedef struct {
     uint8_t owner;               /* the voice playing the lane: index + 1, 0 = none */
     uint8_t role;                /* the drum struck (DVT_*) */
     int8_t st;                   /* its semitones from the designed pitch (the GM map) */
-    uint8_t eng;                 /* 0: drum_voice.c's drum; k + 1: the second engine's kit k (drum_synth.c) */
+    de_fx_t fx;                  /* the user's chain after the voice (de.c: TONE DRIVE CRUSH ATTACK) */
+    uint8_t eng;                 /* 0: drum_voice.c's drum; k + 1: the second engine's kit k (drum_synth.c);
+                                  * DS_NKIT + j + 1: sampled kit j (drum_smp.c) */
 } drum_lane_t;
 #ifdef DRUM_LANE_KNOBS
+_Static_assert(sizeof(dsm_voice_t) <= sizeof(ds_voice_t), "a sampled kit's voice fits in the second engine's");
 _Static_assert(sizeof(ds_voice_t) <= sizeof(dv_coef_t) + sizeof(dv_voice_t) + sizeof(dv_metal_t),
                "the second engine's voice fits in the first one's: the pool stays as it was");
 #endif
@@ -228,6 +233,8 @@ static voice_t *drum_reuse(track_t *t, uint32_t note)
 static int drum_live(const drum_lane_t *L)
 {
 #ifdef DRUM_LANE_KNOBS
+    if (L->eng > DS_NKIT)
+        return L->m.live;
     if (L->eng)
         return L->n.live;
 #endif
@@ -250,11 +257,15 @@ static void drum_note_on(track_t *t, voice_t *v)
     L = &K[lane];
 #ifdef DRUM_LANE_KNOBS
     if (drum_lane_knobs[t - trk - DRUM_PART0][lane][8] > 0) {   /* the second engine's kit: its sound, from rest */
-        uint32_t k = ((uint32_t)drum_lane_knobs[t - trk - DRUM_PART0][lane][8] - 1u) % DS_NKIT, s = DS_ROLE_SND[role];
+        uint32_t k = ((uint32_t)drum_lane_knobs[t - trk - DRUM_PART0][lane][8] - 1u) % (DS_NKIT + DSM_NKIT);
+        uint32_t s = DS_ROLE_SND[role];
         L->eng = (uint8_t)(k + 1u);
         L->role = (uint8_t)role;
         L->key.type = 0xFF;                              /* (drum_voice.c's state is gone: from rest when back) */
-        ds_strike(&L->n, &DS_KITS[k], s, st, 100u - drum_lane_att[t - trk - DRUM_PART0][lane]);
+        if (k >= DS_NKIT)                                /* a sampled kit (drum_smp.c) */
+            dsm_strike(&L->m, k - DS_NKIT, s, st, 100u - drum_lane_att[t - trk - DRUM_PART0][lane]);
+        else
+            ds_strike(&L->n, &DS_KITS[k], s, st, 100u - drum_lane_att[t - trk - DRUM_PART0][lane]);
     } else
 #endif
     {
@@ -272,12 +283,15 @@ static void drum_note_on(track_t *t, voice_t *v)
         dv_trigger(&L->v);
     }
     L->st = (int8_t)st;
+    de_fx_strike(&L->fx);
     L->owner = (uint8_t)(i + 1u);                        /* (its last voice, if another, ends: drum_amp) */
     v->s[0] = (int32_t)lane;
     v->env_out = v->vel * 258;                           /* the hit starts at its level (no ramp from 0) */
     if (lane == DV_HATC && drum_live(&K[DV_HATO])) {     /* a closed hat chokes the open one */
 #ifdef DRUM_LANE_KNOBS
-        if (K[DV_HATO].eng)
+        if (K[DV_HATO].eng > DS_NKIT)
+            dsm_choke(&K[DV_HATO].m);
+        else if (K[DV_HATO].eng)
             ds_choke(&K[DV_HATO].n);
         else
 #endif
@@ -312,7 +326,7 @@ static int32_t drum_level(track_t *t, const voice_t *v)
         return 0;
 #ifdef DRUM_LANE_KNOBS
     if (L->eng)
-        return mulq15(ds_level(&L->n), v->vel * 258);
+        return mulq15(L->eng > DS_NKIT ? dsm_level(&L->m) : ds_level(&L->n), v->vel * 258);
 #endif
     e = L->role == DVT_RIM || L->role == DVT_CLAVE ? (int32_t)(L->v.e[0] >> 1) : L->v.q[0] >> 15;
     return mulq15(e > 32767 ? 32767 : e, v->vel * 258);
@@ -330,7 +344,11 @@ static void drum_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const 
     if (L->eng) {                                        /* the second engine: its sound is the kit's (drum_synth.c) */
         if (n > CTL)
             n = CTL;
-        ds_run(&L->n, y, n);
+        if (L->eng > DS_NKIT)
+            dsm_run(&L->m, y, n);
+        else
+            ds_run(&L->n, y, n);
+        de_post(&L->fx, DS_ROLE_SND[L->role], y, n);
         for (i = 0; i < n; i++) {
             int32_t s = y[i];
             out[i] += voice_amp(soft_knee(s + (s >> 2), 24000), m, i) * 2;
@@ -355,6 +373,12 @@ static void drum_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const 
     k.extra = (uint8_t)clamp(k.extra + e[4] - 64, 0, 127);
     k.accent = (uint8_t)clamp(acc >> 9, 0, 127);         /* (Q16 -> 0..127) */
     k.tune = (int16_t)(L->st * 16 + (e[1] - 64) * 3);    /* +-12 semitones */
+    {                                                    /* the user's edits of this drum (de.c) */
+        uint32_t sn = DS_ROLE_SND[r];
+        k.tune = (int16_t)(k.tune + de_v[DE_PIT][sn] * 16);
+        k.decay = (uint8_t)clamp(k.decay + de_v[DE_DEC][sn] * 3, 0, 127);
+        k.level = (uint8_t)clamp((int32_t)((k.level * de_gain(sn)) >> 12), 0, 127);
+    }
     if (((const uint32_t *)&k)[0] != ((const uint32_t *)&L->key)[0] ||
         ((const uint32_t *)&k)[1] != ((const uint32_t *)&L->key)[1]) {
         dv_setup(&L->c, &k);                             /* (a parameter moved) */
@@ -367,6 +391,7 @@ static void drum_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const 
     if (dv_uses_metal(r) && (L->v.live || L->v.trig))
         dv_metal_run(&L->mb, mb, n);
     dv_run(&L->c, &L->v, mb, y, n);
+    de_post(&L->fx, DS_ROLE_SND[r], y, n);
     if (drv > 0) {                                       /* DRV: x1..x4 into the soft clip, the level kept (Q12) */
         g = 4096 + drv * 3 * 4096 / 127;
         mk = (int32_t)((19661u << 15) / (uint32_t)softclip((19661 * g) >> 12));

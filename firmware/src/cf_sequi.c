@@ -1890,9 +1890,24 @@ static void metro_knob_turn(int k, int d)
     cf_send_config();                            /* (the tempo: the arpeggiator's too) */
 }
 
+/* the drum edit (cf_dmui.c, de.c) in the DRUMS track: ENV opens it on the drum picked, the knobs are its own */
+static uint8_t dm_twk;
+static int de_ui_info(int k, cf_knob_t *o);
+static int de_ui_turn(int k, int d);
+static const uint8_t SQ_LANE_SND[SQ_NLANE] = {DSS_KICK, DSS_SNARE, DSS_CLAP, DSS_HATC, DSS_HATO, DSS_TOM, DSS_TOM, DSS_TOM,
+                                              DSS_RIM, DSS_BELL, DSS_CYM};
+static int sq_de_on(void)                        /* 1: the DRUMS track with the edit open (the drum picked is its drum) */
+{
+    if (cu.scr != SCR_SQED || squ.trk != SQ_DRUMS || !dm_twk)
+        return 0;
+    de_pad = SQ_LANE_SND[squ.lane % SQ_NLANE];
+    return 1;
+}
 static void sq_knob_info(int k, cf_knob_t *o)
 {
     sq_pat_t *p = sq_cur();
+    if (sq_de_on() && de_ui_info(k, o))
+        return;
     if (cu.scr == SCR_SQ && squ.pat == SQ_SONGPG) {
         switch (k) {
         case 0:
@@ -2023,6 +2038,8 @@ static void sq_knob_info(int k, cf_knob_t *o)
 static void sq_knob_turn(int k, int d)
 {
     sq_pat_t *p = sq_cur();
+    if (sq_de_on() && de_ui_turn(k, d))
+        return;
     if (cu.scr == SCR_SQED || (squ.pat == SQ_SONGPG && k < 2))
         sq_touch();
     if (cu.scr == SCR_SQ && squ.pat == SQ_SONGPG) {

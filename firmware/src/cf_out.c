@@ -466,6 +466,20 @@ static void cf_xq_put(uint32_t note, uint32_t down, uint32_t ms)
 /* usb.c's midi_in_q (USB and TRS) is drained here: notes on the chord / bass channels play the parts directly
  * (cr_midi.c crm_map, ChoralRoot's), with the pedal, bend and controllers (midi_event above) */
 static uint8_t cfx_direct;                       /* NOTES IN was Direct at the last look (cf_midi_in) */
+static uint32_t cf_in_layer[4];                  /* the LAYER's notes MIDI in holds (a bit a note) */
+static volatile uint8_t cf_in_kit = 10;          /* the kit a drum from MIDI in plays: the rhythm machine's (cf_dmui.c
+                                                  * writes it every frame; X Lo-Fi till then) */
+/* a note on the DRUMS' channel from outside (a DAW's drum track): its GM drum, in the rhythm machine's kit, at its
+ * velocity. The drums have no note off */
+static void cf_in_drum(uint32_t note, uint32_t vel)
+{
+    uint32_t i, el = drum_lane(note), k = cf_in_kit % SQ_NKIT;
+    for (i = 0; i < 8u; i++)
+        drum_lane_knobs[0][el][i] = (int16_t)SQ_KITS[k].e[i];
+    drum_lane_knobs[0][el][8] = SQ_KITS[k].ds;
+    drum_lane_att[0][el] = 0;
+    trk_note_on(&trk[CF_PART_DRUM], note, vel);
+}
 static void cf_midi_in(void)
 {
     uint32_t w = mi_w;
@@ -479,6 +493,10 @@ static void cf_midi_in(void)
         for (p = 0; p < 2u; p++)
             for (n = 0; n < 128u; n++)
                 cr_mrelease(p, n);
+        for (n = 0; n < 128u; n++)               /* (the LAYER's from outside too) */
+            if (cf_in_layer[n >> 5] & (1u << (n & 31u)))
+                trk_note_off(&trk[2], n);
+        cf_in_layer[0] = cf_in_layer[1] = cf_in_layer[2] = cf_in_layer[3] = 0;
     }
     cfx_direct = cfp_cfg.notes_in == CF_NI_DIRECT;
     if (midi_in_overflow)
@@ -506,6 +524,16 @@ static void cf_midi_in(void)
             }
             continue;
         }
+        /* the DRUMS' channel plays the drums (a DAW's drum track), whatever NOTES IN is: unless that channel is the
+         * chords' or the bass's (Direct), or the one the keys' notes come in on (IN CH; All takes every channel) */
+        if ((status & 0xE0u) == 0x80u && (status & 0x0Fu) == cfp_cfg.ch_drums &&
+            (cfp_cfg.notes_in == CF_NI_DIRECT
+                 ? cfp_cfg.ch_drums != cfp_cfg.ch_chord && cfp_cfg.ch_drums != cfp_cfg.ch_bass
+                 : cfp_cfg.in_ch && cfp_cfg.in_ch - 1u != cfp_cfg.ch_drums)) {
+            if ((status & 0xF0u) == 0x90u && d2)
+                cf_in_drum(d1, d2);
+            continue;
+        }
         if (cfp_cfg.notes_in != CF_NI_DIRECT && (status & 0xE0u) == 0x80u) {   /* a note on or off: IN CH's, or any
                                                   * channel with IN CH All (0.5.1, GitHub #2: a Digitakt's other tracks
                                                   * played chords) */
@@ -519,6 +547,16 @@ static void cf_midi_in(void)
             for (i = 0; i < n; i++)
                 if (a[i].kind == CRM_FORWARD)
                     midi_event(status & 0xF0u, a[i].part, d1, d2);
+            if (!n && (status & 0xE0u) == 0x80u && (status & 0x0Fu) == cfp_cfg.ch_layer) {   /* (Direct: the LAYER's
+                                                  * channel plays the LAYER's sound, part 2) */
+                if ((status & 0xF0u) == 0x90u && d2) {
+                    trk_note_on(&trk[2], d1, d2);
+                    cf_in_layer[d1 >> 5] |= 1u << (d1 & 31u);
+                } else {
+                    trk_note_off(&trk[2], d1);
+                    cf_in_layer[d1 >> 5] &= ~(1u << (d1 & 31u));
+                }
+            }
         }
     }
 }

@@ -658,7 +658,9 @@ static void cv_turned(int d)
 static void ui_select(int d)                     /* SELECT: the bass sound, or a screen's page */
 {
     if (cu.scr == SCR_DRUM) {                    /* the drum machine: the rhythm (OCT+ held: the pattern it goes into) */
-        if (dmc.down)
+        if (dm_twk)                              /* (the drum edit open: the drum it edits) */
+            dm_de_pick(d);
+        else if (dmc.down)
             dm_copy_turn(d);
         else
             dm_select(d);
@@ -795,6 +797,8 @@ static void ui_open(uint32_t scr)
     if (sq_screen(was) && !sq_screen(scr) && scr != SCR_SEQ)
         ui_ctx_from_track(squ.trk);
     cu.scr = (uint8_t)(scr == was && scr != SCR_HOME ? SCR_HOME : scr);
+    if (cu.scr != was)
+        dm_twk = 0;                              /* (the drum edit closes with its page; the edits stay) */
     if (cu.scr == SCR_SEQ && was != SCR_SEQ)
         dm_seq_to = 0;                           /* (the carousel starts on the SEQUENCER: SEQ twice opens it, as before) */
     if (cu.scr == SCR_SEL && cf_is_off(&cs.chord, cu.sel_btn))
@@ -892,7 +896,11 @@ static void ui_button(uint32_t b)
                                                   * неё заходишь не должны нажиматься кнопки других вкладок, как и в
                                                   * секвенсоре", "гло должна быть с подсказками"): HOME and SEQ leave, the
                                                   * other pages' buttons do nothing and are dark, GLO shows the help */
-        if (b == B_FX || b == B_ENV || b == B_LFO || b == B_ARP || b == B_SAVE)
+        if (b == B_ENV) {                        /* (ENV: the knobs edit a drum, its two pages, then back) */
+            de_ui_env();
+            return;
+        }
+        if (b == B_FX || b == B_LFO || b == B_ARP || b == B_SAVE)
             return;
         if ((b == B_PLAY || b == B_REC) && dm_copying()) {   /* (OCT+ held, a pattern picked: called off, as the EDIT
                                                   * hold is) */
@@ -919,6 +927,12 @@ static void ui_button(uint32_t b)
         }
         if (cu.scr == SCR_SQED && b == B_EDIT) { /* EDIT held in a track: SELECT moves the frame's chord */
             sq_edit_press();
+            return;
+        }
+        if (cu.scr == SCR_SQED && squ.trk == SQ_DRUMS && b == B_ENV) {   /* ENV in the DRUMS track: the drum edit, on
+                                                  * the drum picked (the rhythm machine's, cf_dmui.c) */
+            de_pad = SQ_LANE_SND[squ.lane % SQ_NLANE];
+            de_ui_env();
             return;
         }
         if (b == B_FX || b == B_ENV || b == B_LFO || b == B_ARP ||
@@ -988,7 +1002,9 @@ static void ui_button(uint32_t b)
         else
             ui_open(SCR_SEL);
         break;
-    case B_ENV: ui_open(SCR_ENV); break;
+    case B_ENV:
+        ui_open(SCR_ENV);
+        break;
     case B_LFO: ui_open(SCR_BASS); break;
     case B_EDIT: ui_open(SCR_EDIT); break;
     case B_GLO: ui_open(SCR_GLO); break;
@@ -1596,8 +1612,11 @@ static void cf_leds(void)
     for (k = 0; k < SCR_N; k++)                  /* (the rhythm machine: as the sequencer, cf_dmui.c) */
         if ((!sq && !rm) || SCR_BTN[k] == B_HOME || SCR_BTN[k] == B_SEQ || SCR_BTN[k] == B_GLO)
             cf_led(k == cu.scr ? lit : dim, panel.btn[SCR_BTN[k]], 1);
-    if (rm && dm_tweaked(dm_cur()))              /* (SEL: the rhythm's own KIT and SWING back, when it has the user's) */
+    if (rm && (dm_twk ? de_any() : dm_tweaked(dm_cur())))   /* (SEL: the rhythm's own KIT and SWING back, when it has the
+                                                  * user's; the drum edit open: the edits cleared, when there are any) */
         cf_led(dim, panel.btn[B_SCL], 1);
+    if (rm)                                      /* (ENV: the drum edit, lit while open) */
+        cf_led(dm_twk ? lit : dim, panel.btn[B_ENV], 1);
     if (rm)                                      /* (EDIT: the rhythm as a new pattern; no empty letter: faint) */
         cf_led(sq_home_free() >= 0 ? mid : faint, panel.btn[B_EDIT], 1);
     if (sq) {                                    /* the sequencer: what works here (sq_key_led's note) */
@@ -1619,6 +1638,8 @@ static void cf_leds(void)
                 cf_led(squ.mv ? lit : mid, panel.btn[B_EDIT], 1);
             if (squ.trk != SQ_DRUMS)
                 cf_led(clear ? mid : faint, panel.btn[B_SCL], 1);
+            if (squ.trk == SQ_DRUMS)             /* (ENV: the drum edit, lit while open) */
+                cf_led(dm_twk ? lit : dim, panel.btn[B_ENV], 1);
             if (squ.trk == SQ_CHORDS || squ.trk == SQ_LAYER)   /* (ARP: the track's own, lit while on) */
                 cf_led((p->arp >> squ.trk) & 1u ? lit : dim, panel.btn[B_ARP], 1);
         }

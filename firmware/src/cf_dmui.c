@@ -19,7 +19,8 @@
 /* what the drum machine keeps: an object of its own, the old looper's (storage.c OBJ_CFLOOP, a log as the settings':
  * a change written as what changed, no erase while anything sounds). 0.5 and older look there only for a loop of
  * theirs (cf_loop.c CFL_MAGIC): this record is passed over, a downgrade keeps everything else */
-#define DM_MAGIC 0x32444643u                     /* "CFD2" (rc4: kept by each rhythm's id) */
+#define DM_MAGIC 0x33444643u                     /* "CFD3": with the drums' edits (de.c) */
+#define DM_MAGIC2 0x32444643u                    /* "CFD2" (rc4 .. 0.7.1: kept by each rhythm's id; read in) */
 #define DM_MAGIC1 0x31444643u                    /* "CFD1": rc3's, kept by the place in its list (read in: dm_from1) */
 #define DM_NMAX 64u                              /* rhythm ids 0 .. 63 */
 typedef struct {
@@ -28,8 +29,14 @@ typedef struct {
     uint8_t pos[8];                              /* the rhythm stood on for each TIME SIG (cs.beats): its id, 0xFF none */
     uint8_t last;                                /* 1: a rhythm was chosen last (PLAY on HOME plays it) */
     uint8_t rsv[3];
+    int8_t de[DE_NP][DSS_N];                     /* each drum's edits (de.c de_v), 0 the kit's own */
     uint32_t check;                              /* FNV-1a over what comes before */
 } dm_rec_t;
+typedef struct {                                 /* 0.7.1's and older: no edits */
+    uint32_t magic;
+    uint8_t kit[DM_NMAX], swing[DM_NMAX], pos[8], last, rsv[3];
+    uint32_t check;
+} dm_rec2_t;
 typedef struct {                                 /* rc3's (0.6-rc3 only, a test build) */
     uint32_t magic;
     uint8_t kit[32], swing[32], pos[8], last, rsv[3];
@@ -41,6 +48,12 @@ static uint32_t dm_saved, dm_seen, dm_changed_ms, dm_retry_ms;
 static uint8_t dm_tidy, dm_store;
 static uint8_t dm_restore_lock;                  /* a backup restored the record (cf_backup.c): nothing kept till the restart */
 static uint8_t dm_seq_to;                        /* the METRONOME's carousel: 1, its SEQ opens the drum machine */
+static uint8_t dm_twk;                           /* ENV on the page: the knobs edit a drum (de.c). 1: LEVEL PITCH DECAY
+                                                  * BEND, 2: TONE DRIVE CRUSH ATTACK, 0: closed. SELECT picks the drum */
+static const char *const DM_DE_KNOB[DE_NP] = {"LEVEL", "PITCH", "DECAY", "BEND", "TONE", "DRIVE", "CRUSH", "ATTACK"};
+static const char *const DM_DE_UNIT[DE_NP] = {" dB", " st", 0, 0, 0, 0, 0, " ms"};
+static void dm_de_say(void);
+static const char *const DM_DE_NAME[DSS_N] = {"Kick", "Snare", "Clap", "Hat", "Open hat", "Tom", "Rim", "Bell", "Crash"};
 
 static uint32_t dm_check(void) { return cfs_fnv(&dmr, (uint32_t)__builtin_offsetof(dm_rec_t, check)); }
 static void dm_defaults(void)
@@ -72,6 +85,7 @@ static void dm_load(void)
 {
     static dm_rec_t r;
     static dm_rec1_t r1;
+    static dm_rec2_t r2;
     st_hdr_t h;
     uint32_t i, m = 0;
     dm_defaults();
@@ -91,6 +105,13 @@ static void dm_load(void)
     if (st_load(OBJ_CFLOOP, &r, sizeof r) == (int)sizeof r && r.magic == DM_MAGIC &&
         r.check == cfs_fnv(&r, (uint32_t)__builtin_offsetof(dm_rec_t, check))) {
         dmr = r;
+    } else if (st_load(OBJ_CFLOOP, &r2, sizeof r2) == (int)sizeof r2 && r2.magic == DM_MAGIC2 &&
+               r2.check == cfs_fnv(&r2, (uint32_t)__builtin_offsetof(dm_rec2_t, check))) {
+        r.magic = 0;                             /* (0.7.1's: written as this one's at the first quiet moment) */
+        memcpy(dmr.kit, r2.kit, sizeof dmr.kit);
+        memcpy(dmr.swing, r2.swing, sizeof dmr.swing);
+        memcpy(dmr.pos, r2.pos, sizeof dmr.pos);
+        dmr.last = r2.last;
     } else if (st_load(OBJ_CFLOOP, &r1, sizeof r1) == (int)sizeof r1 && r1.magic == DM_MAGIC1 &&
                r1.check == cfs_fnv(&r1, (uint32_t)__builtin_offsetof(dm_rec1_t, check))) {
         r.magic = 0;
@@ -105,16 +126,22 @@ static void dm_load(void)
             dmr.swing[i] = 0xFF;
     }
     dmr.last = dmr.last == 1u;
+    memcpy(de_v, dmr.de, sizeof de_v);           /* (the drums' edits: live in de.c, kept here) */
+    de_clamp();
+    memcpy(dmr.de, de_v, sizeof dmr.de);
     dm_saved = dm_seen = dm_check();
     if (r.magic != DM_MAGIC)                     /* (rc3's: rc4's written once, when it is quiet) */
         dm_saved = 0;
 }
 /* every frame: a change written half a second after it, as what changed (no erase) while anything sounds; the log
  * tidied in a quiet moment (cf_settings.c cfps_poll) */
+static uint32_t dm_cur(void);
+static uint32_t dm_kit(uint32_t r);
 static void dm_poll_store(uint32_t now)
 {
     uint32_t h;
     int rc, quiet;
+    cf_in_kit = (uint8_t)dm_kit(dm_cur());       /* (the kit a drum from MIDI in plays: cf_out.c cf_in_drum) */
     if (!dm_store || cfs_restore_lock || dm_restore_lock || !cu.booted)
         return;
     if (dm_retry_ms && (int32_t)(now - dm_retry_ms) < 0)
@@ -162,7 +189,10 @@ static int dm_rec_ok(const void *raw, uint32_t len)   /* a backup's record of th
 {
     const dm_rec_t *r = (const dm_rec_t *)raw;
     const dm_rec1_t *r1 = (const dm_rec1_t *)raw;
-    return (len == sizeof(dm_rec_t) && r->magic == DM_MAGIC &&
+    const dm_rec2_t *r2 = (const dm_rec2_t *)raw;
+    return (len == sizeof(dm_rec2_t) && r2->magic == DM_MAGIC2 &&
+            r2->check == cfs_fnv(r2, (uint32_t)__builtin_offsetof(dm_rec2_t, check))) ||
+           (len == sizeof(dm_rec_t) && r->magic == DM_MAGIC &&
             r->check == cfs_fnv(r, (uint32_t)__builtin_offsetof(dm_rec_t, check))) ||
            (len == sizeof(dm_rec1_t) && r1->magic == DM_MAGIC1 &&
             r1->check == cfs_fnv(r1, (uint32_t)__builtin_offsetof(dm_rec1_t, check)));
@@ -233,9 +263,50 @@ static void dm_fill(sq_pat_t *p, uint32_t r, uint32_t b0)
 }
 
 /* ------------------------------------------------------------ the page --- */
+/* the drum edit's knobs (the rhythm machine's page and the sequencer's DRUMS track, cf_sequi.c): 1 when it is open
+ * and the knob is its own. 0 is the kit's own, shown as "Kit" */
+static int de_ui_info(int k, cf_knob_t *o)
+{
+    uint32_t p = de_pad % DSS_N, q = (uint32_t)(dm_twk - 1) * 4u + (uint32_t)(k & 3);
+    int v;
+    if (!dm_twk)
+        return 0;
+    v = de_v[q][p];
+    kfmt(o->name, 12, DM_DE_KNOB[q]);
+    if (!v)
+        kfmt(o->val, 14, DE_LO[q] ? "Kit" : "Off");
+    else {
+        char *t = o->val;
+        if (v > 0 && DE_LO[q])
+            *t++ = '+';
+        kint(t, v, DM_DE_UNIT[q]);
+    }
+    o->bar = (int16_t)((v - DE_LO[q]) * 255 / (DE_HI[q] - DE_LO[q]));
+    return 1;
+}
+static int de_ui_turn(int k, int d)
+{
+    uint32_t p = de_pad % DSS_N, q = (uint32_t)(dm_twk - 1) * 4u + (uint32_t)(k & 3);
+    if (!dm_twk)
+        return 0;
+    de_v[q][p] = (int8_t)clampi(de_v[q][p] + d, DE_LO[q], DE_HI[q]);
+    memcpy(dmr.de, de_v, sizeof dmr.de);         /* (kept: dm_poll_store writes the change) */
+    return 1;
+}
+/* ENV, on either of the two: its pages in turn, then closed */
+static void de_ui_env(void)
+{
+    dm_twk = (uint8_t)((dm_twk + 1u) % 3u);
+    if (dm_twk)
+        dm_de_say();
+    else
+        cf_message("Drum edit closed");
+}
 static void dm_knob_info(int k, cf_knob_t *o)
 {
     uint32_t r = dm_cur(), s = dm_swing(r);
+    if (de_ui_info(k, o))
+        return;
     switch (k) {
     case 0: kfmt(o->name, 12, "KIT"); kfmt(o->val, 14, SQ_KITS[dm_kit(r) % SQ_NKIT].name); break;
     case 1:                                      /* (the drums' VOLUME, the Drums row's K1: one name for one setting) */
@@ -263,6 +334,8 @@ static void dm_knob_info(int k, cf_knob_t *o)
 static void dm_knob_turn(int k, int d)
 {
     uint32_t r = dm_cur();
+    if (de_ui_turn(k, d))
+        return;
     if (k == 1) {                                /* (VOLUME: the drums', the SEQUENCER's K1 on Drums) */
         sq_level_set(SQ_DRUMS, cs.level_drums + d * 2);
         return;
@@ -333,10 +406,29 @@ static void dm_select(int d)
         dm_view = 0xFF;
     }
 }
+/* the drum edit's drum and page, said when either changes */
+static void dm_de_say(void)
+{
+    char m[32];
+    str_cpy(m, DM_DE_NAME[de_pad % DSS_N], sizeof m);
+    str_cpy(m + str_len(m), dm_twk == 2 ? ": colour (2/2)" : ": shape (1/2)", sizeof m - str_len(m));
+    cf_message(m);
+}
+static void dm_de_pick(int d)                    /* SELECT while it is open: the drum */
+{
+    de_pad = (uint8_t)clampi((int)(de_pad % DSS_N) + d, 0, (int)DSS_N - 1);
+    dm_de_say();
+}
 static void dm_sel(void)                         /* SEL: the rhythm's own KIT and SWING back */
 {
     uint32_t r = dm_cur();
     char m[32];
+    if (dm_twk) {                                /* (the drum edit open: SEL takes every drum's edits back) */
+        de_reset();
+        memcpy(dmr.de, de_v, sizeof dmr.de);
+        cf_message("Drum edits cleared");
+        return;
+    }
     if (sqk.on || !dm_tweaked(r))
         return;
     dmr.kit[dm_uid(r)] = dmr.swing[dm_uid(r)] = 0xFF;
